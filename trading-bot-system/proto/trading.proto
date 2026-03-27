@@ -1,0 +1,103 @@
+syntax = "proto3";
+
+package tradingbot;
+
+option go_package = "trading-bot-system/backend/internal/port/output/pb";
+option py_generic_services = true;
+
+// Market Data Service - Stream market data from Go to Python
+service MarketDataService {
+  // Subscribe to market data stream
+  rpc SubscribeMarketData(SubscribeRequest) returns (stream MarketData);
+}
+
+// Order Execution Service - Execute orders from Python to Go
+service OrderExecutionService {
+  // Execute a trading order
+  rpc ExecuteOrder(OrderRequest) returns (OrderResponse);
+  
+  // Cancel an order
+  rpc CancelOrder(CancelOrderRequest) returns (CancelOrderResponse);
+}
+
+// Bot Status Service - Get bot status from Go
+service BotStatusService {
+  // Get current bot status
+  rpc GetBotStatus(GetBotStatusRequest) returns (BotStatusResponse);
+  
+  // Start the bot
+  rpc StartBot(StartBotRequest) returns (StartBotResponse);
+  
+  // Stop the bot
+  rpc StopBot(StopBotRequest) returns (StopBotResponse);
+}
+
+// ============ Messages ============
+
+// Market Data Messages
+message SubscribeRequest {
+  repeated string symbols = 1;
+}
+
+message MarketData {
+  string symbol = 1;
+  double price = 2;
+  double volume = 3;
+  int64 timestamp = 4;
+}
+
+// Order Messages
+message OrderRequest {
+  string id = 1;
+  string symbol = 2;
+  string side = 3;        // BUY or SELL
+  string type = 4;        // MARKET or LIMIT
+  double quantity = 5;
+  double price = 6;       // Optional, for limit orders
+}
+
+message OrderResponse {
+  string order_id = 1;
+  string symbol = 2;
+  string side = 3;
+  string status = 4;      // PENDING, FILLED, CANCELLED, REJECTED
+  double quantity = 5;
+  double price = 6;
+  int64 created_at = 7;
+  string error = 8;
+}
+
+message CancelOrderRequest {
+  string order_id = 1;
+  string symbol = 2;
+}
+
+message CancelOrderResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// Bot Status Messages
+message GetBotStatusRequest {}
+
+message BotStatusResponse {
+  bool is_active = 1;
+  int64 started_at = 2;
+  int64 stopped_at = 3;
+  int32 total_trades = 4;
+  double total_profit = 5;
+}
+
+message StartBotRequest {}
+
+message StartBotResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message StopBotRequest {}
+
+message StopBotResponse {
+  bool success = 1;
+  string message = 2;
+}

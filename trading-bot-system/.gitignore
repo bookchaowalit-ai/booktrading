@@ -1,0 +1,175 @@
+# Trading Bot System - Complete .gitignore
+
+# ======================
+# ENVIRONMENT & SECRETS
+# ======================
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.pem
+*.key
+*.crt
+secrets/
+
+# ======================
+# FRONTEND (Next.js)
+# ======================
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/dist/
+frontend/.turbo/
+frontend/.eslintcache
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/package-lock.json
+frontend/yarn.lock
+frontend/tsconfig.tsbuildinfo
+
+# ======================
+# BACKEND (Go)
+# ======================
+backend/vendor/
+backend/go.sum
+backend/main
+backend/*.exe
+backend/*.exe~
+backend/*.dll
+backend/*.so
+backend/*.dylib
+backend/*.test
+backend/*.out
+backend/coverage.out
+backend/coverage.html
+
+# ======================
+# STRATEGY (Python)
+# ======================
+strategy/__pycache__/
+strategy/*.py[cod]
+strategy/*$py.class
+strategy/venv/
+strategy/env/
+strategy/.venv/
+strategy/.env/
+strategy/Pipfile.lock
+strategy/poetry.lock
+strategy/.pytest_cache/
+strategy/.mypy_cache/
+strategy/.ruff_cache/
+strategy/coverage.xml
+strategy/htmlcov/
+strategy/.coverage
+
+# ======================
+# DATABASE
+# ======================
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+data/
+postgres-data/
+redis-data/
+
+# ======================
+# LOGS
+# ======================
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ======================
+# IDE & EDITORS
+# ======================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# ======================
+# OS FILES
+# ======================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# ======================
+# DOCKER
+# ======================
+docker-compose.override.yml
+*.tar
+.docker/
+
+# ======================
+# TESTING
+# ======================
+coverage/
+.nyc_output/
+.jest/
+test-results/
+playwright-report/
+
+# ======================
+# PROTO (Generated)
+# ======================
+proto/gen/
+backend/internal/gen/
+frontend/src/generated/
+
+# ======================
+# DOCUMENTATION
+# ======================
+docs/_build/
+docs/.doctrees/
+
+# ======================
+# BACKUPS
+# ======================
+*.bak
+*.backup
+*.old
+
+# ======================
+# TEMPORARY FILES
+# ======================
+tmp/
+temp/
+*.tmp
+*.temp
+
+# ======================
+# DEPLOYMENT
+# ======================
+deploy/
+dist/
+build/
+*.zip
+*.tar.gz
+
+# ======================
+# MISC
+# ======================
+*.lock
+*.pid
+*.seed
+*.pid.lock

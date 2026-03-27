@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Redirecting...</title>
+  <script>
+    // Check cookie first
+    const cookies = document.cookie.split(';');
+    let locale = 'en';
+    for (let cookie of cookies) {
+      const [name, value] = cookie.trim().split('=');
+      if (name === 'NEXT_LOCALE' && (value === 'en' || value === 'th')) {
+        locale = value;
+        break;
+      }
+    }
+    
+    // If no cookie, check browser language
+    if (locale === 'en' && navigator.language.toLowerCase().startsWith('th')) {
+      locale = 'th';
+    }
+    
+    // Redirect
+    window.location.replace('/' + locale);
+  </script>
+</head>
+<body>
+  <div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;">
+    <div style="text-align:center;">
+      <div style="width:40px;height:40px;border:4px solid #9333ea;border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 20px;"></div>
+      <p style="color:#666;">Redirecting...</p>
+    </div>
+  </div>
+  <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+</body>
+</html>
