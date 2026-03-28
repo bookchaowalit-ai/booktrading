@@ -32,10 +32,13 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess }: LoginMod
     setIsLoading(true);
 
     try {
-      const result = authenticate(email, password);
+      const result = await authenticate(email, password);
 
       if (result.success) {
-        // Login successful
+        // Login successful — persist session if rememberMe is checked
+        if (rememberMe && typeof window !== 'undefined') {
+          localStorage.setItem('remember_login', '1');
+        }
         onClose();
         if (onLoginSuccess) {
           onLoginSuccess();
@@ -81,17 +84,21 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess }: LoginMod
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
             className="fixed inset-0 flex items-center justify-center z-50 px-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="login-modal-title"
           >
             <div className="bg-slate-900 rounded-2xl border border-slate-700 w-full max-w-md shadow-2xl">
               {/* Header */}
               <div className="flex justify-between items-center p-6 border-b border-slate-700">
                 <div>
-                  <h2 className="text-2xl font-bold text-white">Welcome Back</h2>
+                  <h2 id="login-modal-title" className="text-2xl font-bold text-white">Welcome Back</h2>
                   <p className="text-gray-400 text-sm mt-1">Sign in to your account</p>
                 </div>
                 <button
                   onClick={onClose}
                   className="text-gray-400 hover:text-white transition"
+                  aria-label="Close login dialog"
                 >
                   <X className="w-6 h-6" />
                 </button>

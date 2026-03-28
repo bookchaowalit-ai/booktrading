@@ -46,6 +46,15 @@ export default function PriceChart({ symbol, height = 300 }: PriceChartProps) {
   const priceChange = currentPrice - previousPrice;
   const priceChangePercent = previousPrice > 0 ? (priceChange / previousPrice) * 100 : 0;
 
+  // Static class lookup to avoid Tailwind purging dynamic classes
+  const rsiClassMap: Record<string, string> = {
+    green: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400',
+    yellow: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400',
+    red: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400',
+    gray: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300',
+  };
+  const rsiClass = rsiClassMap[rsiStatus.color] || rsiClassMap.gray;
+
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
       <div className="flex justify-between items-center mb-4">
@@ -62,32 +71,41 @@ export default function PriceChart({ symbol, height = 300 }: PriceChartProps) {
         </div>
         
         {indicators?.rsi && (
-          <div className={`px-3 py-1 rounded-full text-sm font-medium bg-${rsiStatus.color}-100 text-${rsiStatus.color}-800`}>
+          <div className={`px-3 py-1 rounded-full text-sm font-medium ${rsiClass}`}>
             RSI: {indicators.rsi.toFixed(2)} ({rsiStatus.status})
           </div>
         )}
       </div>
-      
+
+      {chartData.length === 0 ? (
+        <div
+          className="flex flex-col items-center justify-center text-gray-400 dark:text-gray-600"
+          style={{ height: `${height}px` }}
+        >
+          <div className="w-10 h-10 border-2 border-gray-300 dark:border-gray-600 border-t-purple-500 rounded-full animate-spin mb-3" />
+          <p className="text-sm">Waiting for market data...</p>
+        </div>
+      ) : (
       <div style={{ height: `${height}px` }}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData}>
             <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} />
-            <XAxis 
-              dataKey="time" 
+            <XAxis
+              dataKey="time"
               stroke="#9CA3AF"
               tick={{ fontSize: 12 }}
             />
-            <YAxis 
+            <YAxis
               stroke="#9CA3AF"
               tick={{ fontSize: 12 }}
               domain={['auto', 'auto']}
             />
             <Tooltip
               contentStyle={{
-                backgroundColor: '#1F2937',
-                border: 'none',
+                backgroundColor: 'var(--tooltip-bg, #1F2937)',
+                border: '1px solid var(--tooltip-border, #374151)',
                 borderRadius: '8px',
-                color: '#F9FAFB',
+                color: 'var(--tooltip-text, #F9FAFB)',
               }}
               formatter={(value: number) => [`$${value.toFixed(2)}`, 'Price']}
             />
@@ -110,6 +128,7 @@ export default function PriceChart({ symbol, height = 300 }: PriceChartProps) {
           </LineChart>
         </ResponsiveContainer>
       </div>
+      )}
     </div>
   );
 }

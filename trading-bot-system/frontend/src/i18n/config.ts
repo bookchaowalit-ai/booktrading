@@ -13,7 +13,7 @@ export const localeNames: Record<Locale, string> = {
   ja: '日本語'
 };
 
-export const defaultLocale: Locale = 'en';
+export const defaultLocale: Locale = 'th';
 
 // Locale detection from browser
 export function getBrowserLocale(): Locale {

@@ -41,10 +41,10 @@ export default function StrategyPage() {
           { id: 'overview', label: t('strategy.ai-signals'), icon: <Zap className="w-3.5 h-3.5" /> },
           { id: 'sentiment', label: t('strategy.sentiment-score'), icon: <TrendingUp className="w-3.5 h-3.5" /> },
           { id: 'backtest', label: t('strategy.backtest-results'), icon: <BarChart3 className="w-3.5 h-3.5" /> },
-          { id: 'configuration', label: t('settings.advanced'), icon: <Settings className="w-3.5 h-3.5" /> },
+          { id: 'configuration', label: t('strategy.configuration'), icon: <Settings className="w-3.5 h-3.5" /> },
         ]}
         activeTab={activeTab}
-        onChange={setActiveTab}
+        onChange={(tab) => setActiveTab(tab as StrategyTab)}
         size="sm"
       />
 

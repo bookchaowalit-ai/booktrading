@@ -58,35 +58,25 @@ export default function TradingSignals({ symbol, onSignalSelect }: TradingSignal
     onSignalSelect?.(signal);
   };
 
-  const getDirectionColor = (direction: string) => {
-    if (direction === 'LONG') return '#10B981';
-    if (direction === 'SHORT') return '#EF4444';
-    return '#9CA3AF';
+  // Static Tailwind class maps — avoids production purging of dynamic class names
+  const directionClasses: Record<string, { badge: string; bg: string; text: string }> = {
+    LONG:  { badge: 'bg-green-500 text-white', bg: 'bg-green-100 dark:bg-green-900/30', text: 'text-green-700 dark:text-green-400' },
+    SHORT: { badge: 'bg-red-500 text-white',   bg: 'bg-red-100 dark:bg-red-900/30',   text: 'text-red-700 dark:text-red-400' },
+    HOLD:  { badge: 'bg-gray-500 text-white',  bg: 'bg-gray-100 dark:bg-gray-700',    text: 'text-gray-700 dark:text-gray-300' },
   };
+  const strengthClasses: Record<string, string> = {
+    very_strong: 'text-purple-600 dark:text-purple-400',
+    strong:      'text-green-600 dark:text-green-400',
+    moderate:    'text-yellow-600 dark:text-yellow-400',
+    weak:        'text-gray-500 dark:text-gray-400',
+  };
+  const confidenceClass = (c: number) =>
+    c >= 0.8 ? 'bg-green-500' : c >= 0.6 ? 'bg-yellow-500' : 'bg-red-500';
 
   const getDirectionIcon = (direction: string) => {
     if (direction === 'LONG') return <TrendingUp className="w-5 h-5" />;
     if (direction === 'SHORT') return <TrendingDown className="w-5 h-5" />;
     return <Minus className="w-5 h-5" />;
-  };
-
-  const getStrengthColor = (strength: string) => {
-    switch (strength) {
-      case 'very_strong':
-        return '#8B5CF6';
-      case 'strong':
-        return '#10B981';
-      case 'moderate':
-        return '#F59E0B';
-      default:
-        return '#9CA3AF';
-    }
-  };
-
-  const getConfidenceColor = (confidence: number) => {
-    if (confidence >= 0.8) return '#10B981';
-    if (confidence >= 0.6) return '#F59E0B';
-    return '#EF4444';
   };
 
   if (isLoading) {
@@ -122,7 +112,7 @@ export default function TradingSignals({ symbol, onSignalSelect }: TradingSignal
   return (
     <div className="space-y-4">
       {signals.map((signal, index) => {
-        const directionColor = getDirectionColor(signal.direction);
+        const dir = directionClasses[signal.direction] || directionClasses.HOLD;
         const category = getAssetCategory(signal.symbol);
 
         return (
@@ -142,21 +132,12 @@ export default function TradingSignals({ symbol, onSignalSelect }: TradingSignal
                       <h3 className="text-lg font-bold text-gray-900 dark:text-white">
                         {signal.symbol}
                       </h3>
-                      <span
-                        className="px-2.5 py-0.5 rounded-full text-xs font-bold text-white"
-                        style={{ backgroundColor: directionColor }}
-                      >
+                      <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${dir.badge}`}>
                         {signal.direction}
                       </span>
                     </div>
                     <div className="flex items-center gap-2 mt-1">
-                      <span
-                        className="text-xs font-medium px-2 py-0.5 rounded"
-                        style={{
-                          backgroundColor: `${directionColor}20`,
-                          color: directionColor,
-                        }}
-                      >
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded ${dir.bg} ${dir.text}`}>
                         {signal.leverage}x Leverage
                       </span>
                       <span className="text-xs text-gray-500 dark:text-gray-400">
@@ -168,16 +149,13 @@ export default function TradingSignals({ symbol, onSignalSelect }: TradingSignal
 
                 <div className="text-right">
                   <div className="flex items-center gap-1 justify-end mb-1">
-                    <Activity className="w-4 h-4" style={{ color: getStrengthColor(signal.strength) }} />
-                    <span
-                      className="text-xs font-medium capitalize"
-                      style={{ color: getStrengthColor(signal.strength) }}
-                    >
+                    <Activity className={`w-4 h-4 ${strengthClasses[signal.strength] || strengthClasses.weak}`} />
+                    <span className={`text-xs font-medium capitalize ${strengthClasses[signal.strength] || strengthClasses.weak}`}>
                       {signal.strength.replace('_', ' ')} Signal
                     </span>
                   </div>
                   <div className="flex items-center gap-1 justify-end">
-                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: getConfidenceColor(signal.confidence) }} />
+                    <div className={`w-2 h-2 rounded-full ${confidenceClass(signal.confidence)}`} />
                     <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
                       {(signal.confidence * 100).toFixed(0)}% Confidence
                     </span>

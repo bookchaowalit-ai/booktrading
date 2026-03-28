@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 
 	"trading-bot-system/backend/internal/domain/model"
@@ -255,13 +256,15 @@ func (h *HealthHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 
 // Router configures HTTP routes
 type Router struct {
-	mux *http.ServeMux
+	mux         *http.ServeMux
+	authHandler *AuthHandler
 }
 
 // NewRouter creates a new router
-func NewRouter() *Router {
+func NewRouter(authHandler *AuthHandler) *Router {
 	return &Router{
-		mux: http.NewServeMux(),
+		mux:         http.NewServeMux(),
+		authHandler: authHandler,
 	}
 }
 
@@ -409,19 +412,244 @@ func (r *Router) RegisterSettingsRoutes(handler *SettingsHandler) {
 	})
 }
 
+// RegisterTradingRoutes registers trading-related routes (API key config + bot control)
+func (r *Router) RegisterTradingRoutes(handler *TradingHandler) {
+	r.mux.HandleFunc("/api/trading/configure", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPost {
+			handler.ConfigureAPI(w, req)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	r.mux.HandleFunc("/api/trading/start", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPost {
+			handler.StartBot(w, req)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	r.mux.HandleFunc("/api/trading/stop", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPost {
+			handler.StopBot(w, req)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	r.mux.HandleFunc("/api/trading/status", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodGet {
+			handler.GetBotStatus(w, req)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	r.mux.HandleFunc("/api/trading/portfolio", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodGet {
+			handler.GetPortfolio(w, req)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+}
+
+// RegisterNewsRoutes registers news/sentiment/signals routes
+func (r *Router) RegisterNewsRoutes(handler *NewsHandler) {
+	r.mux.HandleFunc("/api/news", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodGet {
+			handler.GetNews(w, req)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	r.mux.HandleFunc("/api/sentiment/", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodGet {
+			handler.GetSentiment(w, req)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	r.mux.HandleFunc("/api/signals", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodGet {
+			handler.GetSignals(w, req)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	r.mux.HandleFunc("/api/market/sentiment", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodGet {
+			handler.GetMarketSentiment(w, req)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+}
+
+// RegisterAuthRoutes registers authentication routes
+func (r *Router) RegisterAuthRoutes(handler *AuthHandler) {
+	r.mux.HandleFunc("/api/auth/login", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPost {
+			handler.Login(w, req)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	r.mux.HandleFunc("/api/auth/logout", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPost {
+			handler.Logout(w, req)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	r.mux.HandleFunc("/api/auth/me", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodGet {
+			handler.Me(w, req)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+}
+
+// RegisterNotificationRoutes registers notification routes
+func (r *Router) RegisterNotificationRoutes(handler *NotificationHandler) {
+	r.mux.HandleFunc("/api/notifications", func(w http.ResponseWriter, req *http.Request) {
+		switch req.Method {
+		case http.MethodGet:
+			handler.GetNotifications(w, req)
+		case http.MethodDelete:
+			handler.ClearAll(w, req)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	r.mux.HandleFunc("/api/notifications/read-all", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPut {
+			handler.MarkAllRead(w, req)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	r.mux.HandleFunc("/api/notifications/", func(w http.ResponseWriter, req *http.Request) {
+		switch req.Method {
+		case http.MethodPut:
+			handler.MarkRead(w, req)
+		case http.MethodDelete:
+			handler.DeleteNotification(w, req)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+}
+
+// RegisterPerformanceRoutes registers performance analytics route
+func (r *Router) RegisterPerformanceRoutes(handler *PerformanceHandler) {
+	r.mux.HandleFunc("/api/performance", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodGet {
+			handler.GetPerformance(w, req)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+}
+
+// RegisterJournalRoutes registers trading journal routes
+func (r *Router) RegisterJournalRoutes(handler *JournalHandler) {
+	r.mux.HandleFunc("/api/journal", func(w http.ResponseWriter, req *http.Request) {
+		switch req.Method {
+		case http.MethodGet:
+			handler.GetEntries(w, req)
+		case http.MethodPost:
+			handler.CreateEntry(w, req)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	r.mux.HandleFunc("/api/journal/", func(w http.ResponseWriter, req *http.Request) {
+		switch req.Method {
+		case http.MethodPut:
+			handler.UpdateEntry(w, req)
+		case http.MethodDelete:
+			handler.DeleteEntry(w, req)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+}
+
+// RegisterSLTPRoutes registers stop-loss/take-profit routes
+func (r *Router) RegisterSLTPRoutes(handler *SLTPHandler) {
+	r.mux.HandleFunc("/api/sltp", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPost {
+			handler.SetSLTP(w, req)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	r.mux.HandleFunc("/api/sltp/", func(w http.ResponseWriter, req *http.Request) {
+		switch req.Method {
+		case http.MethodGet:
+			handler.GetSLTP(w, req)
+		case http.MethodDelete:
+			handler.DeleteSLTP(w, req)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+}
+
+// publicRoutes are paths that do not require authentication
+var publicRoutes = map[string]bool{
+	"/api/auth/login":  true,
+	"/api/auth/logout": true,
+	"/api/health":      true,
+}
+
 // ServeHTTP implements http.Handler
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// Add CORS headers
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	origin := req.Header.Get("Origin")
+	allowedOrigin := "http://localhost:3000"
+	if envOrigin := getEnv("FRONTEND_URL", ""); envOrigin != "" {
+		allowedOrigin = envOrigin
+	}
+	if origin != "" {
+		w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+	} else {
+		w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+	}
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	w.Header().Set("Access-Control-Allow-Credentials", "true")
 
 	if req.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
+	// Enforce authentication on all non-public routes
+	if !publicRoutes[req.URL.Path] {
+		token := extractBearerToken(req)
+		if token == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Unauthorized"})
+			return
+		}
+		if _, ok := r.authHandler.ValidateToken(token); !ok {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid or expired token"})
+			return
+		}
+	}
+
 	r.mux.ServeHTTP(w, req)
+}
+
+// getEnv reads an environment variable with a fallback default
+func getEnv(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }
 
 // Logger middleware for logging requests

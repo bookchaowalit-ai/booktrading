@@ -1,16 +1,13 @@
-/**
- * Order Tracking Component
- * Real-time grid order monitoring and management
- */
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Card from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import DataTable from '@/components/ui/DataTable';
 import { RefreshCw, XCircle, CheckCircle, Clock } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
+import { api } from '@/services/api';
 
 interface GridOrder {
   id: string;
@@ -35,82 +32,52 @@ export default function OrderTracking({
 }: OrderTrackingProps) {
   const { success, error } = useToast();
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [orders, setOrders] = useState<GridOrder[]>([]);
 
-  // Mock orders (replace with real data from backend)
-  const [orders, setOrders] = useState<GridOrder[]>([
-    {
-      id: '1',
-      level: 1,
-      type: 'BUY',
-      price: 49000,
-      quantity: 0.1,
-      filled: 0.1,
-      status: 'FILLED',
-      pnl: 125.50,
-      timestamp: new Date(),
-    },
-    {
-      id: '2',
-      level: 2,
-      type: 'BUY',
-      price: 48500,
-      quantity: 0.1,
-      filled: 0.1,
-      status: 'FILLED',
-      pnl: 87.30,
-      timestamp: new Date(),
-    },
-    {
-      id: '3',
-      level: 3,
-      type: 'BUY',
-      price: 48000,
-      quantity: 0.1,
-      filled: 0,
-      status: 'ACTIVE',
-      timestamp: new Date(),
-    },
-    {
-      id: '4',
-      level: 4,
-      type: 'SELL',
-      price: 49500,
-      quantity: 0.1,
-      filled: 0,
-      status: 'PENDING',
-      timestamp: new Date(),
-    },
-    {
-      id: '5',
-      level: 5,
-      type: 'SELL',
-      price: 50000,
-      quantity: 0.1,
-      filled: 0,
-      status: 'PENDING',
-      timestamp: new Date(),
-    },
-  ]);
+  const fetchOrders = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      const raw = await api.getOrders();
+      const mapped: GridOrder[] = raw.map((o, idx) => ({
+        id: o.id,
+        level: idx + 1,
+        type: (o.side as 'BUY' | 'SELL') || 'BUY',
+        price: o.price || 0,
+        quantity: o.quantity || 0,
+        filled: o.status === 'FILLED' ? o.quantity : 0,
+        status: (o.status as GridOrder['status']) || 'PENDING',
+        pnl: undefined,
+        timestamp: new Date(o.createdAt || Date.now()),
+      }));
+      setOrders(mapped);
+    } catch {
+      error('Failed to load orders');
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [error]);
+
+  useEffect(() => {
+    fetchOrders();
+  }, [fetchOrders]);
 
   const handleRefresh = async () => {
-    setIsRefreshing(true);
-    // TODO: Fetch real orders from backend
-    setTimeout(() => {
-      setIsRefreshing(false);
-      success('Orders refreshed');
-    }, 1000);
+    await fetchOrders();
+    success('Orders refreshed');
   };
 
   const handleCancelOrder = async (orderId: string) => {
-    // TODO: Call backend API to cancel order
-    setOrders((prev) =>
-      prev.map((order) =>
-        order.id === orderId
-          ? { ...order, status: 'CANCELLED' as const }
-          : order
-      )
-    );
-    success('Order cancelled');
+    try {
+      await api.cancelOrder(orderId);
+      setOrders((prev) =>
+        prev.map((order) =>
+          order.id === orderId ? { ...order, status: 'CANCELLED' as const } : order
+        )
+      );
+      success('Order cancelled');
+    } catch {
+      error('Failed to cancel order');
+    }
   };
 
   const getStatusBadge = (status: GridOrder['status']) => {
@@ -172,7 +139,7 @@ export default function OrderTracking({
             <div
               className="bg-purple-600 h-1.5 rounded-full"
               style={{
-                width: `${(order.filled / order.quantity) * 100}%`,
+                width: `${order.quantity > 0 ? (order.filled / order.quantity) * 100 : 0}%`,
               }}
             />
           </div>
@@ -185,9 +152,8 @@ export default function OrderTracking({
       render: (order: GridOrder) =>
         order.pnl !== undefined ? (
           <span
-            className={`font-mono font-bold ${
-              order.pnl >= 0 ? 'text-green-600' : 'text-red-600'
-            }`}
+            className={`font-mono font-bold ${order.pnl >= 0 ? 'text-green-600' : 'text-red-600'
+              }`}
           >
             {order.pnl >= 0 ? '+' : ''}${order.pnl.toFixed(2)}
           </span>
@@ -231,9 +197,8 @@ export default function OrderTracking({
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <RefreshCw
-            className={`w-4 h-4 text-purple-600 ${
-              isRefreshing ? 'animate-spin' : ''
-            }`}
+            className={`w-4 h-4 text-purple-600 ${isRefreshing ? 'animate-spin' : ''
+              }`}
           />
           <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
             Grid Orders ({symbol})
@@ -280,9 +245,8 @@ export default function OrderTracking({
             Total P&L
           </span>
           <div
-            className={`text-lg font-bold mt-1 ${
-              totalPnL >= 0 ? 'text-green-600' : 'text-red-600'
-            }`}
+            className={`text-lg font-bold mt-1 ${totalPnL >= 0 ? 'text-green-600' : 'text-red-600'
+              }`}
           >
             {totalPnL >= 0 ? '+' : ''}${totalPnL.toFixed(2)}
           </div>

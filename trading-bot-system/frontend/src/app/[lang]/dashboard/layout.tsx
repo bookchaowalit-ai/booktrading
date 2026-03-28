@@ -4,7 +4,7 @@
  */
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import { ToastProvider } from '@/components/ui/Toast';
@@ -17,6 +17,7 @@ import { WSStatusIndicator } from '@/components/WSStatusIndicator';
 import { Dropdown } from '@/components/ui';
 import NotificationCenter from '@/components/NotificationCenter';
 import MobileBottomNav from '@/components/MobileBottomNav';
+import { api } from '@/services/api';
 
 export default function DashboardLayout({
   children,
@@ -26,22 +27,39 @@ export default function DashboardLayout({
   const pathname = usePathname();
   const router = useRouter();
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   // Extract locale from pathname, e.g. /en/dashboard → "en"
-  const locale = pathname.split('/')[1] || 'en';
+  const locale = pathname.split('/')[1] || 'th';
+
+  const fetchUnreadCount = useCallback(async () => {
+    try {
+      const notifs = await api.getNotifications();
+      setUnreadCount(notifs.filter((n: { read: boolean }) => !n.read).length);
+    } catch {
+      // ignore
+    }
+  }, []);
 
   useEffect(() => {
     setMounted(true);
+    fetchUnreadCount();
+    const interval = setInterval(fetchUnreadCount, 15000);
+    return () => clearInterval(interval);
+  }, [fetchUnreadCount]);
+
+  useEffect(() => {
     // Check if user is authenticated
     if (!isAuthenticated()) {
       // For demo, we'll allow access but in production redirect to login
     }
   }, [pathname]);
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     router.push(`/${locale}`);
   };
 
@@ -117,6 +135,8 @@ export default function DashboardLayout({
           <Sidebar
             isCollapsed={isSidebarCollapsed}
             onToggle={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+            isMobileOpen={isMobileSidebarOpen}
+            onMobileClose={() => setIsMobileSidebarOpen(false)}
           />
 
           {/* Main Content */}
@@ -129,9 +149,9 @@ export default function DashboardLayout({
               <div className="flex justify-between items-center h-16 px-6">
                 {/* Mobile menu button */}
                 <button
-                  onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+                  onClick={() => setIsMobileSidebarOpen(true)}
                   className="lg:hidden text-gray-500 hover:text-gray-700 dark:text-gray-400"
-                  aria-label="Toggle menu"
+                  aria-label="Open menu"
                 >
                   <Menu className="w-6 h-6" />
                 </button>
@@ -177,11 +197,16 @@ export default function DashboardLayout({
                   </button>
 
                   {/* Notifications */}
-                  <button className="text-gray-500 hover:text-gray-700 dark:text-gray-400 relative">
+                  <button
+                    className="text-gray-500 hover:text-gray-700 dark:text-gray-400 relative"
+                    aria-label={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ''}`}
+                  >
                     <Bell className="w-5 h-5" />
-                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full text-xs text-white flex items-center justify-center">
-                      3
-                    </span>
+                    {unreadCount > 0 && (
+                      <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full text-xs text-white flex items-center justify-center">
+                        {unreadCount > 9 ? '9+' : unreadCount}
+                      </span>
+                    )}
                   </button>
 
                   {/* User Profile */}
@@ -201,14 +226,9 @@ export default function DashboardLayout({
               </div>
             </nav>
 
-            {/* Page Content */}
-            <div className="p-6 pb-20 md:pb-6">
+            {/* Page Content - Scrollable */}
+            <div className="p-4 overflow-y-auto">
               {children}
-
-              {/* Notification Center - Desktop */}
-              <div className="hidden md:block mt-6">
-                <NotificationCenter />
-              </div>
             </div>
 
             {/* Mobile Bottom Navigation */}

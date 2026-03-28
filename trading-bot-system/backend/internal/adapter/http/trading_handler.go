@@ -3,7 +3,6 @@ package http
 import (
 	"encoding/json"
 	"net/http"
-	"sync"
 
 	"trading-bot-system/backend/internal/domain/service"
 )
@@ -11,7 +10,6 @@ import (
 // TradingHandler handles trading-related HTTP requests
 type TradingHandler struct {
 	tradingService *service.TradingService
-	once           sync.Once
 }
 
 // NewTradingHandler creates a new trading handler
@@ -51,14 +49,7 @@ func (h *TradingHandler) StartBot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Initialize once
-	h.once.Do(func() {
-		// In production, load API keys from secure storage
-		// For now, using mock keys - you should load from your API keys page
-		h.tradingService.ConfigureBot("YOUR_API_KEY", "YOUR_API_SECRET", false)
-	})
-
-	// Start the bot
+	// Use API keys previously configured via POST /api/trading/configure
 	err := h.tradingService.StartBot(r.Context(), req.Symbol, req.Quantity, req.GridLevels, req.LowerPrice, req.UpperPrice, req.Investment)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")

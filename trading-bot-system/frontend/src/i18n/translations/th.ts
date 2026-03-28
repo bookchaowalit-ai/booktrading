@@ -141,7 +141,7 @@ export const th = {
   'feature.security': 'ความปลอดภัยระดับธนาคาร',
   'feature.security-desc': 'เงินทุนของคุณได้รับการปกป้องด้วยการเข้ารหัสและโปรโตคอลความปลอดภัยชั้นนำในอุตสาหกรรม',
   'feature.fast': 'การดำเนินการที่รวดเร็ว',
-  'feature.fast-desc': 'คำสั่ง被执行ในไม่กี่มิลลิวินาที เพื่อให้คุณไม่พลาดการเทรดที่ทำกำไร',
+  'feature.fast-desc': 'คำสั่งถูกดำเนินการในไม่กี่มิลลิวินาที เพื่อให้คุณไม่พลาดการเทรดที่ทำกำไร',
   'feature.analytics': 'การวิเคราะห์ขั้นสูง',
   'feature.analytics-desc': 'กราฟแบบเรียลไทม์ ตัวชี้วัดทางเทคนิค และเมตริกประสิทธิภาพในมือคุณ',
   'feature.monitoring': 'ติดตามตลอด 24/7',
@@ -303,9 +303,24 @@ export const th = {
   'signals.execute': 'ดำเนินการ',
   'signals.reasoning': 'เหตุผลของ AI',
 
-  // Navigation Extended
-  'nav.backtest': 'แบ็คเทส & กระดาษ',
-  
+  // Exchange Names
+  'exchange.binance': 'Binance',
+  'exchange.bitkub': 'Bitkub (ไทย)',
+  'exchange.satangpro': 'Satang Pro (ไทย)',
+  'exchange.coinbase': 'Coinbase',
+  'exchange.kraken': 'Kraken',
+  'exchange.thai': 'กระดานเทรดไทย',
+
+  // Trading Pairs
+  'pairs.search': 'ค้นหาคู่เทรด',
+  'pairs.popular-th': 'ยอดนิยมในไทย',
+  'pairs.all': 'คู่เทรดทั้งหมด',
+  'pairs.crypto-thb': 'คริปโต/THB',
+  'pairs.forex': 'คู่สกุลเงินฟอเร็กซ์',
+  'pairs.commodities': 'สินค้าโภคภัณฑ์',
+  'pairs.indices': 'ดัชนีตลาด',
+  'pairs.stocks': 'หุ้นสหรัฐ',
+
   // Exchange & Trading
   'exchange.select': 'เลือกกระดานเทรด',
   'exchange.connected': 'เชื่อมต่อแล้ว',
@@ -414,23 +429,7 @@ export const th = {
   'ui.overview': 'ภาพรวม',
   'ui.risk-management': 'จัดการความเสี่ยง',
   'ui.orders': 'ออร์เดอร์',
-  
-  // Settings Tabs
-  'settings.general': 'ทั่วไป',
-  'settings.api-keys': 'API Keys',
-  'settings.notifications': 'การแจ้งเตือน',
-  'settings.advanced': 'ขั้นสูง',
-  'settings.danger-zone': 'โซนอันตราย',
-  'settings.export': 'ส่งออก',
-  'settings.reset': 'รีเซ็ตการตั้งค่าทั้งหมด',
-  'settings.language': 'ภาษา',
-  'settings.theme': 'ธีม',
-  'settings.trade-executions': 'การดำเนินการเทรด',
-  'settings.price-alerts': 'แจ้งเตือนราคา',
-  'settings.save-preferences': 'บันทึกการตั้งค่า',
-  'settings.database-backup': 'สำรองฐานข้อมูล',
-  'settings.export-data': 'ส่งออกข้อมูลการเทรด',
-  
+
   // Toast Messages
   'toast.switched-exchange': 'สลับเป็น {exchange} แล้ว',
   'toast.no-api-credentials': 'ไม่มี API credentials สำหรับ {exchange} เพิ่ม keys ในการตั้งค่า → API Keys',
@@ -460,7 +459,6 @@ export const th = {
   'ui.test': 'ทดสอบ',
   'ui.connect': 'เชื่อมต่อ',
   'ui.disconnect': 'ตัดการเชื่อมต่อ',
-  'ui.status': 'สถานะ',
   'ui.action': 'การดำเนินการ',
   'ui.actions': 'การดำเนินการ',
   'ui.options': 'ตัวเลือก',

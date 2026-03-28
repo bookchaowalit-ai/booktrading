@@ -33,6 +33,11 @@ export default function CommandPalette({ isOpen, onClose, commands }: CommandPal
     cmd.label.toLowerCase().includes(search.toLowerCase())
   );
 
+  // Reset selected index when search changes to avoid out-of-bounds
+  useEffect(() => {
+    setSelectedIndex(0);
+  }, [search]);
+
   // Keyboard navigation
   useKeyboardShortcuts([
     {

@@ -5,6 +5,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import { useAppStore } from '@/store/store';
 import { useWebSocket, useAutoRefresh } from '@/hooks';
 import PriceChart from '@/components/PriceChart';
@@ -13,11 +14,12 @@ import PortfolioPanel from '@/components/PortfolioPanel';
 import TradeHistoryPanel from '@/components/TradeHistoryPanel';
 import CategorySummaryCards from '@/components/CategorySummaryCards';
 import StatCard from '@/components/StatCard';
-import EmptyState, { NoDataEmptyState } from '@/components/EmptyState';
+import EmptyState from '@/components/EmptyState';
 import { AssetCategory } from '@/types';
 import { useTranslation } from '@/i18n/translations';
 import { useToast } from '@/components/ui/Toast';
-import { DollarSign, TrendingUp, Activity, Wallet, BarChart3, Zap, ArrowRight, Settings } from 'lucide-react';
+import { Tabs } from '@/components/ui';
+import { DollarSign, TrendingUp, Activity, Wallet, BarChart3, Zap, ArrowRight, Settings, LayoutDashboard } from 'lucide-react';
 import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 
@@ -26,33 +28,45 @@ const SYMBOLS = ['BTCUSDT', 'ETHUSDT'];
 export default function Dashboard() {
   const { t } = useTranslation();
   const { success } = useToast();
+  const router = useRouter();
+  const pathname = usePathname();
+  const locale = pathname.split('/')[1] || 'th';
   const portfolio = useAppStore((state) => state.portfolio);
   const botStatus = useAppStore((state) => state.botStatus);
   const [activeCategory, setActiveCategory] = useState<AssetCategory | null>(null);
+  const [activeTab, setActiveTab] = useState<'overview' | 'portfolio' | 'trades'>('overview');
   const [isLoading, setIsLoading] = useState(true);
 
-  // Initialize WebSocket connection (disabled until backend is ready)
-  // useWebSocket();
+  // Initialize WebSocket connection for real-time updates
+  useWebSocket();
 
-  // Auto-refresh data every 5 seconds (disabled until backend is ready)
-  // useAutoRefresh(5000);
+  // Auto-refresh data every 5 seconds
+  useAutoRefresh(5000);
 
   const refreshBotStatus = useAppStore((state) => state.refreshBotStatus);
   const refreshIndicators = useAppStore((state) => state.refreshIndicators);
+  const [winRate, setWinRate] = useState(0);
 
   useEffect(() => {
-    // Disabled: These will fail until backend endpoints are implemented
-    // refreshBotStatus();
-    // refreshIndicators();
+    const init = async () => {
+      try {
+        await Promise.allSettled([refreshBotStatus(), refreshIndicators()]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    init();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-    // Simulate initial loading
-    const timer = setTimeout(() => {
-      setIsLoading(false);
-      // Removed success toast to reduce noise
-    }, 1000);
-
-    return () => clearTimeout(timer);
-  }, [refreshBotStatus, refreshIndicators, success]);
+  // Fetch win rate from performance API
+  useEffect(() => {
+    import('@/services/api').then(({ api }) => {
+      api.getPerformance()
+        .then((p) => setWinRate(p.winRate || 0))
+        .catch(() => setWinRate(0));
+    });
+  }, []);
 
   // Calculate portfolio metrics
   const totalValue = portfolio?.reduce((sum, item) => {
@@ -61,7 +75,6 @@ export default function Dashboard() {
 
   const totalProfit = botStatus?.totalProfit || 0;
   const totalTrades = botStatus?.totalTrades || 0;
-  const winRate = totalTrades > 0 ? 65 : 0; // Mock win rate
 
   if (isLoading) {
     return (
@@ -95,7 +108,7 @@ export default function Dashboard() {
           <Button
             variant="primary"
             size="sm"
-            onClick={() => window.location.href = '/dashboard/trading'}
+            onClick={() => router.push(`/${locale}/dashboard/trading`)}
             gradient
           >
             Configure
@@ -113,7 +126,6 @@ export default function Dashboard() {
           <div className="text-lg font-bold text-gray-900 dark:text-white">
             ${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
           </div>
-          <div className="text-xs text-green-600 mt-1">+2.5% vs last week</div>
         </div>
 
         <div className="p-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">

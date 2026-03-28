@@ -32,6 +32,7 @@ export default function BotControl({ onPositionChange }: BotControlProps) {
   const [leverage, setLeverage] = useState(3);
   const [positionMode, setPositionMode] = useState<'LONG' | 'SHORT' | 'AUTO'>('AUTO');
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showStartConfirm, setShowStartConfirm] = useState(false);
 
   const handleStartBot = () => {
     if (leverage > 5) {
@@ -39,6 +40,7 @@ export default function BotControl({ onPositionChange }: BotControlProps) {
     }
     startBot();
     success(`Bot started in ${positionMode} mode with ${leverage}x leverage`);
+    setShowStartConfirm(false);
   };
 
   const handleStopBot = () => {
@@ -107,12 +109,39 @@ export default function BotControl({ onPositionChange }: BotControlProps) {
         </div>
       </div>
 
+      {/* Start Confirmation Panel */}
+      <AnimatePresence>
+        {showStartConfirm && !isActive && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="mb-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded-lg"
+          >
+            <div className="flex items-center gap-2 mb-2">
+              <AlertTriangle className="w-4 h-4 text-yellow-600 dark:text-yellow-400 flex-shrink-0" />
+              <p className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
+                Start bot in {positionMode} mode with {leverage}x leverage?
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" gradient onClick={handleStartBot}>
+                Confirm Start
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => setShowStartConfirm(false)}>
+                Cancel
+              </Button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Start/Stop Button */}
       <Button
         fullWidth
         size="lg"
         gradient
-        onClick={isActive ? handleStopBot : handleStartBot}
+        onClick={isActive ? handleStopBot : () => setShowStartConfirm(true)}
         isLoading={isLoading}
         leftIcon={isActive ? <Shield className="w-5 h-5" /> : <Zap className="w-5 h-5" />}
         className="mb-6"

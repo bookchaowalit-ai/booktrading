@@ -4,7 +4,7 @@
  */
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -68,19 +68,21 @@ const bottomNavItems: NavItem[] = [
 interface SidebarProps {
   isCollapsed: boolean;
   onToggle: () => void;
+  isMobileOpen: boolean;
+  onMobileClose: () => void;
 }
 
-export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
+export default function Sidebar({ isCollapsed, onToggle, isMobileOpen, onMobileClose }: SidebarProps) {
   const pathname = usePathname();
   const { t } = useTranslation();
-  const [isMobileOpen, setIsMobileOpen] = useState(false);
 
   // Extract locale from pathname, e.g. /en/dashboard → "en"
-  const locale = pathname.split('/')[1] || 'en';
+  const locale = pathname.split('/')[1] || 'th';
 
   // Close mobile menu when route changes
   useEffect(() => {
-    setIsMobileOpen(false);
+    onMobileClose();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
 
   return (
@@ -89,7 +91,7 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
       {isMobileOpen && (
         <div
           className="fixed inset-0 bg-black/50 z-40 lg:hidden"
-          onClick={() => setIsMobileOpen(false)}
+          onClick={onMobileClose}
           aria-hidden="true"
         />
       )}
@@ -106,7 +108,7 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
       >
         {/* Mobile close button */}
         <button
-          onClick={() => setIsMobileOpen(false)}
+          onClick={onMobileClose}
           className="lg:hidden absolute top-4 right-4 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700"
           aria-label="Close menu"
         >
@@ -125,12 +127,9 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
             </span>
           </motion.div>
           <button
-            onClick={() => {
-              onToggle();
-              setIsMobileOpen(true);
-            }}
+            onClick={onToggle}
             className="lg:p-2 p-3 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-            aria-label={isCollapsed ? 'Open menu' : 'Close menu'}
+            aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
             {isCollapsed ? (
               <ChevronRight className="w-5 h-5 text-gray-500" />
@@ -141,15 +140,13 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 p-4 space-y-2 overflow-y-auto" style={{ height: '100%' }} role="menubar">
+        <nav className="flex-1 p-4 space-y-2 overflow-y-auto" style={{ height: '100%' }}>
           {/* Main Navigation */}
-          <div className="space-y-2" role="menu">
+          <ul className="space-y-2 list-none p-0 m-0">
             {navItems.map((item) => (
+              <li key={item.nameKey}>
               <Link
-                key={item.nameKey}
                 href={`/${locale}${item.href}`}
-                role="menuitem"
-                aria-label={t(item.nameKey)}
                 aria-current={pathname === `/${locale}${item.href}` ? 'page' : undefined}
                 className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors relative ${pathname === `/${locale}${item.href}`
                   ? 'bg-purple-100 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400'
@@ -175,8 +172,9 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
                   />
                 )}
               </Link>
+              </li>
             ))}
-          </div>
+          </ul>
 
           {/* Bottom Navigation */}
           <div className="absolute bottom-4 left-0 right-0 px-4">

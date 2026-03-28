@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { useTranslation } from '@/i18n/translations';
 import { AssetCategory } from '@/types';
+import { useToast } from '@/components/ui/Toast';
 import AssetCategoryFilter from '@/components/AssetCategoryFilter';
 import CategoryIcon from '@/components/CategoryIcon';
 import Card from '@/components/ui/Card';
@@ -31,6 +32,7 @@ import {
 
 export default function GridTradingPage() {
   const { t } = useTranslation();
+  const { error, success } = useToast();
   const [isRunning, setIsRunning] = useState(false);
   const [selectedCategories, setSelectedCategories] = useState<AssetCategory[]>(
     ['crypto', 'stock', 'forex', 'commodity', 'index']

@@ -1,25 +1,9 @@
 /**
- * Demo Authentication Service
- * Simple in-memory auth for demo purposes
+ * Authentication Service
+ * Connects to backend /api/auth endpoints
  */
 
-// Demo users for testing
-export const demoUsers = [
-  {
-    id: '1',
-    email: 'demo@tradepro.com',
-    password: 'demo123',
-    name: 'Demo Trader',
-    role: 'trader'
-  },
-  {
-    id: '2',
-    email: 'admin@tradepro.com',
-    password: 'admin123',
-    name: 'Admin User',
-    role: 'admin'
-  }
-];
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
 export interface User {
   id: string;
@@ -36,49 +20,44 @@ export interface AuthResult {
 }
 
 /**
- * Authenticate user (demo implementation)
+ * Authenticate user via backend API
  */
-export function authenticate(email: string, password: string): AuthResult {
-  const user = demoUsers.find(u => u.email === email && u.password === password);
-  
-  if (user) {
-    // Create a simple token (in production, use JWT)
-    const token = btoa(JSON.stringify({ ...user, iat: Date.now() }));
-    
-    // Store in localStorage
-    localStorage.setItem('auth_token', token);
-    localStorage.setItem('user', JSON.stringify({
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role
-    }));
-    
-    return {
-      success: true,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role
-      },
-      token
-    };
+export async function authenticate(email: string, password: string): Promise<AuthResult> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({ error: 'Invalid email or password' }));
+      return { success: false, error: data.error || 'Invalid email or password' };
+    }
+
+    const data: { token: string; user: User } = await response.json();
+
+    localStorage.setItem('auth_token', data.token);
+    localStorage.setItem('user', JSON.stringify(data.user));
+
+    return { success: true, user: data.user, token: data.token };
+  } catch {
+    return { success: false, error: 'Unable to connect to server' };
   }
-  
-  return {
-    success: false,
-    error: 'Invalid email or password'
-  };
 }
 
 /**
- * Get current authenticated user
+ * Get current authenticated user (from localStorage)
  */
 export function getCurrentUser(): User | null {
+  if (typeof window === 'undefined') return null;
   const userStr = localStorage.getItem('user');
   if (userStr) {
-    return JSON.parse(userStr);
+    try {
+      return JSON.parse(userStr);
+    } catch {
+      return null;
+    }
   }
   return null;
 }
@@ -87,25 +66,40 @@ export function getCurrentUser(): User | null {
  * Check if user is authenticated
  */
 export function isAuthenticated(): boolean {
+  if (typeof window === 'undefined') return false;
   return !!localStorage.getItem('auth_token');
 }
 
 /**
  * Logout user
  */
-export function logout(): void {
+export async function logout(): Promise<void> {
+  const token = localStorage.getItem('auth_token');
+  if (token) {
+    await fetch(`${API_BASE_URL}/api/auth/logout`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    }).catch(() => {});
+  }
   localStorage.removeItem('auth_token');
   localStorage.removeItem('user');
 }
 
 /**
- * Get demo credentials for display
+ * Get the stored auth token
+ */
+export function getAuthToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('auth_token');
+}
+
+/**
+ * Demo credentials for display on login screen
  */
 export function getDemoCredentials() {
-  return demoUsers.map(({ email, password, name, role }) => ({
-    email,
-    password,
-    name,
-    role
-  }));
+  return [
+    { email: 'demo@tradepro.com', password: 'demo123', name: 'Demo Trader', role: 'trader' },
+    { email: 'admin@tradepro.com', password: 'admin123', name: 'Admin User', role: 'admin' },
+  ];
 }
+

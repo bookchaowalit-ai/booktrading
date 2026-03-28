@@ -89,9 +89,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       await api.startBot();
       await get().refreshBotStatus();
-    } catch (error) {
-      // Backend not available - simulate success for demo
-      set({ botStatus: { isActive: true, totalTrades: 0, totalProfit: 0 } });
     } finally {
       set({ isBotLoading: false });
     }
@@ -102,9 +99,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       await api.stopBot();
       await get().refreshBotStatus();
-    } catch (error) {
-      // Backend not available - simulate success for demo
-      set({ botStatus: { isActive: false, totalTrades: 0, totalProfit: 0 } });
     } finally {
       set({ isBotLoading: false });
     }
@@ -114,8 +108,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const status = await api.getBotStatus();
       set({ botStatus: status });
-    } catch (error) {
-      console.error('Failed to refresh bot status:', error);
+    } catch {
+      // silently ignore - UI will show last known state
     }
   },
 
@@ -124,8 +118,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const portfolio = await api.getPortfolio();
       set({ portfolio });
-    } catch (error) {
-      console.error('Failed to refresh portfolio:', error);
+    } catch {
+      // silently ignore
     }
   },
   
@@ -133,8 +127,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const orders = await api.getOrders();
       set({ orders });
-    } catch (error) {
-      console.error('Failed to refresh orders:', error);
+    } catch {
+      // silently ignore
     }
   },
   
@@ -142,8 +136,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const trades = await api.getTradeHistory();
       set({ tradeHistory: trades });
-    } catch (error) {
-      console.error('Failed to refresh trade history:', error);
+    } catch {
+      // silently ignore
     }
   },
   
@@ -151,8 +145,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const indicators = await api.getIndicators();
       set({ indicators });
-    } catch (error) {
-      console.error('Failed to refresh indicators:', error);
+    } catch {
+      // silently ignore
     }
   },
 

@@ -147,9 +147,16 @@ func main() {
 	healthHandler := httpadapter.NewHealthHandler()
 	exchangeHandler := httpadapter.NewExchangeHandler(exchangeManager)
 	settingsHandler := httpadapter.NewSettingsHandler(cfg, prefsRepo)
+	tradingHandler := httpadapter.NewTradingHandler()
+	newsHandler := httpadapter.NewNewsHandler()
+	authHandler := httpadapter.NewAuthHandler()
+	notificationHandler := httpadapter.NewNotificationHandler(db.Pool)
+	performanceHandler := httpadapter.NewPerformanceHandler(tradeHistoryService)
+	journalHandler := httpadapter.NewJournalHandler(db.Pool)
+	sltpHandler := httpadapter.NewSLTPHandler()
 
 	// Setup router
-	router := httpadapter.NewRouter()
+	router := httpadapter.NewRouter(authHandler)
 	router.RegisterOrderRoutes(orderHandler)
 	router.RegisterBotRoutes(botHandler)
 	router.RegisterPortfolioRoutes(portfolioHandler)
@@ -157,6 +164,13 @@ func main() {
 	router.RegisterHealthRoute(healthHandler)
 	router.RegisterExchangeRoutes(exchangeHandler)
 	router.RegisterSettingsRoutes(settingsHandler)
+	router.RegisterTradingRoutes(tradingHandler)
+	router.RegisterNewsRoutes(newsHandler)
+	router.RegisterAuthRoutes(authHandler)
+	router.RegisterNotificationRoutes(notificationHandler)
+	router.RegisterPerformanceRoutes(performanceHandler)
+	router.RegisterJournalRoutes(journalHandler)
+	router.RegisterSLTPRoutes(sltpHandler)
 
 	// Add logging middleware
 	handler := httpadapter.Logger(router)

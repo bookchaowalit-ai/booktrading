@@ -16,6 +16,14 @@
   }
 }
 
+/* Compact App Design - No Scrolling */
+html, body {
+  overflow: hidden;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+}
+
 body {
   color: rgb(var(--foreground-rgb));
   background: linear-gradient(
@@ -30,23 +38,36 @@ body {
   .text-balance {
     text-wrap: balance;
   }
+  
+  /* Compact utilities */
+  .text-compact {
+    @apply text-xs leading-tight;
+  }
+  
+  .p-compact {
+    @apply p-2;
+  }
+  
+  .gap-compact {
+    @apply gap-2;
+  }
 }
 
-/* Custom scrollbar */
+/* Compact scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 4px;
+  height: 4px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #1f2937;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #4b5563;
-  border-radius: 4px;
+  background: #6b7280;
+  border-radius: 2px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #6b7280;
+  background: #9ca3af;
 }

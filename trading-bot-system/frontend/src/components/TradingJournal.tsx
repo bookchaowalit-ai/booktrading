@@ -4,13 +4,14 @@
  */
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import Modal from '@/components/ui/Modal';
 import { BookOpen, Plus, Edit2, Trash2, Star } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
+import { api } from '@/services/api';
 
 interface TradeJournal {
   id: string;
@@ -24,7 +25,7 @@ interface TradeJournal {
   pnlPercent: number;
   notes?: string;
   screenshot?: string;
-  rating?: number; // 1-5 stars
+  rating?: number;
   strategy?: string;
   emotions?: string;
   lessons?: string;
@@ -34,47 +35,72 @@ export default function TradingJournal() {
   const { success, error } = useToast();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedTrade, setSelectedTrade] = useState<TradeJournal | null>(null);
+  const [trades, setTrades] = useState<TradeJournal[]>([]);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
-  // Mock trades (replace with real data)
-  const [trades, setTrades] = useState<TradeJournal[]>([
-    {
-      id: '1',
-      date: new Date('2024-01-15'),
-      symbol: 'BTCUSDT',
-      side: 'LONG',
-      entryPrice: 48500,
-      exitPrice: 49200,
-      quantity: 0.1,
-      pnl: 70,
-      pnlPercent: 1.44,
-      notes: 'Good entry at support level',
-      rating: 4,
-      strategy: 'Support/Resistance',
-      emotions: 'Confident',
-      lessons: 'Wait for confirmation',
-    },
-    {
-      id: '2',
-      date: new Date('2024-01-14'),
-      symbol: 'ETHUSDT',
-      side: 'SHORT',
-      entryPrice: 2650,
-      exitPrice: 2680,
-      quantity: 1,
-      pnl: -30,
-      pnlPercent: -1.13,
-      notes: 'Entered too early',
-      rating: 2,
-      strategy: 'Breakout',
-      emotions: 'Impatient',
-      lessons: 'Wait for breakout confirmation',
-    },
-  ]);
+  const fetchTrades = useCallback(async () => {
+    try {
+      const raw = await api.getJournalEntries();
+      const mapped: TradeJournal[] = raw.map((t) => ({
+        id: t.id,
+        date: new Date(t.date),
+        symbol: t.symbol,
+        side: t.side as 'LONG' | 'SHORT',
+        entryPrice: t.entryPrice,
+        exitPrice: t.exitPrice,
+        quantity: t.quantity,
+        pnl: t.pnl,
+        pnlPercent: t.pnlPercent,
+        notes: t.notes,
+        rating: t.rating,
+        strategy: t.strategy,
+        emotions: t.emotions,
+        lessons: t.lessons,
+      }));
+      setTrades(mapped);
+    } catch {
+      // ignore
+    }
+  }, []);
 
-  const handleDeleteTrade = (id: string) => {
-    if (confirm('Are you sure you want to delete this trade?')) {
+  useEffect(() => {
+    fetchTrades();
+  }, [fetchTrades]);
+
+  const handleDeleteTrade = async (id: string) => {
+    try {
+      await api.deleteJournalEntry(id);
       setTrades((prev) => prev.filter((t) => t.id !== id));
+      setDeleteConfirmId(null);
       success('Trade deleted');
+    } catch {
+      error('Failed to delete trade');
+    }
+  };
+
+  const handleSaveTrade = async (trade: Omit<TradeJournal, 'id'>) => {
+    try {
+      if (selectedTrade) {
+        await api.updateJournalEntry(selectedTrade.id, {
+          ...trade,
+          date: trade.date.toISOString(),
+        });
+        setTrades((prev) =>
+          prev.map((t) => (t.id === selectedTrade.id ? { ...trade, id: selectedTrade.id } : t))
+        );
+        success('Trade updated');
+      } else {
+        const result = await api.createJournalEntry({
+          ...trade,
+          date: trade.date.toISOString(),
+        });
+        setTrades((prev) => [{ ...trade, id: result.id }, ...prev]);
+        success('Trade added');
+      }
+      setIsModalOpen(false);
+      setSelectedTrade(null);
+    } catch {
+      error('Failed to save trade');
     }
   };
 
@@ -178,19 +204,37 @@ export default function TradingJournal() {
               </div>
               <div className="flex gap-2">
                 <button
-                  onClick={() => setSelectedTrade(trade)}
+                  onClick={() => { setSelectedTrade(trade); setIsModalOpen(true); }}
                   className="text-blue-600 hover:text-blue-700"
                   title="Edit"
+                  aria-label="Edit trade"
                 >
                   <Edit2 className="w-3.5 h-3.5" />
                 </button>
-                <button
-                  onClick={() => handleDeleteTrade(trade.id)}
-                  className="text-red-600 hover:text-red-700"
-                  title="Delete"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                {deleteConfirmId === trade.id ? (
+                  <span className="flex items-center gap-1">
+                    <span className="text-xs text-gray-500">Delete?</span>
+                    <button
+                      onClick={() => handleDeleteTrade(trade.id)}
+                      className="text-xs text-red-600 font-semibold hover:text-red-700"
+                      aria-label="Confirm delete"
+                    >Yes</button>
+                    <button
+                      onClick={() => setDeleteConfirmId(null)}
+                      className="text-xs text-gray-500 hover:text-gray-700"
+                      aria-label="Cancel delete"
+                    >No</button>
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => setDeleteConfirmId(trade.id)}
+                    className="text-red-600 hover:text-red-700"
+                    title="Delete"
+                    aria-label="Delete trade"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
             </div>
 
@@ -223,24 +267,144 @@ export default function TradingJournal() {
         title={selectedTrade ? 'Edit Trade' : 'Add Trade'}
         size="lg"
       >
-        <div className="space-y-4">
-          <p className="text-sm text-gray-600 dark:text-gray-400">
-            Trade journal form would go here...
-          </p>
-          <div className="flex justify-end gap-2">
-            <Button
-              variant="secondary"
-              onClick={() => setIsModalOpen(false)}
-              size="sm"
-            >
-              Cancel
-            </Button>
-            <Button variant="primary" size="sm">
-              Save Trade
-            </Button>
-          </div>
-        </div>
+        <JournalForm
+          trade={selectedTrade}
+          onSave={handleSaveTrade}
+          onCancel={() => {
+            setIsModalOpen(false);
+            setSelectedTrade(null);
+          }}
+        />
       </Modal>
     </Card>
+  );
+}
+
+interface JournalFormProps {
+  trade: TradeJournal | null;
+  onSave: (trade: Omit<TradeJournal, 'id'>) => void;
+  onCancel: () => void;
+}
+
+function JournalForm({ trade, onSave, onCancel }: JournalFormProps) {
+  const [form, setForm] = useState({
+    symbol: trade?.symbol || '',
+    side: trade?.side || 'LONG' as 'LONG' | 'SHORT',
+    entryPrice: trade?.entryPrice || 0,
+    exitPrice: trade?.exitPrice || 0,
+    quantity: trade?.quantity || 0,
+    pnl: trade?.pnl || 0,
+    pnlPercent: trade?.pnlPercent || 0,
+    notes: trade?.notes || '',
+    rating: trade?.rating || 3,
+    strategy: trade?.strategy || '',
+    emotions: trade?.emotions || '',
+    lessons: trade?.lessons || '',
+    date: trade?.date || new Date(),
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSave(form);
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="text-xs text-gray-600 dark:text-gray-400">Symbol</label>
+          <input
+            className="w-full mt-1 px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800"
+            value={form.symbol}
+            onChange={(e) => setForm({ ...form, symbol: e.target.value })}
+            required
+          />
+        </div>
+        <div>
+          <label className="text-xs text-gray-600 dark:text-gray-400">Side</label>
+          <select
+            className="w-full mt-1 px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800"
+            value={form.side}
+            onChange={(e) => setForm({ ...form, side: e.target.value as 'LONG' | 'SHORT' })}
+          >
+            <option value="LONG">LONG</option>
+            <option value="SHORT">SHORT</option>
+          </select>
+        </div>
+        <div>
+          <label className="text-xs text-gray-600 dark:text-gray-400">Entry Price</label>
+          <input type="number" step="any"
+            className="w-full mt-1 px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800"
+            value={form.entryPrice}
+            onChange={(e) => setForm({ ...form, entryPrice: parseFloat(e.target.value) })}
+            required
+          />
+        </div>
+        <div>
+          <label className="text-xs text-gray-600 dark:text-gray-400">Exit Price</label>
+          <input type="number" step="any"
+            className="w-full mt-1 px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800"
+            value={form.exitPrice}
+            onChange={(e) => setForm({ ...form, exitPrice: parseFloat(e.target.value) })}
+          />
+        </div>
+        <div>
+          <label className="text-xs text-gray-600 dark:text-gray-400">Quantity</label>
+          <input type="number" step="any"
+            className="w-full mt-1 px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800"
+            value={form.quantity}
+            onChange={(e) => setForm({ ...form, quantity: parseFloat(e.target.value) })}
+            required
+          />
+        </div>
+        <div>
+          <label className="text-xs text-gray-600 dark:text-gray-400">P&L ($)</label>
+          <input type="number" step="any"
+            className="w-full mt-1 px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800"
+            value={form.pnl}
+            onChange={(e) => setForm({ ...form, pnl: parseFloat(e.target.value) })}
+            required
+          />
+        </div>
+        <div>
+          <label className="text-xs text-gray-600 dark:text-gray-400">Strategy</label>
+          <input
+            className="w-full mt-1 px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800"
+            value={form.strategy}
+            onChange={(e) => setForm({ ...form, strategy: e.target.value })}
+          />
+        </div>
+        <div>
+          <label className="text-xs text-gray-600 dark:text-gray-400">Emotions</label>
+          <input
+            className="w-full mt-1 px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800"
+            value={form.emotions}
+            onChange={(e) => setForm({ ...form, emotions: e.target.value })}
+          />
+        </div>
+      </div>
+      <div>
+        <label className="text-xs text-gray-600 dark:text-gray-400">Notes</label>
+        <textarea
+          className="w-full mt-1 px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800"
+          rows={2}
+          value={form.notes}
+          onChange={(e) => setForm({ ...form, notes: e.target.value })}
+        />
+      </div>
+      <div>
+        <label className="text-xs text-gray-600 dark:text-gray-400">Lessons Learned</label>
+        <textarea
+          className="w-full mt-1 px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800"
+          rows={2}
+          value={form.lessons}
+          onChange={(e) => setForm({ ...form, lessons: e.target.value })}
+        />
+      </div>
+      <div className="flex justify-end gap-2 pt-2">
+        <Button variant="secondary" onClick={onCancel} size="sm" type="button">Cancel</Button>
+        <Button variant="primary" size="sm" type="submit">Save Trade</Button>
+      </div>
+    </form>
   );
 }

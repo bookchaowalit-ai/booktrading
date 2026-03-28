@@ -1,14 +1,9 @@
-/**
- * Trading Performance Analytics
- * Comprehensive trading statistics and metrics
- */
 'use client';
 
 import { useState, useEffect } from 'react';
 import Card from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
 import {
-  TrendingUp,
   TrendingDown,
   DollarSign,
   Percent,
@@ -17,19 +12,7 @@ import {
   Target,
   BarChart3,
 } from 'lucide-react';
-
-interface Trade {
-  id: string;
-  symbol: string;
-  side: 'BUY' | 'SELL';
-  entryPrice: number;
-  exitPrice?: number;
-  quantity: number;
-  pnl: number;
-  pnlPercent: number;
-  timestamp: Date;
-  status: 'OPEN' | 'CLOSED';
-}
+import { api } from '@/services/api';
 
 interface PerformanceMetrics {
   totalTrades: number;
@@ -50,24 +33,15 @@ interface PerformanceMetrics {
 }
 
 export default function TradingPerformance() {
-  // Mock data (replace with real data from backend)
-  const [metrics, setMetrics] = useState<PerformanceMetrics>({
-    totalTrades: 47,
-    winningTrades: 31,
-    losingTrades: 16,
-    winRate: 65.96,
-    totalPnL: 1247.53,
-    totalPnLPercent: 12.48,
-    avgWin: 87.32,
-    avgLoss: -42.15,
-    profitFactor: 2.07,
-    bestTrade: 342.50,
-    worstTrade: -125.30,
-    avgTradeDuration: '4h 23m',
-    sharpeRatio: 1.85,
-    maxDrawdown: -234.50,
-    maxDrawdownPercent: -2.34,
-  });
+  const [metrics, setMetrics] = useState<PerformanceMetrics | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.getPerformance()
+      .then(setMetrics)
+      .catch(() => setMetrics(null))
+      .finally(() => setLoading(false));
+  }, []);
 
   const getPnLColor = (value: number) => {
     return value >= 0 ? 'text-green-600' : 'text-red-600';
@@ -82,6 +56,28 @@ export default function TradingPerformance() {
     if (value <= bad) return 'text-red-600';
     return 'text-amber-600';
   };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12 text-gray-500 text-sm">
+        Loading performance data...
+      </div>
+    );
+  }
+
+  if (!metrics || metrics.totalTrades === 0) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center gap-2">
+          <BarChart3 className="w-5 h-5 text-purple-600" />
+          <h3 className="text-base font-semibold text-gray-900 dark:text-white">Trading Performance</h3>
+        </div>
+        <div className="text-center py-12 text-gray-500 text-sm">
+          No trade history yet. Start the bot to begin tracking performance.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -141,8 +137,8 @@ export default function TradingPerformance() {
             {metrics.profitFactor >= 2
               ? '✅ Excellent'
               : metrics.profitFactor >= 1.5
-              ? '⚠️ Good'
-              : '❌ Poor'}
+                ? '⚠️ Good'
+                : '❌ Poor'}
           </div>
         </Card>
 
@@ -167,8 +163,8 @@ export default function TradingPerformance() {
             {metrics.sharpeRatio >= 2
               ? '✅ Excellent'
               : metrics.sharpeRatio >= 1
-              ? '⚠️ Good'
-              : '❌ Poor'}
+                ? '⚠️ Good'
+                : '❌ Poor'}
           </div>
         </Card>
 
@@ -204,13 +200,14 @@ export default function TradingPerformance() {
           >
             {metrics.totalPnL >= 0 ? '+' : ''}${metrics.totalPnL.toFixed(2)}
           </div>
-          <Badge
-            variant={getBadgeVariant(metrics.totalPnLPercent)}
-            size="sm"
-            className="mt-2"
-          >
-            {metrics.totalPnLPercent.toFixed(2)}%
-          </Badge>
+          <div className="mt-2">
+            <Badge
+              variant={getBadgeVariant(metrics.totalPnLPercent)}
+              size="sm"
+            >
+              {metrics.totalPnLPercent.toFixed(2)}%
+            </Badge>
+          </div>
         </Card>
 
         {/* Average Win/Loss */}

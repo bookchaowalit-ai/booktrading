@@ -4,7 +4,8 @@
  */
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { api } from '@/services/api';
 import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import Toggle from '@/components/ui/Toggle';
@@ -12,6 +13,7 @@ import { Shield, TrendingUp, TrendingDown, AlertTriangle } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
 
 interface StopLossTakeProfitProps {
+  symbol: string;
   entryPrice: number;
   onConfigChange?: (config: StopLossTakeProfitConfig) => void;
 }
@@ -28,10 +30,12 @@ interface StopLossTakeProfitConfig {
 }
 
 export default function StopLossTakeProfit({
+  symbol,
   entryPrice,
   onConfigChange,
 }: StopLossTakeProfitProps) {
   const { success, error } = useToast();
+  const [isSaving, setIsSaving] = useState(false);
   const [config, setConfig] = useState<StopLossTakeProfitConfig>({
     enableStopLoss: false,
     stopLossPercent: 5,
@@ -42,6 +46,25 @@ export default function StopLossTakeProfit({
     trailingStop: false,
     trailingPercent: 3,
   });
+
+  // Load saved config from backend on mount
+  useEffect(() => {
+    if (!symbol) return;
+    api.getSLTP(symbol).then((remote: any) => {
+      if (!remote?.enabled) return;
+      setConfig((prev) => ({
+        ...prev,
+        enableStopLoss: (remote.stopLossPercent ?? 0) > 0,
+        stopLossPercent: remote.stopLossPercent ?? prev.stopLossPercent,
+        stopLossPrice: remote.stopLossPrice ?? prev.stopLossPrice,
+        enableTakeProfit: (remote.takeProfitPercent ?? 0) > 0,
+        takeProfitPercent: remote.takeProfitPercent ?? prev.takeProfitPercent,
+        takeProfitPrice: remote.takeProfitPrice ?? prev.takeProfitPrice,
+        trailingStop: remote.trailingStop ?? false,
+        trailingPercent: remote.trailingStopPercent ?? prev.trailingPercent,
+      }));
+    }).catch(() => { /* keep defaults if backend unavailable */ });
+  }, [symbol]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleStopLossPercentChange = (percent: number) => {
     const price = entryPrice * (1 - percent / 100);
@@ -61,7 +84,7 @@ export default function StopLossTakeProfit({
     }));
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (config.enableStopLoss && config.enableTakeProfit) {
       if (config.stopLossPrice >= config.takeProfitPrice) {
         error('Stop-loss must be lower than take-profit');
@@ -69,8 +92,25 @@ export default function StopLossTakeProfit({
       }
     }
 
-    onConfigChange?.(config);
-    success('Risk management settings saved');
+    setIsSaving(true);
+    try {
+      await api.setSLTP({
+        symbol,
+        stopLossPercent: config.enableStopLoss ? config.stopLossPercent : 0,
+        takeProfitPercent: config.enableTakeProfit ? config.takeProfitPercent : 0,
+        stopLossPrice: config.stopLossPrice,
+        takeProfitPrice: config.takeProfitPrice,
+        trailingStop: config.trailingStop,
+        trailingStopPercent: config.trailingPercent,
+        enabled: config.enableStopLoss || config.enableTakeProfit,
+      });
+      onConfigChange?.(config);
+      success('Risk management settings saved');
+    } catch {
+      error('Failed to save — backend unavailable');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const riskRewardRatio = config.enableStopLoss && config.enableTakeProfit
@@ -267,8 +307,8 @@ export default function StopLossTakeProfit({
         </div>
 
         {/* Save Button */}
-        <Button fullWidth onClick={handleSave} size="sm">
-          Save Risk Management
+        <Button fullWidth onClick={handleSave} size="sm" disabled={isSaving}>
+          {isSaving ? 'Saving...' : 'Save Risk Management'}
         </Button>
       </div>
     </Card>

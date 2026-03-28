@@ -8,6 +8,8 @@ import { useEffect, useState } from 'react';
 import Card from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
 import { TrendingUp, TrendingDown, DollarSign, Percent } from 'lucide-react';
+import { api } from '@/services/api';
+import { useAppStore } from '@/store/store';
 
 interface PnLData {
   totalPnL: number;
@@ -34,20 +36,45 @@ export default function PnLDashboard({ initialData }: PnLDashboardProps) {
     }
   );
 
-  // Simulate real-time updates (replace with actual WebSocket/data fetching)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      // TODO: Fetch real P&L data from backend
-      // This is just a simulation
-      setPnlData((prev) => ({
-        ...prev,
-        totalPnL: prev.totalPnL + (Math.random() - 0.5) * 10,
-        todayPnL: prev.todayPnL + (Math.random() - 0.5) * 5,
-      }));
-    }, 5000);
+  const marketData = useAppStore((state) => state.marketData);
 
+  const fetchPnL = async () => {
+    try {
+      // Realized P&L from performance service (computed from trade history)
+      const perf = await api.getPerformance();
+
+      // Unrealized P&L from portfolio positions × current market prices
+      const balances = await api.getPortfolio();
+      let unrealized = 0;
+      balances.forEach((b) => {
+        const balance = b.balance ?? 0;
+        const avgBuy = b.avgBuyPrice ?? 0;
+        const currentPrice = marketData[b.symbol]?.price ?? 0;
+        if (avgBuy > 0 && currentPrice > 0) {
+          unrealized += (currentPrice - avgBuy) * balance;
+        }
+      });
+
+      setPnlData({
+        totalPnL: perf.totalPnL ?? 0,
+        totalPnLPercent: perf.totalPnLPercent ?? 0,
+        unrealizedPnL: parseFloat(unrealized.toFixed(2)),
+        realizedPnL: perf.totalPnL ?? 0,
+        todayPnL: 0,
+        todayPnLPercent: 0,
+      });
+    } catch {
+      // ignore - keep previous values
+    }
+  };
+
+  useEffect(() => {
+    if (!initialData) {
+      fetchPnL();
+    }
+    const interval = setInterval(fetchPnL, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [initialData]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const formatPnL = (value: number) => {
     const sign = value >= 0 ? '+' : '';

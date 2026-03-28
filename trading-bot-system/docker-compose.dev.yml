@@ -1,12 +1,33 @@
-version: '3.8'
-
 # Development docker-compose with hot-reload
 services:
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: trading-bot-postgres-dev
+    ports:
+      - "5434:5432"
+    environment:
+      - POSTGRES_USER=trading
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-trading123}
+      - POSTGRES_DB=trading_bot
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trading -d trading_bot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - trading-bot-network
+
   redis:
     image: redis:7-alpine
     container_name: trading-bot-redis-dev
     ports:
       - "6379:6379"
+    command: redis-server --requirepass ${REDIS_PASSWORD:-redis_secret}
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis_secret}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - trading-bot-network
 
@@ -21,13 +42,27 @@ services:
     environment:
       - SERVER_PORT=8080
       - WS_PORT=8081
+      - GRPC_PORT=9000
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-redis_secret}
+      - REDIS_DB=0
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DATABASE_USER=trading
+      - DATABASE_PASSWORD=${DB_PASSWORD:-trading123}
+      - DATABASE_NAME=trading_bot
+      - DATABASE_SSLMODE=disable
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-change_me_in_production_32chars}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
       - EXCHANGE_USE_TESTNET=true
     volumes:
       - ./backend:/app
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     networks:
       - trading-bot-network
     command: >
@@ -43,16 +78,19 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-redis_secret}
+      - REDIS_DB=0
       - API_HOST=0.0.0.0
       - API_PORT=8000
     volumes:
       - ./strategy:/app
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     networks:
       - trading-bot-network
     command: >
-      sh -c "pip install -r requirements.txt && python -m strategy.app.main"
+      sh -c "pip install -r requirements.txt && python -m app.main"
 
   frontend:
     build:

@@ -12,6 +12,7 @@ import { useToast } from '@/components/ui/Toast';
 import { useTheme } from '@/contexts/ThemeProvider';
 import { Settings, Key, Bell, Shield, Database } from 'lucide-react';
 import { Toggle, Dropdown, Badge } from '@/components/ui';
+import APIKeysPage from './api-keys/page';
 
 type SettingsTab = 'general' | 'api-keys' | 'notifications' | 'advanced';
 
@@ -30,6 +31,7 @@ export default function SettingsPage() {
   const { success, error } = useToast();
   const { theme: currentTheme, setTheme } = useTheme();
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
+  const [resetConfirm, setResetConfirm] = useState(false);
   const [preferences, setPreferences] = useState<UserPreferences>({
     language: 'en',
     theme: 'system',
@@ -52,9 +54,11 @@ export default function SettingsPage() {
     if (preferences.theme !== currentTheme) {
       setTheme(preferences.theme as 'light' | 'dark' | 'system');
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preferences.theme]);
 
   const loadPreferences = async () => {
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
     // First, load saved preference from localStorage (for immediate UI update)
     const savedLang = localStorage.getItem('preferred_locale');
     if (savedLang) {
@@ -66,22 +70,23 @@ export default function SettingsPage() {
 
     // Then try to load from backend (will override if different)
     try {
-      const response = await fetch('http://localhost:8080/api/settings/preferences');
+      const response = await fetch(`${API_BASE_URL}/api/settings/preferences`);
       if (response.ok) {
         const data = await response.json();
         setPreferences(data);
         // Also update localStorage to match backend
         localStorage.setItem('preferred_locale', data.language);
       }
-    } catch (err) {
-      console.error('Failed to load preferences from backend:', err);
+    } catch {
+      // silently fail — use localStorage fallback
     }
   };
 
   const handleSavePreferences = async () => {
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
     setIsLoading(true);
     try {
-      const response = await fetch('http://localhost:8080/api/settings/preferences', {
+      const response = await fetch(`${API_BASE_URL}/api/settings/preferences`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(preferences),
@@ -97,7 +102,7 @@ export default function SettingsPage() {
 
         success('Settings saved successfully');
 
-        // Reload page if language changed to apply new language
+        // Navigate if language changed
         const currentLang = window.location.pathname.split('/')[1];
         if (currentLang !== preferences.language) {
           setTimeout(() => {
@@ -107,7 +112,7 @@ export default function SettingsPage() {
       } else {
         error('Failed to save settings');
       }
-    } catch (err) {
+    } catch {
       error('Failed to save settings');
     } finally {
       setIsLoading(false);
@@ -115,9 +120,10 @@ export default function SettingsPage() {
   };
 
   const handleExportData = async () => {
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
     setIsLoading(true);
     try {
-      const response = await fetch('http://localhost:8080/api/settings/export', {
+      const response = await fetch(`${API_BASE_URL}/api/settings/export`, {
         method: 'POST',
       });
 
@@ -127,7 +133,7 @@ export default function SettingsPage() {
       } else {
         error('Failed to export data');
       }
-    } catch (err) {
+    } catch {
       error('Failed to export data');
     } finally {
       setIsLoading(false);
@@ -135,13 +141,11 @@ export default function SettingsPage() {
   };
 
   const handleResetSettings = async () => {
-    if (!confirm('Are you sure? This will reset all settings to defaults.')) {
-      return;
-    }
-
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
     setIsLoading(true);
+    setResetConfirm(false);
     try {
-      const response = await fetch('http://localhost:8080/api/settings/reset', {
+      const response = await fetch(`${API_BASE_URL}/api/settings/reset`, {
         method: 'POST',
       });
 
@@ -151,7 +155,7 @@ export default function SettingsPage() {
       } else {
         error('Failed to reset settings');
       }
-    } catch (err) {
+    } catch {
       error('Failed to reset settings');
     } finally {
       setIsLoading(false);
@@ -185,8 +189,8 @@ export default function SettingsPage() {
         <button
           onClick={() => setActiveTab('general')}
           className={`px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${activeTab === 'general'
-              ? 'text-purple-600 border-b-2 border-purple-600'
-              : 'text-gray-600 dark:text-gray-400 hover:text-gray-900'
+            ? 'text-purple-600 border-b-2 border-purple-600'
+            : 'text-gray-600 dark:text-gray-400 hover:text-gray-900'
             }`}
         >
           <div className="flex items-center gap-1.5">
@@ -197,8 +201,8 @@ export default function SettingsPage() {
         <button
           onClick={() => setActiveTab('api-keys')}
           className={`px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${activeTab === 'api-keys'
-              ? 'text-purple-600 border-b-2 border-purple-600'
-              : 'text-gray-600 dark:text-gray-400 hover:text-gray-900'
+            ? 'text-purple-600 border-b-2 border-purple-600'
+            : 'text-gray-600 dark:text-gray-400 hover:text-gray-900'
             }`}
         >
           <div className="flex items-center gap-1.5">
@@ -209,8 +213,8 @@ export default function SettingsPage() {
         <button
           onClick={() => setActiveTab('notifications')}
           className={`px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${activeTab === 'notifications'
-              ? 'text-purple-600 border-b-2 border-purple-600'
-              : 'text-gray-600 dark:text-gray-400 hover:text-gray-900'
+            ? 'text-purple-600 border-b-2 border-purple-600'
+            : 'text-gray-600 dark:text-gray-400 hover:text-gray-900'
             }`}
         >
           <div className="flex items-center gap-1.5">
@@ -221,8 +225,8 @@ export default function SettingsPage() {
         <button
           onClick={() => setActiveTab('advanced')}
           className={`px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${activeTab === 'advanced'
-              ? 'text-purple-600 border-b-2 border-purple-600'
-              : 'text-gray-600 dark:text-gray-400 hover:text-gray-900'
+            ? 'text-purple-600 border-b-2 border-purple-600'
+            : 'text-gray-600 dark:text-gray-400 hover:text-gray-900'
             }`}
         >
           <div className="flex items-center gap-1.5">
@@ -278,25 +282,7 @@ export default function SettingsPage() {
       )}
 
       {activeTab === 'api-keys' && (
-        <div className="space-y-6">
-          <Card variant="elevated" className="p-6">
-            <h3 className="text-lg font-semibold mb-4">Exchange API Keys</h3>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
-              Configure your exchange API credentials for automated trading. Your keys are encrypted and stored securely.
-            </p>
-
-            {/* API Keys content - you can import the existing API Keys page component here */}
-            <div className="text-center py-8">
-              <Key className="w-12 h-12 text-gray-300 dark:text-gray-600 mx-auto mb-3" />
-              <p className="text-gray-500 dark:text-gray-400">
-                API Keys management interface
-              </p>
-              <p className="text-sm text-gray-400 mt-2">
-                (Import from existing API Keys page)
-              </p>
-            </div>
-          </Card>
-        </div>
+        <APIKeysPage />
       )}
 
       {activeTab === 'notifications' && (
@@ -359,14 +345,17 @@ export default function SettingsPage() {
                 <div className="flex items-center gap-2 mb-2">
                   <Badge variant="error">Danger Zone</Badge>
                 </div>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={handleResetSettings}
-                  isLoading={isLoading}
-                >
-                  Reset All Settings
-                </Button>
+                {resetConfirm ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-600 dark:text-gray-400">Reset all settings?</span>
+                    <Button variant="danger" size="sm" onClick={handleResetSettings} isLoading={isLoading}>Yes, reset</Button>
+                    <Button variant="secondary" size="sm" onClick={() => setResetConfirm(false)}>Cancel</Button>
+                  </div>
+                ) : (
+                  <Button variant="danger" size="sm" onClick={() => setResetConfirm(true)} isLoading={isLoading}>
+                    Reset All Settings
+                  </Button>
+                )}
               </div>
             </div>
           </Card>

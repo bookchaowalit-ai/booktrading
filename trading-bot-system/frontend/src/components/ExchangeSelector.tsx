@@ -44,6 +44,16 @@ export default function ExchangeSelector({ onExchangeChange, compact = false }: 
     loadExchanges();
   }, []);
 
+  // Auto-load balances when exchange is connected
+  useEffect(() => {
+    if (currentProvider) {
+      const exchange = exchanges.find(e => e.provider === currentProvider);
+      if (exchange?.connected) {
+        loadBalances(currentProvider);
+      }
+    }
+  }, [currentProvider, exchanges]);
+
   const loadExchanges = async () => {
     try {
       const response = await fetch('http://localhost:8080/api/exchange');
@@ -169,61 +179,41 @@ export default function ExchangeSelector({ onExchangeChange, compact = false }: 
 
       {/* Current Exchange Info */}
       {currentExchange && (
-        <div className="flex items-center justify-between px-3 py-2 bg-gray-50 dark:bg-gray-800/50 rounded-md">
-          <div className="flex items-center gap-2">
-            <Wallet className="w-3.5 h-3.5 text-gray-500" />
-            <span className="text-xs text-gray-600 dark:text-gray-400">
-              {balances.length} assets
-            </span>
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleRefreshBalances}
-            isLoading={isRefreshing}
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-          </Button>
-        </div>
-      )}
-
-      {/* Balances */}
-      {balances.length > 0 && (
-        <div className="space-y-1.5">
-          {balances.slice(0, 5).map((balance) => (
-            <div
-              key={balance.currency}
-              className="flex items-center justify-between px-3 py-1.5 bg-white dark:bg-gray-800 rounded-md text-xs"
-            >
-              <span className="font-medium text-gray-700 dark:text-gray-300">
-                {balance.currency}
-              </span>
-              <span className="text-gray-900 dark:text-white font-mono">
-                {balance.total.toFixed(6)}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between px-3 py-2 bg-gray-50 dark:bg-gray-800/50 rounded-md">
+            <div className="flex items-center gap-2">
+              <Wallet className="w-3.5 h-3.5 text-gray-500" />
+              <span className="text-xs text-gray-600 dark:text-gray-400">
+                {balances.length > 0 ? `${balances.length} asset${balances.length > 1 ? 's' : ''}` : 'No balances'}
               </span>
             </div>
-          ))}
-          {balances.length > 5 && (
-            <p className="text-xs text-center text-gray-500 dark:text-gray-400">
-              +{balances.length - 5} more assets
-            </p>
-          )}
-        </div>
-      )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleRefreshBalances}
+              isLoading={isRefreshing}
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+            </Button>
+          </div>
 
-      {/* No balances state */}
-      {currentExchange && balances.length === 0 && (
-        <div className="text-center py-4 px-3 bg-gray-50 dark:bg-gray-800/50 rounded-md">
-          <Wallet className="w-8 h-8 text-gray-300 dark:text-gray-600 mx-auto mb-2" />
-          <p className="text-xs text-gray-500 dark:text-gray-400">
-            {currentExchange.connected
-              ? 'No balances found'
-              : 'Configure API keys to view balances'}
-          </p>
-          {!currentExchange.connected && (
-            <p className="text-xs text-purple-600 dark:text-purple-400 mt-1">
-              Add API keys in Settings → API Keys
-            </p>
+          {/* Balance List */}
+          {balances.length > 0 && (
+            <div className="space-y-1 max-h-32 overflow-auto">
+              {balances.map((balance) => (
+                <div
+                  key={balance.currency}
+                  className="flex items-center justify-between px-3 py-1.5 bg-white dark:bg-gray-800/50 rounded text-xs"
+                >
+                  <span className="font-medium text-gray-700 dark:text-gray-300">
+                    {balance.currency}
+                  </span>
+                  <span className="text-gray-900 dark:text-white font-mono">
+                    {balance.total.toFixed(6)}
+                  </span>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       )}

@@ -27,7 +27,7 @@ interface SentimentDashboardProps {
 }
 
 export default function SentimentDashboard({ symbol }: SentimentDashboardProps) {
-  const { success } = useToast();
+  const { success, error } = useToast();
   const portfolio = useAppStore((state) => state.portfolio);
   const [marketSentiment, setMarketSentiment] = useState<MarketSentiment | null>(null);
   const [symbolSentiment, setSymbolSentiment] = useState<SentimentAnalysis | null>(null);
@@ -65,8 +65,8 @@ export default function SentimentDashboard({ symbol }: SentimentDashboardProps) 
       if (marketData || symbolData) {
         success('Real-time data loaded');
       }
-    } catch (error) {
-      console.error('Failed to load sentiment data:', error);
+    } catch (err) {
+      console.error('Failed to load sentiment data:', err);
       error('Using cached data - backend unavailable');
     } finally {
       setIsLoading(false);

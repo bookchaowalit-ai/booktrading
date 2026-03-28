@@ -4,13 +4,14 @@
  */
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Card from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import Toggle from '@/components/ui/Toggle';
 import { Bell, Check, Trash2, Settings, AlertCircle, TrendingUp, DollarSign } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
+import { api } from '@/services/api';
 
 interface Notification {
   id: string;
@@ -35,44 +36,7 @@ interface NotificationSettings {
 
 export default function NotificationCenter() {
   const { success } = useToast();
-  const [notifications, setNotifications] = useState<Notification[]>([
-    {
-      id: '1',
-      type: 'ORDER_FILLED',
-      title: 'Order Filled',
-      message: 'BUY BTCUSDT 0.1 @ $48,500',
-      timestamp: new Date(),
-      read: false,
-      priority: 'HIGH',
-    },
-    {
-      id: '2',
-      type: 'PRICE_ALERT',
-      title: 'Price Alert',
-      message: 'BTCUSDT reached $50,000',
-      timestamp: new Date(Date.now() - 3600000),
-      read: false,
-      priority: 'MEDIUM',
-    },
-    {
-      id: '3',
-      type: 'BOT_STATUS',
-      title: 'Bot Started',
-      message: 'Grid trading bot started for BTCUSDT',
-      timestamp: new Date(Date.now() - 7200000),
-      read: true,
-      priority: 'LOW',
-    },
-    {
-      id: '4',
-      type: 'PNL_ALERT',
-      title: 'Profit Target Reached',
-      message: 'Total P&L reached +$500 (10%)',
-      timestamp: new Date(Date.now() - 86400000),
-      read: true,
-      priority: 'HIGH',
-    },
-  ]);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
 
   const [settings, setSettings] = useState<NotificationSettings>({
     orderFilled: true,
@@ -87,24 +51,52 @@ export default function NotificationCenter() {
 
   const [showSettings, setShowSettings] = useState(false);
 
+  const fetchNotifications = useCallback(async () => {
+    try {
+      const raw = await api.getNotifications();
+      const mapped: Notification[] = raw.map((n) => ({
+        id: n.id,
+        type: n.type as Notification['type'],
+        title: n.title,
+        message: n.message,
+        timestamp: new Date(n.timestamp),
+        read: n.read,
+        priority: n.priority as Notification['priority'],
+      }));
+      setNotifications(mapped);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchNotifications();
+    const interval = setInterval(fetchNotifications, 15000);
+    return () => clearInterval(interval);
+  }, [fetchNotifications]);
+
   const unreadCount = notifications.filter((n) => !n.read).length;
 
-  const handleMarkAsRead = (id: string) => {
+  const handleMarkAsRead = async (id: string) => {
+    await api.markNotificationRead(id).catch(() => {});
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, read: true } : n))
     );
   };
 
-  const handleMarkAllAsRead = () => {
+  const handleMarkAllAsRead = async () => {
+    await api.markAllNotificationsRead().catch(() => {});
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
     success('All notifications marked as read');
   };
 
-  const handleDeleteNotification = (id: string) => {
+  const handleDeleteNotification = async (id: string) => {
+    await api.deleteNotification(id).catch(() => {});
     setNotifications((prev) => prev.filter((n) => n.id !== id));
   };
 
-  const handleClearAll = () => {
+  const handleClearAll = async () => {
+    await api.clearAllNotifications().catch(() => {});
     setNotifications([]);
     success('All notifications cleared');
   };

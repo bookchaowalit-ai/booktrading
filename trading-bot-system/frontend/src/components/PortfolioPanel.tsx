@@ -168,8 +168,10 @@ export default function PortfolioPanel() {
         <EmptyState
           title={t('portfolio.no-match')}
           description="Try adjusting your filters or search query"
-          actionLabel="Clear Filters"
-          onAction={handleSelectAll}
+          action={{
+            label: "Clear Filters",
+            onClick: handleSelectAll,
+          }}
         />
       ) : (
         <div className="space-y-3">

@@ -318,9 +318,6 @@ export const en = {
   'pairs.commodities': 'Commodities',
   'pairs.indices': 'Indices',
   'pairs.stocks': 'US Stocks',
-
-  // Navigation Extended
-  'nav.backtest': 'Backtest & Paper',
 };
 
 export type TranslationKey = keyof typeof en;
