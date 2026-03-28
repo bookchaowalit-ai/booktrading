@@ -30,6 +30,8 @@ interface ExchangeSelectorProps {
   compact?: boolean;
 }
 
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+
 export default function ExchangeSelector({ onExchangeChange, compact = false }: ExchangeSelectorProps) {
   const { success, error, info } = useToast();
 
@@ -56,7 +58,7 @@ export default function ExchangeSelector({ onExchangeChange, compact = false }: 
 
   const loadExchanges = async () => {
     try {
-      const response = await fetch('http://localhost:8080/api/exchange');
+      const response = await fetch(`${API_BASE_URL}/api/exchange`);
       if (response.ok) {
         const data = await response.json();
         setExchanges(data.exchanges || []);
@@ -69,7 +71,7 @@ export default function ExchangeSelector({ onExchangeChange, compact = false }: 
 
   const loadBalances = async (provider: string) => {
     try {
-      const response = await fetch('http://localhost:8080/api/exchange/balances');
+      const response = await fetch(`${API_BASE_URL}/api/exchange/balances`);
       if (response.ok) {
         const data = await response.json();
         setBalances(data.balances || []);
@@ -84,7 +86,7 @@ export default function ExchangeSelector({ onExchangeChange, compact = false }: 
 
     setIsLoading(true);
     try {
-      const response = await fetch('http://localhost:8080/api/exchange/set', {
+      const response = await fetch(`${API_BASE_URL}/api/exchange/set`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider }),

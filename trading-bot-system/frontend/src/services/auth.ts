@@ -102,4 +102,3 @@ export function getDemoCredentials() {
     { email: 'admin@tradepro.com', password: 'admin123', name: 'Admin User', role: 'admin' },
   ];
 }
-

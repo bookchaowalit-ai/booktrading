@@ -60,15 +60,15 @@ export default function TradingSignals({ symbol, onSignalSelect }: TradingSignal
 
   // Static Tailwind class maps — avoids production purging of dynamic class names
   const directionClasses: Record<string, { badge: string; bg: string; text: string }> = {
-    LONG:  { badge: 'bg-green-500 text-white', bg: 'bg-green-100 dark:bg-green-900/30', text: 'text-green-700 dark:text-green-400' },
-    SHORT: { badge: 'bg-red-500 text-white',   bg: 'bg-red-100 dark:bg-red-900/30',   text: 'text-red-700 dark:text-red-400' },
-    HOLD:  { badge: 'bg-gray-500 text-white',  bg: 'bg-gray-100 dark:bg-gray-700',    text: 'text-gray-700 dark:text-gray-300' },
+    LONG: { badge: 'bg-green-500 text-white', bg: 'bg-green-100 dark:bg-green-900/30', text: 'text-green-700 dark:text-green-400' },
+    SHORT: { badge: 'bg-red-500 text-white', bg: 'bg-red-100 dark:bg-red-900/30', text: 'text-red-700 dark:text-red-400' },
+    HOLD: { badge: 'bg-gray-500 text-white', bg: 'bg-gray-100 dark:bg-gray-700', text: 'text-gray-700 dark:text-gray-300' },
   };
   const strengthClasses: Record<string, string> = {
     very_strong: 'text-purple-600 dark:text-purple-400',
-    strong:      'text-green-600 dark:text-green-400',
-    moderate:    'text-yellow-600 dark:text-yellow-400',
-    weak:        'text-gray-500 dark:text-gray-400',
+    strong: 'text-green-600 dark:text-green-400',
+    moderate: 'text-yellow-600 dark:text-yellow-400',
+    weak: 'text-gray-500 dark:text-gray-400',
   };
   const confidenceClass = (c: number) =>
     c >= 0.8 ? 'bg-green-500' : c >= 0.6 ? 'bg-yellow-500' : 'bg-red-500';

@@ -3,7 +3,10 @@ FastAPI application for the strategy service.
 Provides REST API for strategy control and monitoring.
 """
 import asyncio
+import math
+import random
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
@@ -11,6 +14,7 @@ from pydantic import BaseModel
 
 from core.domain.models import OrderSide, StrategyConfig, TradeSymbol, OrderSignal
 from core.service.strategy import MultiSymbolStrategy, TradingStrategy, MultiSymbolStrategyWithGRPC
+from core.service.indicators import TechnicalAnalysisService
 from infrastructure.redis.redis_adapter import RedisAdapter
 from infrastructure.grpc.grpc_client import GRPCClientManager
 
@@ -44,6 +48,32 @@ class HealthResponse(BaseModel):
     redis_connected: bool
 
 
+class BacktestRequest(BaseModel):
+    symbol: str = "BTCUSDT"
+    start_date: str = "2024-01-01"
+    end_date: str = "2024-12-31"
+    initial_capital: float = 10000.0
+    leverage: float = 1.0
+    strategy: str = "moderate"
+    commission: float = 0.001
+    slippage: float = 0.0005
+
+
+class BacktestResponse(BaseModel):
+    total_return: float
+    total_return_percent: float
+    total_trades: int
+    win_rate: float
+    profit_factor: float
+    max_drawdown: float
+    sharpe_ratio: float
+    sortino_ratio: float
+    avg_win: float
+    avg_loss: float
+    best_trade: float
+    worst_trade: float
+
+
 # Global strategy instance
 strategy: Optional[MultiSymbolStrategy] = None
 redis_adapter: Optional[RedisAdapter] = None
@@ -58,6 +88,7 @@ async def lifespan(app: FastAPI):
     # Startup
     redis_host = app.state.config.get("REDIS_HOST", "localhost")
     redis_port = app.state.config.get("REDIS_PORT", 6379)
+    redis_password = app.state.config.get("REDIS_PASSWORD", "") or None
     grpc_host = app.state.config.get("GRPC_HOST", "backend")
     grpc_port = app.state.config.get("GRPC_PORT", 9000)
     
@@ -66,7 +97,7 @@ async def lifespan(app: FastAPI):
     grpc_client_manager.connect_with_retry()
     
     # Initialize Redis adapter
-    redis_adapter = RedisAdapter(host=redis_host, port=redis_port)
+    redis_adapter = RedisAdapter(host=redis_host, port=redis_port, password=redis_password)
     await redis_adapter.connect()
     
     # Create order executor callback using gRPC
@@ -253,6 +284,181 @@ def register_routes(app: FastAPI):
         strategy = MultiSymbolStrategy(config)
         
         return {"status": "reset", "message": "Strategy state reset"}
+
+    @app.get("/api/signals")
+    async def get_signals():
+        """
+        Get current trading signals for all symbols.
+        Derives signals from current indicators using the same RSI logic as the live strategy.
+        """
+        if not strategy:
+            raise HTTPException(status_code=503, detail="Strategy not initialized")
+
+        signals: List[SignalResponse] = []
+        config = strategy.config
+
+        for symbol, sym_strategy in strategy.strategies.items():
+            indicators = sym_strategy.get_current_indicators(symbol)
+            if indicators is None or indicators.rsi is None:
+                continue
+
+            rsi = indicators.rsi
+            side: Optional[str] = None
+            reason = ""
+
+            if rsi < config.rsi_oversold:
+                side = OrderSide.BUY.value
+                reason = f"RSI oversold ({rsi:.2f} < {config.rsi_oversold})"
+            elif rsi > config.rsi_overbought:
+                side = OrderSide.SELL.value
+                reason = f"RSI overbought ({rsi:.2f} > {config.rsi_overbought})"
+
+            if side is None:
+                continue
+
+            # Simple strength calculation based on RSI distance from threshold
+            if side == OrderSide.BUY.value:
+                strength = min(1.0, (config.rsi_oversold - rsi) / config.rsi_oversold)
+            else:
+                strength = min(1.0, (rsi - config.rsi_overbought) / (100 - config.rsi_overbought))
+
+            signals.append(SignalResponse(
+                symbol=symbol.value,
+                side=side,
+                strength=round(strength, 4),
+                reason=reason,
+            ))
+
+        market_sentiment = round(sum(s.strength for s in signals) / len(signals), 4) if signals else 0.0
+
+        return {
+            "signals": [s.dict() for s in signals],
+            "market_sentiment": market_sentiment,
+        }
+
+    @app.post("/api/backtest", response_model=BacktestResponse)
+    async def run_backtest(req: BacktestRequest):
+        """
+        Run a backtest simulation using RSI+EMA strategy on synthetic price data.
+        Generates realistic OHLCV data using geometric Brownian motion, then
+        applies the configured strategy to produce performance metrics.
+        """
+        try:
+            start = datetime.strptime(req.start_date, "%Y-%m-%d")
+            end = datetime.strptime(req.end_date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+
+        days = (end - start).days
+        if days < 2:
+            raise HTTPException(status_code=400, detail="Date range must be at least 2 days.")
+        if days > 1825:
+            raise HTTPException(status_code=400, detail="Date range must be at most 5 years.")
+
+        # ── Simulate daily prices via geometric Brownian motion ──
+        rng = random.Random(hash(req.symbol + req.start_date))
+        mu = 0.0003        # daily drift
+        sigma = 0.025      # daily volatility
+        seed_price = {"BTCUSDT": 40000, "ETHUSDT": 2200}.get(req.symbol.upper(), 100)
+        prices: List[float] = [seed_price]
+        for _ in range(days):
+            ret = mu + sigma * rng.gauss(0, 1)
+            prices.append(prices[-1] * math.exp(ret))
+
+        # ── Apply RSI+EMA strategy ──
+        rsi_period = 14
+        ema_period = 14
+        ta = TechnicalAnalysisService(rsi_period=rsi_period, ema_period=ema_period)
+
+        capital = req.initial_capital
+        position: Optional[float] = None   # entry price when in position
+        position_size: float = 0.0
+        trades: List[float] = []           # PnL per trade
+        peak_capital = capital
+        max_drawdown_pct = 0.0
+
+        for i in range(rsi_period + 1, len(prices)):
+            window = prices[:i]
+            rsi = ta.calculate_rsi(window)
+            ema = ta.calculate_ema(window)
+            price = prices[i]
+
+            if rsi is None or ema is None:
+                continue
+
+            commission_cost = req.commission
+            slippage_cost = req.slippage
+
+            # ── Entry: RSI oversold + price above EMA → BUY ──
+            if position is None and rsi < 30 and price > ema:
+                position = price * (1 + slippage_cost)
+                position_size = (capital * req.leverage) / position
+                capital -= position * position_size * commission_cost
+
+            # ── Exit: RSI overbought → SELL ──
+            elif position is not None and rsi > 70:
+                exit_price = price * (1 - slippage_cost)
+                pnl = (exit_price - position) * position_size
+                pnl -= exit_price * position_size * commission_cost
+                capital += pnl
+                trades.append(pnl)
+                position = None
+                position_size = 0.0
+
+            # Track drawdown
+            if capital > peak_capital:
+                peak_capital = capital
+            drawdown = (peak_capital - capital) / peak_capital * 100
+            if drawdown > max_drawdown_pct:
+                max_drawdown_pct = drawdown
+
+        # Close open position at last price
+        if position is not None:
+            exit_price = prices[-1] * (1 - req.slippage)
+            pnl = (exit_price - position) * position_size
+            pnl -= exit_price * position_size * req.commission
+            capital += pnl
+            trades.append(pnl)
+
+        total_return = capital - req.initial_capital
+        total_return_pct = (total_return / req.initial_capital) * 100
+
+        wins = [t for t in trades if t > 0]
+        losses = [t for t in trades if t <= 0]
+        win_rate = (len(wins) / len(trades) * 100) if trades else 0.0
+        avg_win = sum(wins) / len(wins) if wins else 0.0
+        avg_loss = abs(sum(losses) / len(losses)) if losses else 0.0
+        profit_factor = (sum(wins) / abs(sum(losses))) if losses and sum(losses) != 0 else (sum(wins) if wins else 0.0)
+
+        # Sharpe ratio (annualised, simplified)
+        daily_returns = []
+        for t in trades:
+            daily_returns.append(t / req.initial_capital)
+        if len(daily_returns) > 1:
+            import statistics
+            mean_r = statistics.mean(daily_returns)
+            std_r = statistics.stdev(daily_returns)
+            sharpe = (mean_r / std_r * math.sqrt(252)) if std_r > 0 else 0.0
+            neg_returns = [r for r in daily_returns if r < 0]
+            std_neg = statistics.stdev(neg_returns) if len(neg_returns) > 1 else std_r
+            sortino = (mean_r / std_neg * math.sqrt(252)) if std_neg > 0 else 0.0
+        else:
+            sharpe = sortino = 0.0
+
+        return BacktestResponse(
+            total_return=round(total_return, 2),
+            total_return_percent=round(total_return_pct, 2),
+            total_trades=len(trades),
+            win_rate=round(win_rate, 1),
+            profit_factor=round(profit_factor, 2),
+            max_drawdown=round(max_drawdown_pct, 2),
+            sharpe_ratio=round(sharpe, 2),
+            sortino_ratio=round(sortino, 2),
+            avg_win=round(avg_win, 2),
+            avg_loss=round(avg_loss, 2),
+            best_trade=round(max(trades), 2) if trades else 0.0,
+            worst_trade=round(min(trades), 2) if trades else 0.0,
+        )
 
 
 # Create default app instance

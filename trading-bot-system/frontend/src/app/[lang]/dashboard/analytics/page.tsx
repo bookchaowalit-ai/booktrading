@@ -36,18 +36,19 @@ export default function AnalyticsPage() {
   }, []);
 
   const loadData = async () => {
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
     setIsLoading(true);
     try {
       // Fetch real market sentiment from backend
-      const marketResponse = await fetch('http://localhost:8080/api/market/sentiment');
+      const marketResponse = await fetch(`${API_BASE_URL}/api/market/sentiment`);
       const marketData = await marketResponse.json().catch(() => null);
 
       // Fetch real trading signals
-      const signalsResponse = await fetch('http://localhost:8080/api/signals');
+      const signalsResponse = await fetch(`${API_BASE_URL}/api/signals`);
       const signalsData = await signalsResponse.json().catch(() => ({ signals: [] }));
 
       // Fetch real sentiment history
-      const sentimentResponse = await fetch('http://localhost:8080/api/sentiment/BTCUSDT');
+      const sentimentResponse = await fetch(`${API_BASE_URL}/api/sentiment/BTCUSDT`);
       const sentimentData = await sentimentResponse.json().catch(() => null);
 
       setMarketSentiment(marketData);

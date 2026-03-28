@@ -245,11 +245,10 @@ export default function StopLossTakeProfit({
                 Risk/Reward Ratio:
               </span>
               <span
-                className={`font-bold ${
-                  parseFloat(riskRewardRatio as string) >= 2
+                className={`font-bold ${parseFloat(riskRewardRatio as string) >= 2
                     ? 'text-green-600'
                     : 'text-amber-600'
-                }`}
+                  }`}
               >
                 1:{riskRewardRatio}
               </span>

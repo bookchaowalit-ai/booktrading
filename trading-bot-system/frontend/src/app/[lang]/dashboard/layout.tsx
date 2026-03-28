@@ -52,11 +52,11 @@ export default function DashboardLayout({
   }, [fetchUnreadCount]);
 
   useEffect(() => {
-    // Check if user is authenticated
-    if (!isAuthenticated()) {
-      // For demo, we'll allow access but in production redirect to login
+    // Check if user is authenticated; redirect to login page if not
+    if (mounted && !isAuthenticated()) {
+      router.push(`/${locale}`);
     }
-  }, [pathname]);
+  }, [mounted, pathname, locale, router]);
 
   const handleLogout = async () => {
     await logout();

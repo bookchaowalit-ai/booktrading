@@ -54,7 +54,7 @@ export default function SettingsPage() {
     if (preferences.theme !== currentTheme) {
       setTheme(preferences.theme as 'light' | 'dark' | 'system');
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preferences.theme]);
 
   const loadPreferences = async () => {

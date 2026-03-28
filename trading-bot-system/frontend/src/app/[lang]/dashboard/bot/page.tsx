@@ -12,7 +12,7 @@ import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 
 export default function BotControlPage() {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const botStatus = useAppStore((state) => state.botStatus);
   const refreshBotStatus = useAppStore((state) => state.refreshBotStatus);
 
@@ -41,7 +41,7 @@ export default function BotControlPage() {
           <Button
             variant="primary"
             size="lg"
-            onClick={() => window.location.href = '/dashboard/trading'}
+            onClick={() => window.location.href = `/${locale}/dashboard/trading`}
             rightIcon={<ArrowRight className="w-5 h-5" />}
             gradient
           >
@@ -133,7 +133,7 @@ export default function BotControlPage() {
               variant="primary"
               fullWidth
               size="lg"
-              onClick={() => window.location.href = '/dashboard/trading'}
+              onClick={() => window.location.href = `/${locale}/dashboard/trading`}
               rightIcon={<ArrowRight className="w-5 h-5" />}
             >
               Go to Trading Page

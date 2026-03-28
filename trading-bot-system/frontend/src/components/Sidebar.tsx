@@ -17,7 +17,8 @@ import {
   ChevronRight,
   Bot,
   BookOpen,
-  Zap
+  Zap,
+  Newspaper
 } from 'lucide-react';
 import { useTranslation, TranslationKey } from '@/i18n/translations';
 
@@ -54,6 +55,11 @@ const navItems: NavItem[] = [
     nameKey: 'nav.settings',
     href: '/dashboard/settings',
     icon: <Settings className="w-5 h-5" />
+  },
+  {
+    nameKey: 'nav.news',
+    href: '/dashboard/news',
+    icon: <Newspaper className="w-5 h-5" />
   }
 ];
 
@@ -82,7 +88,7 @@ export default function Sidebar({ isCollapsed, onToggle, isMobileOpen, onMobileC
   // Close mobile menu when route changes
   useEffect(() => {
     onMobileClose();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
 
   return (
@@ -145,33 +151,33 @@ export default function Sidebar({ isCollapsed, onToggle, isMobileOpen, onMobileC
           <ul className="space-y-2 list-none p-0 m-0">
             {navItems.map((item) => (
               <li key={item.nameKey}>
-              <Link
-                href={`/${locale}${item.href}`}
-                aria-current={pathname === `/${locale}${item.href}` ? 'page' : undefined}
-                className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors relative ${pathname === `/${locale}${item.href}`
-                  ? 'bg-purple-100 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400'
-                  : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
-                  }`}
-              >
-                <span className="flex-shrink-0">{item.icon}</span>
-                <motion.span
-                  animate={{ opacity: isCollapsed ? 0 : 1 }}
-                  className="whitespace-nowrap overflow-hidden flex-1"
+                <Link
+                  href={`/${locale}${item.href}`}
+                  aria-current={pathname === `/${locale}${item.href}` ? 'page' : undefined}
+                  className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors relative ${pathname === `/${locale}${item.href}`
+                    ? 'bg-purple-100 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400'
+                    : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+                    }`}
                 >
-                  {t(item.nameKey)}
-                </motion.span>
-                {item.badge !== undefined && item.badge > 0 && (
-                  <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">
-                    {item.badge}
-                  </span>
-                )}
-                {pathname === `/${locale}${item.href}` && (
-                  <motion.div
-                    layoutId="sidebar-active"
-                    className="absolute left-0 top-0 bottom-0 w-1 bg-purple-600 rounded-r"
-                  />
-                )}
-              </Link>
+                  <span className="flex-shrink-0">{item.icon}</span>
+                  <motion.span
+                    animate={{ opacity: isCollapsed ? 0 : 1 }}
+                    className="whitespace-nowrap overflow-hidden flex-1"
+                  >
+                    {t(item.nameKey)}
+                  </motion.span>
+                  {item.badge !== undefined && item.badge > 0 && (
+                    <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">
+                      {item.badge}
+                    </span>
+                  )}
+                  {pathname === `/${locale}${item.href}` && (
+                    <motion.div
+                      layoutId="sidebar-active"
+                      className="absolute left-0 top-0 bottom-0 w-1 bg-purple-600 rounded-r"
+                    />
+                  )}
+                </Link>
               </li>
             ))}
           </ul>

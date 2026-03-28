@@ -95,14 +95,16 @@ export default function GridTradingPage() {
     return matchesCategory && matchesSearch && matchesThai;
   });
 
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+
   // Fetch real grid orders from backend
   useEffect(() => {
     const fetchGridOrders = async () => {
       setIsLoadingOrders(true);
       try {
         const [ordersResponse, statsResponse] = await Promise.all([
-          fetch('http://localhost:8080/api/orders/open'),
-          fetch('http://localhost:8080/api/bot/status'),
+          fetch(`${API_BASE_URL}/api/orders/open`),
+          fetch(`${API_BASE_URL}/api/bot/status`),
         ]);
 
         const ordersData = await ordersResponse.json().catch(() => ({ orders: [] }));
@@ -194,7 +196,7 @@ export default function GridTradingPage() {
     setIsRunning(true);
     try {
       // Call backend API to start grid trading
-      const response = await fetch('http://localhost:8080/api/bot/start', {
+      const response = await fetch(`${API_BASE_URL}/api/bot/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -222,7 +224,7 @@ export default function GridTradingPage() {
 
   const handleStopGrid = async () => {
     try {
-      const response = await fetch('http://localhost:8080/api/bot/stop', {
+      const response = await fetch(`${API_BASE_URL}/api/bot/stop`, {
         method: 'POST',
       });
 

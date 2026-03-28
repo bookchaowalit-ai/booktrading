@@ -42,18 +42,24 @@ export default function APIKeysPage() {
 
   useEffect(() => {
     loadAPIKeys();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Load API keys from localStorage
-  const loadAPIKeys = () => {
+  // Load API keys from backend
+  const loadAPIKeys = async () => {
     try {
-      const stored = localStorage.getItem('exchange_api_keys');
-      if (stored) {
-        const keys = JSON.parse(stored);
-        setApiKeys(keys);
+      const response = await fetch(`${API_BASE_URL}/api/exchange/configure`);
+      if (response.ok) {
+        const data = await response.json().catch(() => null);
+        if (data && Array.isArray(data.keys)) {
+          setApiKeys(data.keys);
+        } else if (data && data.provider) {
+          // Single key response
+          setApiKeys([data]);
+        }
       }
     } catch {
-      // ignore
+      // backend unavailable — show empty list
     } finally {
       setIsLoading(false);
     }
@@ -62,11 +68,9 @@ export default function APIKeysPage() {
   // Save API keys to backend database
   const saveAPIKeys = async (keys: StoredAPIKey[]) => {
     try {
-      // Save the selected key to backend for the exchange
       const keyToSave = keys.find(k => k.exchange === selectedExchange);
 
       if (keyToSave) {
-        // Save to backend exchange configuration
         const response = await fetch(`${API_BASE_URL}/api/exchange/configure`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -79,8 +83,6 @@ export default function APIKeysPage() {
         });
 
         if (response.ok) {
-          // Also save to localStorage as backup
-          localStorage.setItem('exchange_api_keys', JSON.stringify(keys));
           setApiKeys(keys);
           success('API credentials saved to backend successfully!');
         } else {
@@ -202,7 +204,6 @@ export default function APIKeysPage() {
 
       // Update state directly — no page reload needed
       const updatedKeys = apiKeys.filter(k => k.id !== keyId);
-      localStorage.setItem('exchange_api_keys', JSON.stringify(updatedKeys));
       setApiKeys(updatedKeys);
       setDeleteConfirmId(null);
       success('API key deleted successfully');

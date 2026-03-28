@@ -9,10 +9,12 @@ export class WebSocketService {
   private ws: WebSocket | null = null;
   private url: string;
   private reconnectAttempts = 0;
-  private maxReconnectAttempts = 5;
-  private reconnectDelay = 3000;
+  private readonly baseReconnectDelay = 1000;   // 1 s initial
+  private readonly maxReconnectDelay = 30000;   // 30 s ceiling
   private messageHandlers: Set<WebSocketMessageHandler> = new Set();
   private reconnectTimer: NodeJS.Timeout | null = null;
+  /** Set to true when disconnect() is called intentionally; prevents auto-reconnect. */
+  private intentionalClose = false;
 
   constructor(url?: string) {
     this.url = url || process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8081/ws';
@@ -22,6 +24,8 @@ export class WebSocketService {
     if (this.ws?.readyState === WebSocket.OPEN) {
       return;
     }
+
+    this.intentionalClose = false;
 
     try {
       this.ws = new WebSocket(this.url);
@@ -41,20 +45,23 @@ export class WebSocketService {
       };
 
       this.ws.onclose = () => {
-        console.log('WebSocket disconnected');
-        this.attemptReconnect();
+        if (!this.intentionalClose) {
+          this.scheduleReconnect();
+        }
       };
 
-      this.ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
+      this.ws.onerror = () => {
+        // onerror is always followed by onclose; reconnect is handled there.
       };
     } catch (error) {
       console.error('Failed to connect WebSocket:', error);
-      this.attemptReconnect();
+      this.scheduleReconnect();
     }
   }
 
   disconnect(): void {
+    this.intentionalClose = true;
+
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -64,20 +71,23 @@ export class WebSocketService {
       this.ws.close();
       this.ws = null;
     }
+    this.reconnectAttempts = 0;
   }
 
-  private attemptReconnect(): void {
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.error('Max reconnection attempts reached');
-      return;
-    }
+  private scheduleReconnect(): void {
+    if (this.reconnectTimer) return; // already scheduled
+
+    // Exponential backoff with jitter: delay = min(base * 2^attempt, max) ± 10%
+    const expDelay = this.baseReconnectDelay * Math.pow(2, this.reconnectAttempts);
+    const cappedDelay = Math.min(expDelay, this.maxReconnectDelay);
+    const jitter = cappedDelay * 0.1 * (Math.random() * 2 - 1);
+    const delay = Math.round(cappedDelay + jitter);
 
     this.reconnectAttempts++;
-    const delay = this.reconnectDelay * this.reconnectAttempts;
-
-    console.log(`Attempting to reconnect in ${delay}ms (attempt ${this.reconnectAttempts})`);
+    console.log(`WebSocket: reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
 
     this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
       this.connect();
     }, delay);
   }

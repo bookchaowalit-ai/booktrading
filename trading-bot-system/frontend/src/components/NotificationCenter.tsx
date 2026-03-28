@@ -78,25 +78,25 @@ export default function NotificationCenter() {
   const unreadCount = notifications.filter((n) => !n.read).length;
 
   const handleMarkAsRead = async (id: string) => {
-    await api.markNotificationRead(id).catch(() => {});
+    await api.markNotificationRead(id).catch(() => { });
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, read: true } : n))
     );
   };
 
   const handleMarkAllAsRead = async () => {
-    await api.markAllNotificationsRead().catch(() => {});
+    await api.markAllNotificationsRead().catch(() => { });
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
     success('All notifications marked as read');
   };
 
   const handleDeleteNotification = async (id: string) => {
-    await api.deleteNotification(id).catch(() => {});
+    await api.deleteNotification(id).catch(() => { });
     setNotifications((prev) => prev.filter((n) => n.id !== id));
   };
 
   const handleClearAll = async () => {
-    await api.clearAllNotifications().catch(() => {});
+    await api.clearAllNotifications().catch(() => { });
     setNotifications([]);
     success('All notifications cleared');
   };
@@ -294,11 +294,10 @@ export default function NotificationCenter() {
               <div className="flex items-center gap-2">
                 {getNotificationIcon(notification.type)}
                 <span
-                  className={`text-sm font-medium ${
-                    notification.read
+                  className={`text-sm font-medium ${notification.read
                       ? 'text-gray-600 dark:text-gray-400'
                       : 'text-gray-900 dark:text-white'
-                  }`}
+                    }`}
                 >
                   {notification.title}
                 </span>

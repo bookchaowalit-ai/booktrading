@@ -72,6 +72,23 @@ func (h *OrderHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(order)
 }
 
+// GetOpenOrders handles GET /api/orders/open
+func (h *OrderHandler) GetOpenOrders(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	orders, err := h.orderHandler.GetOpenOrders(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(orders)
+}
+
 // GetAllOrders handles GET /api/orders
 func (h *OrderHandler) GetAllOrders(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -270,6 +287,13 @@ func NewRouter(authHandler *AuthHandler) *Router {
 
 // RegisterOrderRoutes registers order-related routes
 func (r *Router) RegisterOrderRoutes(handler *OrderHandler) {
+	r.mux.HandleFunc("/api/orders/open", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodGet {
+			handler.GetOpenOrders(w, req)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
 	r.mux.HandleFunc("/api/orders", func(w http.ResponseWriter, req *http.Request) {
 		switch req.Method {
 		case http.MethodPost:
@@ -368,7 +392,9 @@ func (r *Router) RegisterExchangeRoutes(handler *ExchangeHandler) {
 		}
 	})
 	r.mux.HandleFunc("/api/exchange/configure", func(w http.ResponseWriter, req *http.Request) {
-		if req.Method == http.MethodPost {
+		if req.Method == http.MethodGet {
+			handler.GetConfiguredExchanges(w, req)
+		} else if req.Method == http.MethodPost {
 			handler.ConfigureExchange(w, req)
 		} else if req.Method == http.MethodDelete {
 			handler.DeleteExchange(w, req)

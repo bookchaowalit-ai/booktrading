@@ -140,13 +140,33 @@ func (h *SettingsHandler) ExportData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Implement data export
-	// For now, return placeholder
+	prefs, err := h.repo.GetPreferences(r.Context(), "default")
+	if err != nil {
+		prefs = &database.UserPreferences{
+			UserID:   "default",
+			Language: "en",
+			Theme:    "system",
+		}
+	}
+
+	export := map[string]interface{}{
+		"preferences": map[string]interface{}{
+			"language": prefs.Language,
+			"theme":    prefs.Theme,
+			"notifications": map[string]interface{}{
+				"trade_executions": prefs.NotificationsTradeExecutions,
+				"price_alerts":     prefs.NotificationsPriceAlerts,
+				"bot_status":       prefs.NotificationsBotStatus,
+				"errors":           prefs.NotificationsErrors,
+			},
+		},
+	}
+
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"trading-data-export.json\"")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":  "success",
-		"message": "Export feature coming soon",
-		"data":    nil,
+		"status": "success",
+		"data":   export,
 	})
 }
 
@@ -161,8 +181,15 @@ func (h *SettingsHandler) ResetSettings(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// TODO: Implement reset
-	// For now, return placeholder
+	if err := h.repo.ResetPreferences(r.Context(), "default"); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "Failed to reset settings",
+		})
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"status":  "success",

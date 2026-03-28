@@ -239,9 +239,10 @@ func (m *ExchangeManager) getBinanceTHBalances(ctx context.Context) ([]Balance, 
 
 // GetBinanceBalances gets balances from Binance
 func (m *ExchangeManager) getBinanceBalances(ctx context.Context) ([]Balance, error) {
-	// TODO: Implement actual Binance balance fetching
-	// For now, return empty balances
-	return []Balance{}, nil
+	if m.binanceAdapter == nil {
+		return nil, fmt.Errorf("Binance adapter not initialized")
+	}
+	return m.binanceAdapter.GetBalances(ctx)
 }
 
 // GetBitkubBalances gets balances from Bitkub

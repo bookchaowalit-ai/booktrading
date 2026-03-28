@@ -42,25 +42,48 @@ export default function BacktestPage() {
 
   const handleRunBacktest = async () => {
     setIsRunning(true);
-    // Simulate backtest running
-    setTimeout(() => {
-      setResults({
-        totalReturn: 2450,
-        totalReturnPercent: 24.5,
-        totalTrades: 45,
-        winRate: 64.4,
-        profitFactor: 2.1,
-        maxDrawdown: 8.5,
-        sharpeRatio: 1.8,
-        sortinoRatio: 2.3,
-        avgWin: 125,
-        avgLoss: 65,
-        bestTrade: 450,
-        worstTrade: -180,
+    const STRATEGY_URL = process.env.NEXT_PUBLIC_STRATEGY_URL || 'http://localhost:8000';
+    try {
+      const response = await fetch(`${STRATEGY_URL}/api/backtest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol: config.symbol,
+          start_date: config.startDate,
+          end_date: config.endDate,
+          initial_capital: config.initialCapital,
+          leverage: config.leverage,
+          strategy: config.strategy,
+          commission: config.commission,
+          slippage: config.slippage,
+        }),
       });
+      if (response.ok) {
+        const data = await response.json();
+        setResults({
+          totalReturn: data.total_return ?? data.totalReturn ?? 0,
+          totalReturnPercent: data.total_return_percent ?? data.totalReturnPercent ?? 0,
+          totalTrades: data.total_trades ?? data.totalTrades ?? 0,
+          winRate: data.win_rate ?? data.winRate ?? 0,
+          profitFactor: data.profit_factor ?? data.profitFactor ?? 0,
+          maxDrawdown: data.max_drawdown ?? data.maxDrawdown ?? 0,
+          sharpeRatio: data.sharpe_ratio ?? data.sharpeRatio ?? 0,
+          sortinoRatio: data.sortino_ratio ?? data.sortinoRatio ?? 0,
+          avgWin: data.avg_win ?? data.avgWin ?? 0,
+          avgLoss: data.avg_loss ?? data.avgLoss ?? 0,
+          bestTrade: data.best_trade ?? data.bestTrade ?? 0,
+          worstTrade: data.worst_trade ?? data.worstTrade ?? 0,
+        });
+        success('Backtest completed successfully');
+      } else {
+        const errData = await response.json().catch(() => ({}));
+        error(errData.detail || errData.error || 'Backtest failed');
+      }
+    } catch {
+      error('Strategy service unavailable - check connection');
+    } finally {
       setIsRunning(false);
-      success('Backtest completed successfully');
-    }, 3000);
+    }
   };
 
   const handleStartPaperTrading = () => {

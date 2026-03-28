@@ -2,9 +2,15 @@ package exchange
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -40,6 +46,81 @@ func NewBinanceAdapter(apiKey, apiSecret string, useTestnet bool) *BinanceAdapte
 		streamCh:   make(chan *model.MarketData, 1000),
 		subscribed: make(map[model.TradeSymbol]bool),
 	}
+}
+
+// GetBalances retrieves account balances from Binance global
+func (b *BinanceAdapter) GetBalances(ctx context.Context) ([]Balance, error) {
+	b.mu.RLock()
+	apiKey := b.apiKey
+	apiSecret := b.apiSecret
+	useTestnet := b.useTestnet
+	b.mu.RUnlock()
+
+	baseURL := "https://api.binance.com"
+	if useTestnet {
+		baseURL = "https://testnet.binance.vision"
+	}
+
+	timestamp := strconv.FormatInt(time.Now().UnixMilli(), 10)
+	queryString := fmt.Sprintf("timestamp=%s", timestamp)
+
+	mac := hmac.New(sha256.New, []byte(apiSecret))
+	mac.Write([]byte(queryString))
+	signature := hex.EncodeToString(mac.Sum(nil))
+
+	reqURL := fmt.Sprintf("%s/api/v3/account?%s&signature=%s", baseURL, queryString, signature)
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("X-MBX-APIKEY", apiKey)
+	req.Header.Set("Accept", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	var errResp struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	if err := json.Unmarshal(body, &errResp); err == nil && errResp.Code != 0 {
+		return nil, fmt.Errorf("Binance API error (code %d): %s", errResp.Code, errResp.Msg)
+	}
+
+	var result struct {
+		Balances []struct {
+			Asset  string `json:"asset"`
+			Free   string `json:"free"`
+			Locked string `json:"locked"`
+		} `json:"balances"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	balances := make([]Balance, 0)
+	for _, b := range result.Balances {
+		free, _ := strconv.ParseFloat(b.Free, 64)
+		locked, _ := strconv.ParseFloat(b.Locked, 64)
+		if free > 0 || locked > 0 {
+			balances = append(balances, Balance{
+				Currency: b.Asset,
+				Free:     free,
+				Locked:   locked,
+				Total:    free + locked,
+			})
+		}
+	}
+	return balances, nil
 }
 
 // Connect establishes WebSocket connection to Binance

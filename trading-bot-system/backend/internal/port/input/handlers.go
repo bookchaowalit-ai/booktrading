@@ -12,6 +12,7 @@ type OrderHandler interface {
 	CancelOrder(ctx context.Context, orderID string) error
 	GetOrder(ctx context.Context, orderID string) (*model.Order, error)
 	GetAllOrders(ctx context.Context) ([]*model.Order, error)
+	GetOpenOrders(ctx context.Context) ([]*model.Order, error)
 }
 
 // MarketDataHandler defines the interface for handling market data requests

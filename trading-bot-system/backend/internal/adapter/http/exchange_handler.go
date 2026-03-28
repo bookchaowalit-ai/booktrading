@@ -191,6 +191,38 @@ func (h *ExchangeHandler) DeleteExchange(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// GetConfiguredExchanges returns exchanges that have API keys configured
+func (h *ExchangeHandler) GetConfiguredExchanges(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
+		return
+	}
+
+	exchanges := h.manager.GetSupportedExchanges()
+
+	// Filter to only exchanges that are connected (have API keys)
+	configured := make([]map[string]interface{}, 0)
+	for _, ex := range exchanges {
+		if ex.Connected {
+			configured = append(configured, map[string]interface{}{
+				"provider":  ex.Provider,
+				"name":      ex.Name,
+				"name_th":   ex.NameTH,
+				"connected": ex.Connected,
+				"testnet":   ex.Testnet,
+			})
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"configured_exchanges": configured,
+		"current_provider":     string(h.manager.GetCurrentProvider()),
+	})
+}
+
 // GetBalances returns balances for the current exchange
 func (h *ExchangeHandler) GetBalances(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

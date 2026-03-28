@@ -17,6 +17,7 @@ export const th = {
   'nav.api-keys': 'API Keys',
   'nav.backtest': 'แบ็คเทส & กระดาษ',
   'nav.sentiment': 'อารมณ์ตลาด',
+  'nav.news': 'ข่าวสาร',
   
   // Common
   'common.loading': 'กำลังโหลด...',

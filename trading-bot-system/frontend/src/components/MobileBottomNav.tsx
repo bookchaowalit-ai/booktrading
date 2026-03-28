@@ -69,11 +69,10 @@ export default function MobileBottomNav() {
             <Link
               key={item.id}
               href={href}
-              className={`flex flex-col items-center justify-center py-3 px-2 transition-colors ${
-                isActive
+              className={`flex flex-col items-center justify-center py-3 px-2 transition-colors ${isActive
                   ? 'text-purple-600'
                   : 'text-gray-500 dark:text-gray-400'
-              }`}
+                }`}
               aria-current={isActive ? 'page' : undefined}
             >
               <div className="relative">

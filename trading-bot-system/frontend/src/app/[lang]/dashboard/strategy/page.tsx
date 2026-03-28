@@ -4,7 +4,7 @@
  */
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
@@ -14,9 +14,69 @@ import { useTranslation } from '@/i18n/translations';
 
 type StrategyTab = 'overview' | 'sentiment' | 'backtest' | 'configuration';
 
+interface StrategyStats {
+  accuracy: number;
+  sentiment: number;
+  backtestReturn: number;
+}
+
 export default function StrategyPage() {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<StrategyTab>('overview');
+  const [stats, setStats] = useState<StrategyStats>({
+    accuracy: 0,
+    sentiment: 0,
+    backtestReturn: 0,
+  });
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const STRATEGY_URL = process.env.NEXT_PUBLIC_STRATEGY_URL || 'http://localhost:8000';
+    const fetchStats = async () => {
+      try {
+        const end = new Date();
+        const start = new Date();
+        start.setDate(start.getDate() - 90);
+        const fmt = (d: Date) => d.toISOString().slice(0, 10);
+
+        const [signalsRes, indicatorsRes, backtestRes] = await Promise.all([
+          fetch(`${STRATEGY_URL}/api/signals`).catch(() => null),
+          fetch(`${STRATEGY_URL}/api/indicators`).catch(() => null),
+          fetch(`${STRATEGY_URL}/api/backtest`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbol: 'BTCUSDT', start_date: fmt(start), end_date: fmt(end), initial_capital: 10000 }),
+          }).catch(() => null),
+        ]);
+        const signalsData = signalsRes ? await signalsRes.json().catch(() => null) : null;
+        const indicatorsData = indicatorsRes ? await indicatorsRes.json().catch(() => null) : null;
+        const backtestData = backtestRes?.ok ? await backtestRes.json().catch(() => null) : null;
+
+        if (signalsData) {
+          const signals: any[] = signalsData.signals || [];
+          const accuracy = signals.length > 0
+            ? Math.round((signals.filter((s: any) => s.strength > 0.6).length / signals.length) * 100)
+            : 0;
+          const lastSentiment = signalsData.market_sentiment ?? (indicatorsData?.sentiment ?? 0);
+          setStats((prev) => ({
+            ...prev,
+            accuracy,
+            sentiment: lastSentiment,
+            backtestReturn: backtestData?.total_return_percent ?? prev.backtestReturn,
+          }));
+        } else if (backtestData) {
+          setStats((prev) => ({ ...prev, backtestReturn: backtestData.total_return_percent ?? prev.backtestReturn }));
+        }
+      } catch {
+        // keep defaults on error
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchStats();
+    const interval = setInterval(fetchStats, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <div className="space-y-4">
@@ -59,7 +119,9 @@ export default function StrategyPage() {
             <p className="text-xs text-gray-600 dark:text-gray-400 mb-3">
               {t('strategy.ai-signals-desc')}
             </p>
-            <div className="text-2xl font-bold text-purple-600 mb-1">72%</div>
+            <div className="text-2xl font-bold text-purple-600 mb-1">
+              {isLoading ? '—' : `${stats.accuracy}%`}
+            </div>
             <p className="text-xs text-gray-500">{t('strategy.accuracy')}</p>
           </Card>
 
@@ -71,7 +133,9 @@ export default function StrategyPage() {
             <p className="text-xs text-gray-600 dark:text-gray-400 mb-3">
               {t('strategy.sentiment-desc')}
             </p>
-            <div className="text-2xl font-bold text-green-600 mb-1">+0.65</div>
+            <div className="text-2xl font-bold text-green-600 mb-1">
+              {isLoading ? '—' : `${stats.sentiment >= 0 ? '+' : ''}${stats.sentiment.toFixed(2)}`}
+            </div>
             <p className="text-xs text-gray-500">{t('strategy.bullish')}</p>
           </Card>
 
@@ -83,7 +147,9 @@ export default function StrategyPage() {
             <p className="text-xs text-gray-600 dark:text-gray-400 mb-3">
               {t('strategy.backtest-desc')}
             </p>
-            <div className="text-2xl font-bold text-blue-600 mb-1">+127%</div>
+            <div className="text-2xl font-bold text-blue-600 mb-1">
+              {isLoading ? '—' : stats.backtestReturn !== 0 ? `${stats.backtestReturn >= 0 ? '+' : ''}${stats.backtestReturn.toFixed(1)}%` : '—'}
+            </div>
             <p className="text-xs text-gray-500">{t('strategy.last-90-days')}</p>
           </Card>
 

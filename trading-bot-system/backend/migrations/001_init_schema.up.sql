@@ -101,7 +101,7 @@ CREATE TRIGGER update_bot_status_updated_at BEFORE UPDATE ON bot_status
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM timescaledb_information.hypertables WHERE hypertable_name = 'market_data_1m'
+        SELECT 1 FROM timescaledb_information.continuous_aggregates WHERE view_name = 'market_data_1m'
     ) THEN
         CREATE MATERIALIZED VIEW market_data_1m
         WITH (timescaledb.continuous) AS

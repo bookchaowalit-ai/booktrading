@@ -17,6 +17,7 @@ export const en = {
   'nav.api-keys': 'API Keys',
   'nav.backtest': 'Backtest & Paper',
   'nav.sentiment': 'Sentiment',
+  'nav.news': 'News',
   
   // Common
   'common.loading': 'Loading...',
@@ -303,6 +304,29 @@ export const en = {
   'signals.execute': 'Execute',
   'signals.reasoning': 'AI Reasoning',
 
+  // Strategy Page
+  'strategy.title': 'Strategy & AI',
+  'strategy.subtitle': 'AI trading strategy, sentiment analysis, and backtesting',
+  'strategy.ai-signals': 'AI Signals',
+  'strategy.sentiment-score': 'Sentiment Score',
+  'strategy.backtest-results': 'Backtest Results',
+  'strategy.quick-actions': 'Quick Actions',
+  'strategy.view-ai': 'View AI Signals',
+  'strategy.analyze-sentiment': 'Analyze Sentiment',
+  'strategy.run-backtest': 'Run Backtest',
+  'strategy.accuracy': 'Accuracy (Last 30 Days)',
+  'strategy.bullish': 'Bullish Sentiment',
+  'strategy.last-90-days': 'Last 90 Days',
+  'strategy.ai-signals-desc': 'Machine learning-powered trading signals',
+  'strategy.sentiment-desc': 'Market sentiment from news and social media',
+  'strategy.backtest-desc': 'Strategy performance on historical data',
+  'strategy.sentiment-analysis': 'Market Sentiment Analysis',
+  'strategy.sentiment-analysis-desc': 'Real-time sentiment analysis from news, social media, and market data',
+  'strategy.backtesting': 'Backtesting & Paper Trading',
+  'strategy.backtesting-desc': 'Test your strategy against historical data before risking real capital',
+  'strategy.configuration': 'Strategy Configuration',
+  'strategy.configuration-desc': 'Configure trading strategy parameters and AI settings',
+
   // Trading Pairs & Exchanges
   'exchange.binance': 'Binance',
   'exchange.bitkub': 'Bitkub (Thai)',
@@ -310,6 +334,11 @@ export const en = {
   'exchange.coinbase': 'Coinbase',
   'exchange.kraken': 'Kraken',
   'exchange.thai': 'Thai Exchange',
+  'exchange.no-balances': 'No balances found',
+  'exchange.configure-api': 'Set up API Keys in Settings → API Keys',
+  'exchange.assets': 'Assets',
+  'exchange.refresh': 'Refresh',
+  'exchange.more-assets': '+{count} more assets',
   'pairs.search': 'Search Trading Pair',
   'pairs.popular-th': 'Popular in Thailand',
   'pairs.all': 'All Pairs',
@@ -318,6 +347,18 @@ export const en = {
   'pairs.commodities': 'Commodities',
   'pairs.indices': 'Indices',
   'pairs.stocks': 'US Stocks',
+
+  // Toast Messages
+  'toast.switched-exchange': 'Switched to {exchange}',
+  'toast.no-api-credentials': 'No API credentials for {exchange}. Add keys in Settings → API Keys',
+  'toast.failed-switch': 'Failed to switch to {exchange}',
+  'toast.settings-saved': 'Settings saved',
+  'toast.settings-failed': 'Failed to save settings',
+  'toast.data-exported': 'Data exported',
+  'toast.export-failed': 'Failed to export data',
+  'toast.settings-reset': 'Settings reset',
+  'toast.reset-failed': 'Failed to reset settings',
+  'toast.balances-refreshed': 'Balances refreshed',
 };
 
 export type TranslationKey = keyof typeof en;

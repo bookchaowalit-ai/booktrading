@@ -111,11 +111,10 @@ export default function TradingJournal() {
         {[1, 2, 3, 4, 5].map((star) => (
           <Star
             key={star}
-            className={`w-3 h-3 ${
-              star <= rating
+            className={`w-3 h-3 ${star <= rating
                 ? 'fill-yellow-400 text-yellow-400'
                 : 'text-gray-300'
-            }`}
+              }`}
           />
         ))}
       </div>
@@ -170,9 +169,8 @@ export default function TradingJournal() {
               </div>
               <div className="text-right">
                 <div
-                  className={`text-lg font-bold ${
-                    trade.pnl >= 0 ? 'text-green-600' : 'text-red-600'
-                  }`}
+                  className={`text-lg font-bold ${trade.pnl >= 0 ? 'text-green-600' : 'text-red-600'
+                    }`}
                 >
                   {trade.pnl >= 0 ? '+' : ''}${trade.pnl.toFixed(2)} (
                   {trade.pnlPercent.toFixed(2)}%)

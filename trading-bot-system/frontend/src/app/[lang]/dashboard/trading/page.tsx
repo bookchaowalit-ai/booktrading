@@ -13,15 +13,28 @@ import ExchangeSelector from '@/components/ExchangeSelector';
 import TradingViewChart from '@/components/TradingViewChart';
 import PnLDashboard from '@/components/PnLDashboard';
 import { Zap, LayoutDashboard, Settings, Shield, Activity } from 'lucide-react';
+import StopLossTakeProfit from '@/components/StopLossTakeProfit';
+import PositionSizingCalculator from '@/components/PositionSizingCalculator';
+import OrderTracking from '@/components/OrderTracking';
 
 export default function TradingPage() {
   const { t } = useTranslation();
   const { success, error } = useToast();
 
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+
   const [activeTab, setActiveTab] = useState<'overview' | 'config' | 'risk' | 'orders'>('overview');
   const [isRunning, setIsRunning] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [botStatus, setBotStatus] = useState<any>(null);
+  const [gridConfig, setGridConfig] = useState({
+    symbol: 'BTCUSDT',
+    lowerPrice: 40000,
+    upperPrice: 50000,
+    gridLevels: 10,
+    investmentAmount: 1000,
+    gridType: 'arithmetic',
+  });
   const [stats, setStats] = useState({
     totalProfit: 0,
     totalTrades: 0,
@@ -37,7 +50,7 @@ export default function TradingPage() {
 
   const loadBotStatus = async () => {
     try {
-      const response = await fetch('http://localhost:8080/api/bot/status');
+      const response = await fetch(`${API_BASE_URL}/api/bot/status`);
       const data = await response.json().catch(() => null);
       if (data) {
         setBotStatus(data);
@@ -57,7 +70,7 @@ export default function TradingPage() {
   const handleStartBot = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch('http://localhost:8080/api/bot/start', {
+      const response = await fetch(`${API_BASE_URL}/api/bot/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ symbol: 'BTCUSDT', quantity: 100 }),
@@ -79,7 +92,7 @@ export default function TradingPage() {
   const handleStopBot = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch('http://localhost:8080/api/bot/stop', { method: 'POST' });
+      const response = await fetch(`${API_BASE_URL}/api/bot/stop`, { method: 'POST' });
       if (response.ok) {
         success('Trading bot stopped');
         setIsRunning(false);
@@ -206,32 +219,95 @@ export default function TradingPage() {
         )}
 
         {activeTab === 'config' && (
-          <div className="h-full flex items-center justify-center">
-            <div className="text-center text-gray-500">
-              <Settings className="w-12 h-12 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">Grid Configuration</p>
-              <p className="text-xs mt-1">Configure your grid trading parameters</p>
-            </div>
+          <div className="max-w-2xl mx-auto p-4">
+            <Card variant="elevated" className="p-4">
+              <div className="flex items-center gap-2 mb-4">
+                <Settings className="w-4 h-4 text-purple-600" />
+                <h2 className="text-sm font-semibold">Grid Configuration</h2>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Symbol</label>
+                  <input
+                    type="text"
+                    value={gridConfig.symbol}
+                    onChange={(e) => setGridConfig((p) => ({ ...p, symbol: e.target.value }))}
+                    className="w-full px-3 py-1.5 text-sm border border-gray-200 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Grid Type</label>
+                  <select
+                    value={gridConfig.gridType}
+                    onChange={(e) => setGridConfig((p) => ({ ...p, gridType: e.target.value }))}
+                    className="w-full px-3 py-1.5 text-sm border border-gray-200 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  >
+                    <option value="arithmetic">Arithmetic</option>
+                    <option value="geometric">Geometric</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Lower Price</label>
+                  <input
+                    type="number"
+                    value={gridConfig.lowerPrice}
+                    onChange={(e) => setGridConfig((p) => ({ ...p, lowerPrice: Number(e.target.value) }))}
+                    className="w-full px-3 py-1.5 text-sm border border-gray-200 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Upper Price</label>
+                  <input
+                    type="number"
+                    value={gridConfig.upperPrice}
+                    onChange={(e) => setGridConfig((p) => ({ ...p, upperPrice: Number(e.target.value) }))}
+                    className="w-full px-3 py-1.5 text-sm border border-gray-200 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Grid Levels</label>
+                  <input
+                    type="number"
+                    min={2}
+                    max={100}
+                    value={gridConfig.gridLevels}
+                    onChange={(e) => setGridConfig((p) => ({ ...p, gridLevels: Number(e.target.value) }))}
+                    className="w-full px-3 py-1.5 text-sm border border-gray-200 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Investment Amount (USDT)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={gridConfig.investmentAmount}
+                    onChange={(e) => setGridConfig((p) => ({ ...p, investmentAmount: Number(e.target.value) }))}
+                    className="w-full px-3 py-1.5 text-sm border border-gray-200 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                </div>
+              </div>
+              <div className="mt-4 flex justify-end gap-2">
+                <Button variant="secondary" size="sm" onClick={() => setGridConfig({ symbol: 'BTCUSDT', lowerPrice: 40000, upperPrice: 50000, gridLevels: 10, investmentAmount: 1000, gridType: 'arithmetic' })}>
+                  Reset
+                </Button>
+                <Button variant="primary" size="sm">
+                  Apply Config
+                </Button>
+              </div>
+            </Card>
           </div>
         )}
 
         {activeTab === 'risk' && (
-          <div className="h-full flex items-center justify-center">
-            <div className="text-center text-gray-500">
-              <Shield className="w-12 h-12 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">Risk Management</p>
-              <p className="text-xs mt-1">Stop-loss, take-profit, position sizing</p>
-            </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-4">
+            <StopLossTakeProfit symbol={gridConfig.symbol} entryPrice={gridConfig.lowerPrice} />
+            <PositionSizingCalculator accountBalance={gridConfig.investmentAmount} entryPrice={gridConfig.lowerPrice} stopLossPercent={5} />
           </div>
         )}
 
         {activeTab === 'orders' && (
-          <div className="h-full flex items-center justify-center">
-            <div className="text-center text-gray-500">
-              <Activity className="w-12 h-12 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">Order Tracking</p>
-              <p className="text-xs mt-1">Real-time order monitoring</p>
-            </div>
+          <div className="p-4">
+            <OrderTracking symbol={gridConfig.symbol} gridLevels={gridConfig.gridLevels} />
           </div>
         )}
       </div>

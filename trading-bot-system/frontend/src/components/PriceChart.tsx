@@ -27,7 +27,7 @@ export default function PriceChart({ symbol, height = 300 }: PriceChartProps) {
   const marketData = useMarketData(symbol);
   const indicators = useIndicators(symbol);
   const rsiStatus = useRSIStatus(indicators?.rsi ?? null);
-  
+
   const [chartData, setChartData] = useState<Array<MarketData & { time: string }>>([]);
 
   // Update chart data when new market data arrives
@@ -69,7 +69,7 @@ export default function PriceChart({ symbol, height = 300 }: PriceChartProps) {
             </span>
           </div>
         </div>
-        
+
         {indicators?.rsi && (
           <div className={`px-3 py-1 rounded-full text-sm font-medium ${rsiClass}`}>
             RSI: {indicators.rsi.toFixed(2)} ({rsiStatus.status})
@@ -86,48 +86,48 @@ export default function PriceChart({ symbol, height = 300 }: PriceChartProps) {
           <p className="text-sm">Waiting for market data...</p>
         </div>
       ) : (
-      <div style={{ height: `${height}px` }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} />
-            <XAxis
-              dataKey="time"
-              stroke="#9CA3AF"
-              tick={{ fontSize: 12 }}
-            />
-            <YAxis
-              stroke="#9CA3AF"
-              tick={{ fontSize: 12 }}
-              domain={['auto', 'auto']}
-            />
-            <Tooltip
-              contentStyle={{
-                backgroundColor: 'var(--tooltip-bg, #1F2937)',
-                border: '1px solid var(--tooltip-border, #374151)',
-                borderRadius: '8px',
-                color: 'var(--tooltip-text, #F9FAFB)',
-              }}
-              formatter={(value: number) => [`$${value.toFixed(2)}`, 'Price']}
-            />
-            {indicators?.ema && (
-              <ReferenceLine 
-                y={indicators.ema} 
-                stroke="#F59E0B" 
-                strokeDasharray="3 3"
-                label={{ value: `EMA: ${indicators.ema}`, fill: '#F59E0B', fontSize: 12 }}
+        <div style={{ height: `${height}px` }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} />
+              <XAxis
+                dataKey="time"
+                stroke="#9CA3AF"
+                tick={{ fontSize: 12 }}
               />
-            )}
-            <Line 
-              type="monotone" 
-              dataKey="price" 
-              stroke={priceChange >= 0 ? '#10B981' : '#EF4444'} 
-              strokeWidth={2}
-              dot={false}
-              animationDuration={300}
-            />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
+              <YAxis
+                stroke="#9CA3AF"
+                tick={{ fontSize: 12 }}
+                domain={['auto', 'auto']}
+              />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: 'var(--tooltip-bg, #1F2937)',
+                  border: '1px solid var(--tooltip-border, #374151)',
+                  borderRadius: '8px',
+                  color: 'var(--tooltip-text, #F9FAFB)',
+                }}
+                formatter={(value: number) => [`$${value.toFixed(2)}`, 'Price']}
+              />
+              {indicators?.ema && (
+                <ReferenceLine
+                  y={indicators.ema}
+                  stroke="#F59E0B"
+                  strokeDasharray="3 3"
+                  label={{ value: `EMA: ${indicators.ema}`, fill: '#F59E0B', fontSize: 12 }}
+                />
+              )}
+              <Line
+                type="monotone"
+                dataKey="price"
+                stroke={priceChange >= 0 ? '#10B981' : '#EF4444'}
+                strokeWidth={2}
+                dot={false}
+                animationDuration={300}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
       )}
     </div>
   );

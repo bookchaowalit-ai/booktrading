@@ -140,6 +140,21 @@ func (s *OrderServiceImpl) GetAllOrders(ctx context.Context) ([]*model.Order, er
 	return s.orderRepo.GetAll(ctx)
 }
 
+// GetOpenOrders retrieves all orders with PENDING status
+func (s *OrderServiceImpl) GetOpenOrders(ctx context.Context) ([]*model.Order, error) {
+	orders, err := s.orderRepo.GetAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	open := make([]*model.Order, 0)
+	for _, o := range orders {
+		if o.Status == model.OrderStatusPending {
+			open = append(open, o)
+		}
+	}
+	return open, nil
+}
+
 // MarketDataServiceImpl implements the MarketDataService interface
 type MarketDataServiceImpl struct {
 	exchangeStream output.ExchangeDataStream

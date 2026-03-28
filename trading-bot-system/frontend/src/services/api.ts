@@ -25,31 +25,6 @@ function authHeaders(extra?: Record<string, string>): Record<string, string> {
 export const api = {
   // Bot Control
   async startBot(): Promise<void> {
-    // Get API keys from localStorage
-    const storedKeys = localStorage.getItem('exchange_api_keys');
-    let apiKey = '';
-    let apiSecret = '';
-    let testnet = false;
-    
-    if (storedKeys) {
-      const keys = JSON.parse(storedKeys);
-      const bitkubKey = keys.find((k: any) => k.exchange === 'bitkub');
-      if (bitkubKey) {
-        apiKey = bitkubKey.apiKey;
-        apiSecret = bitkubKey.apiSecret;
-        testnet = bitkubKey.testnet;
-      }
-    }
-
-    // First configure API if keys exist
-    if (apiKey && apiSecret) {
-      await fetch(`${API_BASE_URL}/api/trading/configure`, {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ apiKey, apiSecret, testnet }),
-      });
-    }
-
     try {
       const response = await fetch(`${API_BASE_URL}/api/bot/start`, {
         method: 'POST',
