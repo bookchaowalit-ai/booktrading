@@ -9,11 +9,11 @@ import { motion } from 'framer-motion';
 import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
-import { 
-  BarChart3, 
-  TrendingUp, 
-  Play, 
-  Pause, 
+import {
+  BarChart3,
+  TrendingUp,
+  Play,
+  Pause,
   RotateCcw,
   Download,
   Calendar,
@@ -114,11 +114,10 @@ export default function BacktestPage() {
       <div className="flex gap-4">
         <button
           onClick={() => setMode('backtest')}
-          className={`flex-1 p-4 rounded-xl border-2 transition-all ${
-            mode === 'backtest'
+          className={`flex-1 p-4 rounded-xl border-2 transition-all ${mode === 'backtest'
               ? 'border-purple-600 bg-purple-50 dark:bg-purple-900/20'
               : 'border-gray-200 dark:border-gray-700 hover:border-purple-300'
-          }`}
+            }`}
         >
           <div className="flex items-center gap-3 mb-2">
             <Calendar className="w-6 h-6 text-purple-600" />
@@ -133,11 +132,10 @@ export default function BacktestPage() {
 
         <button
           onClick={() => setMode('paper')}
-          className={`flex-1 p-4 rounded-xl border-2 transition-all ${
-            mode === 'paper'
+          className={`flex-1 p-4 rounded-xl border-2 transition-all ${mode === 'paper'
               ? 'border-green-600 bg-green-50 dark:bg-green-900/20'
               : 'border-gray-200 dark:border-gray-700 hover:border-green-300'
-          }`}
+            }`}
         >
           <div className="flex items-center gap-3 mb-2">
             <DollarSign className="w-6 h-6 text-green-600" />
