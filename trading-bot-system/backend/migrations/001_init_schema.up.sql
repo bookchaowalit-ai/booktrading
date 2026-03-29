@@ -125,10 +125,14 @@ DO $$
 BEGIN
     IF EXISTS (
         SELECT 1 FROM timescaledb_information.hypertables WHERE hypertable_name = 'market_data'
-    ) AND NOT EXISTS (
-        SELECT 1 FROM timescaledb_information.compression_policies WHERE hypertable_name = 'market_data'
     ) THEN
-        PERFORM add_compression_policy('market_data', INTERVAL '7 days');
+        BEGIN
+            PERFORM add_compression_policy('market_data', INTERVAL '7 days');
+        EXCEPTION
+            WHEN OTHERS THEN
+                -- Compression policy already exists or not supported in this version
+                NULL;
+        END;
     END IF;
 END
 $$;
@@ -138,10 +142,14 @@ DO $$
 BEGIN
     IF EXISTS (
         SELECT 1 FROM timescaledb_information.hypertables WHERE hypertable_name = 'market_data'
-    ) AND NOT EXISTS (
-        SELECT 1 FROM timescaledb_information.retention_policies WHERE hypertable_name = 'market_data'
     ) THEN
-        PERFORM add_retention_policy('market_data', INTERVAL '90 days');
+        BEGIN
+            PERFORM add_retention_policy('market_data', INTERVAL '90 days');
+        EXCEPTION
+            WHEN OTHERS THEN
+                -- Retention policy already exists or not supported in this version
+                NULL;
+        END;
     END IF;
 END
 $$;

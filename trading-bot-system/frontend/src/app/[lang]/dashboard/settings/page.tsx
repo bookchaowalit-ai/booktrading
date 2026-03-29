@@ -58,7 +58,7 @@ export default function SettingsPage() {
   }, [preferences.theme]);
 
   const loadPreferences = async () => {
-    const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
     // First, load saved preference from localStorage (for immediate UI update)
     const savedLang = localStorage.getItem('preferred_locale');
     if (savedLang) {
@@ -83,7 +83,7 @@ export default function SettingsPage() {
   };
 
   const handleSavePreferences = async () => {
-    const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
     setIsLoading(true);
     try {
       const response = await fetch(`${API_BASE_URL}/api/settings/preferences`, {
@@ -120,7 +120,7 @@ export default function SettingsPage() {
   };
 
   const handleExportData = async () => {
-    const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
     setIsLoading(true);
     try {
       const response = await fetch(`${API_BASE_URL}/api/settings/export`, {
@@ -141,7 +141,7 @@ export default function SettingsPage() {
   };
 
   const handleResetSettings = async () => {
-    const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
     setIsLoading(true);
     setResetConfirm(false);
     try {

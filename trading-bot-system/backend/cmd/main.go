@@ -149,7 +149,7 @@ func main() {
 	settingsHandler := httpadapter.NewSettingsHandler(cfg, prefsRepo)
 	tradingHandler := httpadapter.NewTradingHandler()
 	newsHandler := httpadapter.NewNewsHandler()
-	authHandler := httpadapter.NewAuthHandler()
+	authHandler := httpadapter.NewAuthHandler(redisAdapter)
 	notificationHandler := httpadapter.NewNotificationHandler(db.Pool)
 	performanceHandler := httpadapter.NewPerformanceHandler(tradeHistoryService)
 	journalHandler := httpadapter.NewJournalHandler(db.Pool)

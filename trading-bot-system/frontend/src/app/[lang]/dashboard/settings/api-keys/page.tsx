@@ -28,6 +28,7 @@ export default function APIKeysPage() {
   const { success, error, info } = useToast();
   const [apiKeys, setApiKeys] = useState<StoredAPIKey[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [authError, setAuthError] = useState(false);
   const [selectedExchange, setSelectedExchange] = useState('bitkub');
   const [formData, setFormData] = useState({
     apiKey: '',
@@ -38,7 +39,15 @@ export default function APIKeysPage() {
   const [showSecret, setShowSecret] = useState(false);
   const [isTesting, setIsTesting] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
+
+  const getAuthHeaders = (withContentType = false): Record<string, string> => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+    const headers: Record<string, string> = {};
+    if (withContentType) headers['Content-Type'] = 'application/json';
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    return headers;
+  };
 
   useEffect(() => {
     loadAPIKeys();
@@ -48,14 +57,15 @@ export default function APIKeysPage() {
   // Load API keys from backend
   const loadAPIKeys = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/exchange/configure`);
-      if (response.ok) {
+      const response = await fetch(`${API_BASE_URL}/api/exchange/configure`, {
+        headers: getAuthHeaders(),
+      });
+      if (response.status === 401) {
+        setAuthError(true);
+      } else if (response.ok) {
         const data = await response.json().catch(() => null);
         if (data && Array.isArray(data.keys)) {
           setApiKeys(data.keys);
-        } else if (data && data.provider) {
-          // Single key response
-          setApiKeys([data]);
         }
       }
     } catch {
@@ -73,7 +83,7 @@ export default function APIKeysPage() {
       if (keyToSave) {
         const response = await fetch(`${API_BASE_URL}/api/exchange/configure`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: getAuthHeaders(true),
           body: JSON.stringify({
             provider: selectedExchange,
             api_key: keyToSave.apiKey,
@@ -151,18 +161,10 @@ export default function APIKeysPage() {
       return;
     }
 
-    // Test connection via backend exchange configure endpoint
+    // Test connection by requesting balances from the stored key — do NOT re-POST the masked key
     try {
-      const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
-      const response = await fetch(`${API_BASE_URL}/api/exchange/configure`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider: key.exchange,
-          api_key: key.apiKey,
-          api_secret: key.apiSecret,
-          use_testnet: key.testnet ?? false,
-        }),
+      const response = await fetch(`${API_BASE_URL}/api/exchange/balances`, {
+        headers: getAuthHeaders(),
       });
 
       if (!response.ok) {
@@ -174,11 +176,12 @@ export default function APIKeysPage() {
       const provider = getExchangeProvider(exchange);
       success(`✅ Connected to ${provider?.name} successfully!`);
 
-      // Update last used timestamp
-      const updatedKeys = apiKeys.map(k =>
-        k.exchange === exchange ? { ...k, lastUsedAt: new Date().toISOString() } : k
+      // Update last used timestamp in state only — don't call saveAPIKeys with masked values
+      setApiKeys(prev =>
+        prev.map(k =>
+          k.exchange === exchange ? { ...k, lastUsedAt: new Date().toISOString() } : k
+        )
       );
-      saveAPIKeys(updatedKeys);
 
     } catch (err) {
       error(`❌ Failed to connect to ${exchange}. Please verify your API credentials.`);
@@ -195,7 +198,7 @@ export default function APIKeysPage() {
       if (keyToDelete) {
         await fetch(`${API_BASE_URL}/api/exchange/configure`, {
           method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
+          headers: getAuthHeaders(true),
           body: JSON.stringify({ provider: keyToDelete.exchange }),
         }).catch(() => {
           // Silently continue even if backend delete fails
@@ -307,6 +310,11 @@ export default function APIKeysPage() {
 
           {isLoading ? (
             <div className="text-center py-8 text-xs text-gray-500">Loading...</div>
+          ) : authError ? (
+            <div className="text-center py-8">
+              <Key className="w-8 h-8 text-yellow-400 mx-auto mb-2" />
+              <p className="text-xs text-yellow-600 dark:text-yellow-400 font-medium">Please log in to manage API keys</p>
+            </div>
           ) : apiKeys.length === 0 ? (
             <div className="text-center py-8">
               <Key className="w-8 h-8 text-gray-300 dark:text-gray-600 mx-auto mb-2" />

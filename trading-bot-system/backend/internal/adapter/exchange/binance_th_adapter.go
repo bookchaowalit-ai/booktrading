@@ -97,10 +97,10 @@ func (b *BinanceTHAdapter) GetBalances(ctx context.Context) ([]Balance, error) {
 
 	// Parse successful response
 	var result struct {
-		MakerCommission  int `json:"makerCommission"`
-		TakerCommission  int `json:"takerCommission"`
-		BuyerCommission  int `json:"buyerCommission"`
-		SellerCommission int `json:"sellerCommission"`
+		MakerCommission  json.Number `json:"makerCommission"`
+		TakerCommission  json.Number `json:"takerCommission"`
+		BuyerCommission  json.Number `json:"buyerCommission"`
+		SellerCommission json.Number `json:"sellerCommission"`
 		CanTrade         bool `json:"canTrade"`
 		CanWithdraw      bool `json:"canWithdraw"`
 		CanDeposit       bool `json:"canDeposit"`

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -8,9 +9,45 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
+
+// sessionStore is a small interface so AuthHandler can use Redis or fall back to in-memory.
+type sessionStore interface {
+	SetSession(ctx context.Context, token, userID string, ttl time.Duration) error
+	GetSession(ctx context.Context, token string) (string, bool)
+	DeleteSession(ctx context.Context, token string)
+}
+
+// memorySessionStore is the fallback in-memory implementation.
+type memorySessionStore struct {
+	mu     sync.RWMutex
+	tokens map[string]string
+}
+
+func (m *memorySessionStore) SetSession(_ context.Context, token, userID string, _ time.Duration) error {
+	m.mu.Lock()
+	m.tokens[token] = userID
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *memorySessionStore) GetSession(_ context.Context, token string) (string, bool) {
+	m.mu.RLock()
+	v, ok := m.tokens[token]
+	m.mu.RUnlock()
+	return v, ok
+}
+
+func (m *memorySessionStore) DeleteSession(_ context.Context, token string) {
+	m.mu.Lock()
+	delete(m.tokens, token)
+	m.mu.Unlock()
+}
+
+const sessionTTL = 7 * 24 * time.Hour // 7 days
 
 var defaultUsers = []authUser{
 	{
@@ -38,15 +75,18 @@ type authUser struct {
 
 // AuthHandler handles authentication
 type AuthHandler struct {
-	mu     sync.RWMutex
-	users  []authUser
-	tokens map[string]string // token -> userID
+	mu      sync.RWMutex
+	users   []authUser
+	sessions sessionStore
 }
 
-// NewAuthHandler creates an AuthHandler with seeded demo users
-func NewAuthHandler() *AuthHandler {
+// NewAuthHandler creates an AuthHandler. Pass a Redis-backed sessionStore (or nil for in-memory fallback).
+func NewAuthHandler(store sessionStore) *AuthHandler {
+	if store == nil {
+		store = &memorySessionStore{tokens: make(map[string]string)}
+	}
 	h := &AuthHandler{
-		tokens: make(map[string]string),
+		sessions: store,
 	}
 
 	passwords := map[string]string{
@@ -135,7 +175,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.mu.Lock()
-	h.tokens[token] = found.ID
+	h.sessions.SetSession(r.Context(), token, found.ID, sessionTTL) //nolint:errcheck
 	h.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
@@ -166,7 +206,7 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.mu.RLock()
-	userID, ok := h.tokens[token]
+	userID, ok := h.sessions.GetSession(r.Context(), token)
 	h.mu.RUnlock()
 
 	if !ok {
@@ -211,9 +251,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 
 	token := extractBearerToken(r)
 	if token != "" {
-		h.mu.Lock()
-		delete(h.tokens, token)
-		h.mu.Unlock()
+		h.sessions.DeleteSession(r.Context(), token)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -222,10 +260,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 
 // ValidateToken checks if the given token is valid and returns the associated userID
 func (h *AuthHandler) ValidateToken(token string) (string, bool) {
-	h.mu.RLock()
-	userID, ok := h.tokens[token]
-	h.mu.RUnlock()
-	return userID, ok
+	return h.sessions.GetSession(context.Background(), token)
 }
 
 // extractBearerToken gets the token from Authorization header or query param

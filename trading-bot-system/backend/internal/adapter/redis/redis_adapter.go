@@ -216,3 +216,22 @@ func (m *MarketDataCacheAdapter) SaveToHistory(ctx context.Context, data *model.
 		Member: string(jsonData),
 	}).Err()
 }
+
+// SetSession stores a token → userID mapping in Redis with a TTL.
+func (r *RedisAdapter) SetSession(ctx context.Context, token, userID string, ttl time.Duration) error {
+	return r.client.Set(ctx, "session:"+token, userID, ttl).Err()
+}
+
+// GetSession retrieves the userID associated with a token, returns ("", false) if not found/expired.
+func (r *RedisAdapter) GetSession(ctx context.Context, token string) (string, bool) {
+	val, err := r.client.Get(ctx, "session:"+token).Result()
+	if err != nil {
+		return "", false
+	}
+	return val, true
+}
+
+// DeleteSession removes a token from Redis.
+func (r *RedisAdapter) DeleteSession(ctx context.Context, token string) {
+	r.client.Del(ctx, "session:"+token)
+}

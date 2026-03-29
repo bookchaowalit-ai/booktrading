@@ -15,11 +15,13 @@ import TradingViewChart from '@/components/TradingViewChart';
 import StopLossTakeProfit from '@/components/StopLossTakeProfit';
 import PositionSizingCalculator from '@/components/PositionSizingCalculator';
 import OrderTracking from '@/components/OrderTracking';
+import { api } from '@/services/api';
 import {
   Zap, LayoutDashboard, Settings, Shield, Activity,
-  TrendingUp, TrendingDown, PlayCircle, StopCircle,
-  RefreshCw, ChevronDown, DollarSign, BarChart2,
-  Target, Layers, ArrowUpRight, ArrowDownRight,
+  PlayCircle, StopCircle, RefreshCw, ChevronDown,
+  DollarSign, BarChart2, Target, Layers,
+  ArrowUpRight, ArrowDownRight, Wallet, AlertTriangle,
+  CheckCircle2,
 } from 'lucide-react';
 
 const SYMBOLS = [
@@ -42,7 +44,12 @@ export default function TradingPage() {
   const { t } = useTranslation();
   const { success, error } = useToast();
 
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
+
+  const authHeaders = (): Record<string, string> => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  };
 
   const [activeTab, setActiveTab] = useState<'overview' | 'config' | 'risk' | 'orders'>('overview');
   const [isRunning, setIsRunning] = useState(false);
@@ -51,6 +58,8 @@ export default function TradingPage() {
   const [chartInterval, setChartInterval] = useState('60');
   const [showSymbolDropdown, setShowSymbolDropdown] = useState(false);
   const [uptime, setUptime] = useState(0);
+  const [balances, setBalances] = useState<Array<{ currency: string; free: number; locked: number; total: number }>>([]);
+  const [balancesLoading, setBalancesLoading] = useState(false);
   const [gridConfig, setGridConfig] = useState({
     symbol: 'BTCUSDT',
     lowerPrice: 40000,
@@ -66,9 +75,35 @@ export default function TradingPage() {
     profitRate: 0,
   });
 
+  /** Derive the quote currency from a trading symbol, e.g. BTCTHB → THB, BTCUSDT → USDT */
+  const getQuoteCurrency = (symbol: string): string => {
+    if (symbol.endsWith('THB')) return 'THB';
+    if (symbol.endsWith('USDT')) return 'USDT';
+    if (symbol.endsWith('BUSD')) return 'BUSD';
+    if (symbol.endsWith('BTC')) return 'BTC';
+    if (symbol.endsWith('ETH')) return 'ETH';
+    return 'USDT';
+  };
+
+  const quoteCurrency = getQuoteCurrency(gridConfig.symbol);
+  const quoteBalance = balances.find((b) => b.currency === quoteCurrency);
+  const freeQuoteBalance = quoteBalance?.free ?? 0;
+  const hasEnoughBalance = freeQuoteBalance >= gridConfig.investmentAmount;
+
+  const loadBalances = useCallback(async () => {
+    setBalancesLoading(true);
+    try {
+      const data = await api.getExchangeBalances();
+      setBalances(data);
+    } catch (_) {}
+    finally { setBalancesLoading(false); }
+  }, []);
+
   const loadBotStatus = useCallback(async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/bot/status`);
+      const response = await fetch(`${API_BASE_URL}/api/bot/status`, {
+        headers: authHeaders(),
+      });
       const data = await response.json().catch(() => null);
       if (data) {
         setIsRunning(data.is_active);
@@ -84,9 +119,11 @@ export default function TradingPage() {
 
   useEffect(() => {
     loadBotStatus();
-    const interval = setInterval(loadBotStatus, 5000);
-    return () => clearInterval(interval);
-  }, [loadBotStatus]);
+    loadBalances();
+    const botInterval = setInterval(loadBotStatus, 5000);
+    const balanceInterval = setInterval(loadBalances, 30000);
+    return () => { clearInterval(botInterval); clearInterval(balanceInterval); };
+  }, [loadBotStatus, loadBalances]);
 
   // Uptime counter
   useEffect(() => {
@@ -103,11 +140,26 @@ export default function TradingPage() {
   };
 
   const handleStartBot = async () => {
+    // ── Balance pre-flight check ──────────────────────────────────
+    const freshBalances = await api.getExchangeBalances();
+    setBalances(freshBalances);
+    const fresh = freshBalances.find((b) => b.currency === quoteCurrency);
+    const available = fresh?.free ?? 0;
+
+    if (available < gridConfig.investmentAmount) {
+      error(
+        `ยอดเงินไม่เพียงพอ: มี ${available.toLocaleString(undefined, { maximumFractionDigits: 8 })} ${quoteCurrency} ` +
+        `แต่ต้องการ ${gridConfig.investmentAmount.toLocaleString()} ${quoteCurrency}`
+      );
+      return;
+    }
+    // ─────────────────────────────────────────────────────────────
+
     setIsLoading(true);
     try {
       const response = await fetch(`${API_BASE_URL}/api/bot/start`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({
           symbol: gridConfig.symbol,
           lowerPrice: gridConfig.lowerPrice,
@@ -134,7 +186,7 @@ export default function TradingPage() {
   const handleStopBot = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/bot/stop`, { method: 'POST' });
+      const response = await fetch(`${API_BASE_URL}/api/bot/stop`, { method: 'POST', headers: authHeaders() });
       if (response.ok) {
         success('Trading bot stopped');
         setIsRunning(false);
@@ -373,7 +425,95 @@ export default function TradingPage() {
               {/* Exchange */}
               <div className="p-3">
                 <p className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold mb-2">Exchange</p>
-                <ExchangeSelector compact />
+                <ExchangeSelector compact onExchangeChange={() => { loadBalances(); }} />
+              </div>
+
+              {/* Wallet Balances */}
+              <div className="p-3 border-t border-gray-100 dark:border-gray-800">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold">Wallet</p>
+                  <button
+                    onClick={loadBalances}
+                    disabled={balancesLoading}
+                    className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                    title="Refresh balances"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${balancesLoading ? 'animate-spin' : ''}`} />
+                  </button>
+                </div>
+
+                {/* Investment sufficiency indicator */}
+                <div className={`flex items-center gap-2 p-2 rounded-lg mb-2 text-xs ${
+                  hasEnoughBalance
+                    ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400'
+                    : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400'
+                }`}>
+                  {hasEnoughBalance
+                    ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                    : <AlertTriangle className="w-3.5 h-3.5 shrink-0" />}
+                  <span>
+                    {hasEnoughBalance
+                      ? `Ready to invest ${gridConfig.investmentAmount.toLocaleString()} ${quoteCurrency}`
+                      : `Need ${gridConfig.investmentAmount.toLocaleString()} ${quoteCurrency} to start`}
+                  </span>
+                </div>
+
+                {balancesLoading && balances.length === 0 ? (
+                  <div className="space-y-2">
+                    {[1, 2, 3].map((i) => (
+                      <div key={i} className="h-8 bg-gray-100 dark:bg-gray-800 rounded animate-pulse" />
+                    ))}
+                  </div>
+                ) : balances.length === 0 ? (
+                  <div className="text-center py-3">
+                    <Wallet className="w-6 h-6 text-gray-300 mx-auto mb-1" />
+                    <p className="text-xs text-gray-400">No balances found</p>
+                    <p className="text-[10px] text-gray-400 mt-0.5">Configure API keys in Settings</p>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    {balances
+                      .sort((a, b) => b.total - a.total)
+                      .map((b) => {
+                        const isQuote = b.currency === quoteCurrency;
+                        const isInsufficient = isQuote && b.free < gridConfig.investmentAmount;
+                        return (
+                          <div
+                            key={b.currency}
+                            className={`flex items-center justify-between py-1.5 px-2 rounded-md ${
+                              isQuote
+                                ? isInsufficient
+                                  ? 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800'
+                                  : 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800'
+                                : 'bg-gray-50 dark:bg-gray-800'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold ${
+                                isQuote ? (isInsufficient ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700') : 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300'
+                              }`}>
+                                {b.currency.slice(0, 1)}
+                              </div>
+                              <div>
+                                <p className={`text-xs font-semibold ${isQuote ? (isInsufficient ? 'text-red-700 dark:text-red-400' : 'text-green-700 dark:text-green-400') : 'text-gray-700 dark:text-gray-300'}`}>
+                                  {b.currency}
+                                </p>
+                                {b.locked > 0 && (
+                                  <p className="text-[9px] text-gray-400">+{b.locked.toLocaleString(undefined, { maximumFractionDigits: 6 })} locked</p>
+                                )}
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className={`text-xs font-mono font-semibold ${isQuote ? (isInsufficient ? 'text-red-700 dark:text-red-400' : 'text-green-700 dark:text-green-400') : 'text-gray-700 dark:text-gray-300'}`}>
+                                {b.free.toLocaleString(undefined, { maximumFractionDigits: b.free < 1 ? 8 : 2 })}
+                              </p>
+                              <p className="text-[9px] text-gray-400">free</p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
               </div>
             </div>
           </div>

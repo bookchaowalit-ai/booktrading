@@ -26,6 +26,8 @@ interface SentimentDashboardProps {
   symbol?: string;
 }
 
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
+
 export default function SentimentDashboard({ symbol }: SentimentDashboardProps) {
   const { success, error } = useToast();
   const portfolio = useAppStore((state) => state.portfolio);
@@ -35,26 +37,32 @@ export default function SentimentDashboard({ symbol }: SentimentDashboardProps) 
   const [tradingSignals, setTradingSignals] = useState<TradingSignal[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
+  const getAuthHeaders = (): Record<string, string> => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+    return token ? { 'Authorization': `Bearer ${token}` } : {};
+  };
+
   useEffect(() => {
     loadData();
   }, [symbol]);
 
   const loadData = async () => {
     setIsLoading(true);
+    const authHeaders = getAuthHeaders();
     try {
       // Fetch real market sentiment from backend
-      const marketResponse = await fetch('http://localhost:8080/api/market/sentiment');
+      const marketResponse = await fetch(`${API_BASE_URL}/api/market/sentiment`, { headers: authHeaders });
       const marketData = await marketResponse.json().catch(() => null);
 
       // Fetch real sentiment for symbol
       let symbolData = null;
       if (symbol) {
-        const symbolResponse = await fetch(`http://localhost:8080/api/sentiment/${symbol}`);
+        const symbolResponse = await fetch(`${API_BASE_URL}/api/sentiment/${symbol}`, { headers: authHeaders });
         symbolData = await symbolResponse.json().catch(() => null);
       }
 
       // Fetch real trading signals
-      const signalsResponse = await fetch(`http://localhost:8080/api/signals${symbol ? `?symbol=${symbol}` : ''}`);
+      const signalsResponse = await fetch(`${API_BASE_URL}/api/signals${symbol ? `?symbol=${symbol}` : ''}`, { headers: authHeaders });
       const signalsData = await signalsResponse.json().catch(() => ({ signals: [] }));
 
       setMarketSentiment(marketData);

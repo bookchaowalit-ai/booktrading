@@ -30,7 +30,15 @@ interface ExchangeSelectorProps {
   compact?: boolean;
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
+
+function getAuthHeaders(withContentType = false): Record<string, string> {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  if (withContentType) headers['Content-Type'] = 'application/json';
+  return headers;
+}
 
 export default function ExchangeSelector({ onExchangeChange, compact = false }: ExchangeSelectorProps) {
   const { success, error, info } = useToast();
@@ -58,7 +66,9 @@ export default function ExchangeSelector({ onExchangeChange, compact = false }: 
 
   const loadExchanges = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/exchange`);
+      const response = await fetch(`${API_BASE_URL}/api/exchange`, {
+        headers: getAuthHeaders(),
+      });
       if (response.ok) {
         const data = await response.json();
         setExchanges(data.exchanges || []);
@@ -69,9 +79,11 @@ export default function ExchangeSelector({ onExchangeChange, compact = false }: 
     }
   };
 
-  const loadBalances = async (provider: string) => {
+  const loadBalances = async (_provider: string) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/exchange/balances`);
+      const response = await fetch(`${API_BASE_URL}/api/exchange/balances`, {
+        headers: getAuthHeaders(),
+      });
       if (response.ok) {
         const data = await response.json();
         setBalances(data.balances || []);
@@ -88,7 +100,7 @@ export default function ExchangeSelector({ onExchangeChange, compact = false }: 
     try {
       const response = await fetch(`${API_BASE_URL}/api/exchange/set`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(true),
         body: JSON.stringify({ provider }),
       });
 

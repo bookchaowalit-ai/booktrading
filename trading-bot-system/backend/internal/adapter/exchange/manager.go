@@ -155,6 +155,49 @@ func (m *ExchangeManager) DeleteExchange(provider string) error {
 	return nil
 }
 
+// StoredAPIKeyInfo represents masked API key info for display
+type StoredAPIKeyInfo struct {
+	ID        string `json:"id"`
+	Exchange  string `json:"exchange"`
+	APIKey    string `json:"apiKey"`
+	APISecret string `json:"apiSecret"`
+	Testnet   bool   `json:"testnet"`
+	IsActive  bool   `json:"isActive"`
+	CreatedAt string `json:"createdAt"`
+}
+
+// maskSecret returns first 4 chars + "****" for display
+func maskSecret(s string) string {
+	if len(s) <= 4 {
+		return "****"
+	}
+	return s[:4] + "****"
+}
+
+// GetStoredAPIKeyInfos returns masked API key info from the database
+func (m *ExchangeManager) GetStoredAPIKeyInfos(ctx context.Context) ([]StoredAPIKeyInfo, error) {
+	if m.dbRepo == nil {
+		return []StoredAPIKeyInfo{}, nil
+	}
+	keys, err := m.dbRepo.GetAllAPIKeys(ctx)
+	if err != nil {
+		return []StoredAPIKeyInfo{}, nil
+	}
+	result := make([]StoredAPIKeyInfo, 0, len(keys))
+	for _, k := range keys {
+		result = append(result, StoredAPIKeyInfo{
+			ID:        k.Provider,
+			Exchange:  k.Provider,
+			APIKey:    maskSecret(k.APIKey),
+			APISecret: maskSecret(k.APISecret),
+			Testnet:   k.UseTestnet,
+			IsActive:  true,
+			CreatedAt: k.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		})
+	}
+	return result, nil
+}
+
 // GetSupportedExchanges returns list of supported exchanges with their status
 func (m *ExchangeManager) GetSupportedExchanges() []ExchangeInfo {
 	m.mu.RLock()

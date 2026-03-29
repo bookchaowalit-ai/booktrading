@@ -31,7 +31,7 @@ export default function StrategyPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const STRATEGY_URL = process.env.NEXT_PUBLIC_STRATEGY_URL || 'http://localhost:8000';
+    const STRATEGY_URL = process.env.NEXT_PUBLIC_STRATEGY_URL || '/strategy-api';
     const fetchStats = async () => {
       try {
         const end = new Date();

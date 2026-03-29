@@ -36,7 +36,7 @@ export default function AnalyticsPage() {
   }, []);
 
   const loadData = async () => {
-    const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
     setIsLoading(true);
     try {
       // Fetch real market sentiment from backend

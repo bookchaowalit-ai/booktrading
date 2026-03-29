@@ -140,15 +140,17 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8080}
-        - NEXT_PUBLIC_STRATEGY_URL=${NEXT_PUBLIC_STRATEGY_URL:-http://localhost:8000}
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-}
+        - NEXT_PUBLIC_STRATEGY_URL=${NEXT_PUBLIC_STRATEGY_URL:-}
         - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-ws://localhost:8081/ws}
+        - BACKEND_URL=${BACKEND_URL:-http://backend:8080}
+        - STRATEGY_URL=${STRATEGY_URL:-http://strategy:8000}
     container_name: trading-bot-frontend
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8080}
-      - NEXT_PUBLIC_STRATEGY_URL=${NEXT_PUBLIC_STRATEGY_URL:-http://localhost:8000}
+      - BACKEND_URL=${BACKEND_URL:-http://backend:8080}
+      - STRATEGY_URL=${STRATEGY_URL:-http://strategy:8000}
       - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-ws://localhost:8081/ws}
     depends_on:
       backend:

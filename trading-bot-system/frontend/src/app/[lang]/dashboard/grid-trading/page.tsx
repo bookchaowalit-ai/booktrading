@@ -95,7 +95,7 @@ export default function GridTradingPage() {
     return matchesCategory && matchesSearch && matchesThai;
   });
 
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
   // Fetch real grid orders from backend
   useEffect(() => {

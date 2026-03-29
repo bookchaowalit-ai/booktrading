@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"trading-bot-system/backend/internal/adapter/exchange"
 	"trading-bot-system/backend/internal/config"
 )
@@ -121,6 +122,16 @@ func (h *ExchangeHandler) ConfigureExchange(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Reject masked keys (contain "****") — these are display-only values, not real credentials
+	if strings.Contains(req.APIKey, "****") || strings.Contains(req.APISecret, "****") {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "Cannot save masked API key. Please enter the full API key and secret.",
+		})
+		return
+	}
+
 	// Configure the exchange in the manager
 	if err := h.manager.ConfigureExchange(req.Provider, req.APIKey, req.APISecret, req.UseTestnet); err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -191,7 +202,7 @@ func (h *ExchangeHandler) DeleteExchange(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-// GetConfiguredExchanges returns exchanges that have API keys configured
+// GetConfiguredExchanges returns exchanges that have API keys configured (from DB)
 func (h *ExchangeHandler) GetConfiguredExchanges(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Content-Type", "application/json")
@@ -200,26 +211,12 @@ func (h *ExchangeHandler) GetConfiguredExchanges(w http.ResponseWriter, r *http.
 		return
 	}
 
-	exchanges := h.manager.GetSupportedExchanges()
-
-	// Filter to only exchanges that are connected (have API keys)
-	configured := make([]map[string]interface{}, 0)
-	for _, ex := range exchanges {
-		if ex.Connected {
-			configured = append(configured, map[string]interface{}{
-				"provider":  ex.Provider,
-				"name":      ex.Name,
-				"name_th":   ex.NameTH,
-				"connected": ex.Connected,
-				"testnet":   ex.Testnet,
-			})
-		}
-	}
+	keys, _ := h.manager.GetStoredAPIKeyInfos(r.Context())
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"configured_exchanges": configured,
-		"current_provider":     string(h.manager.GetCurrentProvider()),
+		"keys":             keys,
+		"current_provider": string(h.manager.GetCurrentProvider()),
 	})
 }
 

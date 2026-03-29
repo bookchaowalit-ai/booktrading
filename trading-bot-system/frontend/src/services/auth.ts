@@ -3,7 +3,7 @@
  * Connects to backend /api/auth endpoints
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
 export interface User {
   id: string;
@@ -23,12 +23,16 @@ export interface AuthResult {
  * Authenticate user via backend API
  */
 export async function authenticate(email: string, password: string): Promise<AuthResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
   try {
     const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
 
     if (!response.ok) {
       const data = await response.json().catch(() => ({ error: 'Invalid email or password' }));
@@ -41,7 +45,11 @@ export async function authenticate(email: string, password: string): Promise<Aut
     localStorage.setItem('user', JSON.stringify(data.user));
 
     return { success: true, user: data.user, token: data.token };
-  } catch {
+  } catch (err) {
+    clearTimeout(timeout);
+    if (err instanceof Error && err.name === 'AbortError') {
+      return { success: false, error: 'Request timed out. Please try again.' };
+    }
     return { success: false, error: 'Unable to connect to server' };
   }
 }
@@ -91,6 +99,15 @@ export async function logout(): Promise<void> {
 export function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;
   return localStorage.getItem('auth_token');
+}
+
+/**
+ * Clear local session (without calling backend logout).
+ * Used when a 401 is detected mid-session.
+ */
+export function clearSession(): void {
+  localStorage.removeItem('auth_token');
+  localStorage.removeItem('user');
 }
 
 /**

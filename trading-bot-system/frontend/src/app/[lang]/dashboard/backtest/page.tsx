@@ -42,7 +42,7 @@ export default function BacktestPage() {
 
   const handleRunBacktest = async () => {
     setIsRunning(true);
-    const STRATEGY_URL = process.env.NEXT_PUBLIC_STRATEGY_URL || 'http://localhost:8000';
+    const STRATEGY_URL = process.env.NEXT_PUBLIC_STRATEGY_URL || '/strategy-api';
     try {
       const response = await fetch(`${STRATEGY_URL}/api/backtest`, {
         method: 'POST',

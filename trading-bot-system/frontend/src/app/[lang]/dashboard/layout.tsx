@@ -10,7 +10,7 @@ import Sidebar from '@/components/Sidebar';
 import { ToastProvider } from '@/components/ui/Toast';
 import { ThemeProvider } from '@/contexts/ThemeProvider';
 import { Bell, Menu, LogOut, Command, Globe } from 'lucide-react';
-import { isAuthenticated, logout } from '@/services/auth';
+import { isAuthenticated, logout, clearSession } from '@/services/auth';
 import CommandPalette from '@/components/CommandPalette';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { WSStatusIndicator } from '@/components/WSStatusIndicator';
@@ -44,12 +44,35 @@ export default function DashboardLayout({
     }
   }, []);
 
+  // Validate session against backend every 2 minutes — catches token invalidated by server restart
+  const validateSession = useCallback(async () => {
+    if (!isAuthenticated()) return;
+    try {
+      const token = localStorage.getItem('auth_token');
+      const res = await fetch('/api/auth/me', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (res.status === 401) {
+        clearSession();
+        router.push(`/${locale}`);
+      }
+    } catch {
+      // network error — don't force logout, just wait for next check
+    }
+  }, [locale, router]);
+
   useEffect(() => {
     setMounted(true);
     fetchUnreadCount();
     const interval = setInterval(fetchUnreadCount, 15000);
-    return () => clearInterval(interval);
-  }, [fetchUnreadCount]);
+
+    // Validate token every 2 minutes to detect server-side invalidation (e.g. restart)
+    const sessionInterval = setInterval(validateSession, 2 * 60 * 1000);
+    return () => {
+      clearInterval(interval);
+      clearInterval(sessionInterval);
+    };
+  }, [fetchUnreadCount, validateSession]);
 
   useEffect(() => {
     // Check if user is authenticated; redirect to login page if not

@@ -11,8 +11,10 @@ import {
   TradeHistory,
 } from '@/types';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
-const STRATEGY_API_URL = process.env.NEXT_PUBLIC_STRATEGY_URL || 'http://localhost:8000';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
+const STRATEGY_API_URL = process.env.NEXT_PUBLIC_STRATEGY_URL
+  ? process.env.NEXT_PUBLIC_STRATEGY_URL
+  : '/strategy-api';
 
 /** Returns headers including Authorization if a token is stored */
 function authHeaders(extra?: Record<string, string>): Record<string, string> {
@@ -22,11 +24,24 @@ function authHeaders(extra?: Record<string, string>): Record<string, string> {
   return { ...base, ...extra };
 }
 
+/** Wrapper around fetch that clears session and reloads on 401 */
+async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const res = await apiFetch(input, init);
+  if (res.status === 401 && typeof window !== 'undefined') {
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('user');
+    // Redirect to locale login page (derive locale from current path)
+    const locale = window.location.pathname.split('/')[1] || 'th';
+    window.location.href = `/${locale}`;
+  }
+  return res;
+}
+
 export const api = {
   // Bot Control
   async startBot(): Promise<void> {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/bot/start`, {
+      const response = await apiFetch(`${API_BASE_URL}/api/bot/start`, {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({
@@ -49,7 +64,7 @@ export const api = {
 
   async stopBot(): Promise<void> {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/bot/stop`, {
+      const response = await apiFetch(`${API_BASE_URL}/api/bot/stop`, {
         method: 'POST',
         headers: authHeaders(),
       });
@@ -64,7 +79,7 @@ export const api = {
 
   async getBotStatus(): Promise<BotStatus> {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/bot/status`, { headers: authHeaders() });
+      const response = await apiFetch(`${API_BASE_URL}/api/bot/status`, { headers: authHeaders() });
       if (!response.ok) throw new Error('Failed to get bot status');
       const raw = await response.json();
       // Normalize: Go backend sends snake_case (is_active, total_trades, total_profit)
@@ -82,7 +97,7 @@ export const api = {
 
   // Orders
   async createOrder(order: OrderRequest): Promise<OrderResponse> {
-    const response = await fetch(`${API_BASE_URL}/api/orders`, {
+    const response = await apiFetch(`${API_BASE_URL}/api/orders`, {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify(order),
@@ -94,7 +109,7 @@ export const api = {
   },
 
   async getOrders(): Promise<Order[]> {
-    const response = await fetch(`${API_BASE_URL}/api/orders`, { headers: authHeaders() });
+    const response = await apiFetch(`${API_BASE_URL}/api/orders`, { headers: authHeaders() });
     if (!response.ok) {
       throw new Error('Failed to get orders');
     }
@@ -102,7 +117,7 @@ export const api = {
   },
 
   async cancelOrder(orderId: string): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}/api/orders/${orderId}`, {
+    const response = await apiFetch(`${API_BASE_URL}/api/orders/${orderId}`, {
       method: 'DELETE',
       headers: authHeaders(),
     });
@@ -113,7 +128,7 @@ export const api = {
 
   // Portfolio
   async getPortfolio(): Promise<Portfolio[]> {
-    const response = await fetch(`${API_BASE_URL}/api/portfolio`, { headers: authHeaders() });
+    const response = await apiFetch(`${API_BASE_URL}/api/portfolio`, { headers: authHeaders() });
     if (!response.ok) return [];
     const data = await response.json();
     const raw: any[] = data.balances || data || [];
@@ -129,7 +144,7 @@ export const api = {
 
   // Trade History
   async getTradeHistory(limit: number = 50): Promise<TradeHistory[]> {
-    const response = await fetch(`${API_BASE_URL}/api/trades?limit=${limit}`, { headers: authHeaders() });
+    const response = await apiFetch(`${API_BASE_URL}/api/trades?limit=${limit}`, { headers: authHeaders() });
     if (!response.ok) {
       throw new Error('Failed to get trade history');
     }
@@ -138,7 +153,7 @@ export const api = {
 
   // Technical Indicators (from Strategy Service)
   async getIndicators(): Promise<Record<string, TechnicalIndicators>> {
-    const response = await fetch(`${STRATEGY_API_URL}/api/indicators`);
+    const response = await apiFetch(`${STRATEGY_API_URL}/api/indicators`);
     if (!response.ok) {
       throw new Error('Failed to get indicators');
     }
@@ -152,7 +167,7 @@ export const api = {
     rsi_overbought: number;
     min_signal_strength: number;
   }> {
-    const response = await fetch(`${STRATEGY_API_URL}/api/strategy/config`);
+    const response = await apiFetch(`${STRATEGY_API_URL}/api/strategy/config`);
     if (!response.ok) {
       throw new Error('Failed to get strategy config');
     }
@@ -161,7 +176,7 @@ export const api = {
 
   // Health Check
   async healthCheck(): Promise<{ status: string }> {
-    const response = await fetch(`${API_BASE_URL}/api/health`);
+    const response = await apiFetch(`${API_BASE_URL}/api/health`);
     if (!response.ok) {
       throw new Error('Backend health check failed');
     }
@@ -186,7 +201,7 @@ export const api = {
     maxDrawdown: number;
     maxDrawdownPercent: number;
   }> {
-    const response = await fetch(`${API_BASE_URL}/api/performance`, { headers: authHeaders() });
+    const response = await apiFetch(`${API_BASE_URL}/api/performance`, { headers: authHeaders() });
     if (!response.ok) throw new Error('Failed to get performance');
     return response.json();
   },
@@ -201,25 +216,37 @@ export const api = {
     read: boolean;
     priority: string;
   }>> {
-    const response = await fetch(`${API_BASE_URL}/api/notifications`, { headers: authHeaders() });
+    const response = await apiFetch(`${API_BASE_URL}/api/notifications`, { headers: authHeaders() });
     if (!response.ok) return [];
     return response.json();
   },
 
   async markNotificationRead(id: string): Promise<void> {
-    await fetch(`${API_BASE_URL}/api/notifications/${id}/read`, { method: 'PUT', headers: authHeaders() });
+    await apiFetch(`${API_BASE_URL}/api/notifications/${id}/read`, { method: 'PUT', headers: authHeaders() });
   },
 
   async markAllNotificationsRead(): Promise<void> {
-    await fetch(`${API_BASE_URL}/api/notifications/read-all`, { method: 'PUT', headers: authHeaders() });
+    await apiFetch(`${API_BASE_URL}/api/notifications/read-all`, { method: 'PUT', headers: authHeaders() });
   },
 
   async deleteNotification(id: string): Promise<void> {
-    await fetch(`${API_BASE_URL}/api/notifications/${id}`, { method: 'DELETE', headers: authHeaders() });
+    await apiFetch(`${API_BASE_URL}/api/notifications/${id}`, { method: 'DELETE', headers: authHeaders() });
   },
 
   async clearAllNotifications(): Promise<void> {
-    await fetch(`${API_BASE_URL}/api/notifications`, { method: 'DELETE', headers: authHeaders() });
+    await apiFetch(`${API_BASE_URL}/api/notifications`, { method: 'DELETE', headers: authHeaders() });
+  },
+
+  // Exchange Balances
+  async getExchangeBalances(): Promise<Array<{ currency: string; free: number; locked: number; total: number }>> {
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/api/exchange/balances`, { headers: authHeaders() });
+      if (!response.ok) return [];
+      const data = await response.json();
+      return data.balances || [];
+    } catch {
+      return [];
+    }
   },
 
   // Journal
@@ -241,7 +268,7 @@ export const api = {
     createdAt: string;
     updatedAt: string;
   }>> {
-    const response = await fetch(`${API_BASE_URL}/api/journal`, { headers: authHeaders() });
+    const response = await apiFetch(`${API_BASE_URL}/api/journal`, { headers: authHeaders() });
     if (!response.ok) return [];
     return response.json();
   },
@@ -261,7 +288,7 @@ export const api = {
     emotions?: string;
     lessons?: string;
   }): Promise<{ id: string }> {
-    const response = await fetch(`${API_BASE_URL}/api/journal`, {
+    const response = await apiFetch(`${API_BASE_URL}/api/journal`, {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify(entry),
@@ -271,7 +298,7 @@ export const api = {
   },
 
   async updateJournalEntry(id: string, entry: object): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}/api/journal/${id}`, {
+    const response = await apiFetch(`${API_BASE_URL}/api/journal/${id}`, {
       method: 'PUT',
       headers: authHeaders(),
       body: JSON.stringify(entry),
@@ -280,13 +307,13 @@ export const api = {
   },
 
   async deleteJournalEntry(id: string): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}/api/journal/${id}`, { method: 'DELETE', headers: authHeaders() });
+    const response = await apiFetch(`${API_BASE_URL}/api/journal/${id}`, { method: 'DELETE', headers: authHeaders() });
     if (!response.ok) throw new Error('Failed to delete journal entry');
   },
 
   // Auth
   async login(email: string, password: string): Promise<{ token: string; user: { id: string; email: string; name: string; role: string } }> {
-    const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+    const response = await apiFetch(`${API_BASE_URL}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
@@ -299,7 +326,7 @@ export const api = {
   },
 
   async getMe(token: string): Promise<{ id: string; email: string; name: string; role: string }> {
-    const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
+    const response = await apiFetch(`${API_BASE_URL}/api/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!response.ok) throw new Error('Unauthorized');
@@ -307,7 +334,7 @@ export const api = {
   },
 
   async logout(token: string): Promise<void> {
-    await fetch(`${API_BASE_URL}/api/auth/logout`, {
+    await apiFetch(`${API_BASE_URL}/api/auth/logout`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -324,7 +351,7 @@ export const api = {
     trailingStopPercent: number;
     enabled: boolean;
   }> {
-    const response = await fetch(`${API_BASE_URL}/api/sltp/${symbol}`, { headers: authHeaders() });
+    const response = await apiFetch(`${API_BASE_URL}/api/sltp/${symbol}`, { headers: authHeaders() });
     if (!response.ok) throw new Error('Failed to get SL/TP config');
     return response.json();
   },
@@ -339,7 +366,7 @@ export const api = {
     trailingStopPercent?: number;
     enabled: boolean;
   }): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}/api/sltp`, {
+    const response = await apiFetch(`${API_BASE_URL}/api/sltp`, {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify(config),
@@ -348,6 +375,6 @@ export const api = {
   },
 
   async deleteSLTP(symbol: string): Promise<void> {
-    await fetch(`${API_BASE_URL}/api/sltp/${symbol}`, { method: 'DELETE', headers: authHeaders() });
+    await apiFetch(`${API_BASE_URL}/api/sltp/${symbol}`, { method: 'DELETE', headers: authHeaders() });
   },
 };
