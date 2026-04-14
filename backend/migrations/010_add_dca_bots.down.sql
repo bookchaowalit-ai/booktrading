@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS dca_orders;
+DROP TABLE IF EXISTS dca_bots;

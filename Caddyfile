@@ -1,0 +1,69 @@
+# Caddy Reverse Proxy Configuration
+# Automatic HTTPS with Let's Encrypt
+
+your-domain.com {
+    # Frontend (Next.js)
+    handle /* {
+        reverse_proxy frontend:3000
+    }
+
+    # Backend API
+    handle /api/* {
+        reverse_proxy backend:8080
+    }
+
+    # WebSocket
+    handle /ws {
+        reverse_proxy backend:8081
+    }
+
+    # Strategy Service API
+    handle /strategy-api/* {
+        reverse_proxy strategy:8000
+    }
+
+    # Health check endpoint
+    handle /health {
+        respond "OK" 200
+    }
+
+    # Default - Frontend
+    handle {
+        reverse_proxy frontend:3000
+    }
+
+    # TLS settings (automatic with Let's Encrypt)
+    tls {
+        protocols tls1.2 tls1.3
+    }
+
+    # Security headers
+    header {
+        # Enable HSTS
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        # Prevent clickjacking
+        X-Frame-Options "DENY"
+        # Prevent MIME sniffing
+        X-Content-Type-Options "nosniff"
+        # Enable XSS protection
+        X-XSS-Protection "1; mode=block"
+        # Referrer Policy
+        Referrer-Policy "strict-origin-when-cross-origin"
+        # Content Security Policy (adjust as needed)
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data: https:; connect-src 'self' https: wss:; frame-ancestors 'none';"
+    }
+
+    # Compression
+    encode gzip zstd
+
+    # Logging
+    log {
+        output stdout
+        format json
+    }
+}
+
+# Redirect www to non-www
+www.your-domain.com {
+    redir https://your-domain.com{uri} 301
+}

@@ -1,0 +1,245 @@
+# Production Docker Compose
+# Usage: docker compose -f docker-compose.prod.yml up -d
+
+services:
+  # PostgreSQL + TimescaleDB - Persistent Storage
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: bookfinance-postgres
+    environment:
+      - POSTGRES_USER=${DB_USER:-trading}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:?DB_PASSWORD is required}
+      - POSTGRES_DB=${DB_NAME:-trading_bot}
+    command: >
+      -c log_min_messages=WARNING
+      -c log_connections=off
+      -c log_disconnections=off
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+      -c maintenance_work_mem=64MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-trading} -d ${DB_NAME:-trading_bot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bookfinance-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  # Redis - Message Broker
+  redis:
+    image: redis:7-alpine
+    container_name: bookfinance-redis
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bookfinance-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+  # Backend (Go) - Execution & Data Hub
+  backend:
+    image: bookfinance-backend:latest
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: bookfinance-backend
+    ports:
+      - "127.0.0.1:8080:8080"  # HTTP API (localhost only)
+      - "127.0.0.1:8081:8081"  # WebSocket (localhost only)
+      - "127.0.0.1:9000:9000"  # gRPC (localhost only)
+    environment:
+      - SERVER_PORT=8080
+      - WS_PORT=8081
+      - GRPC_PORT=9000
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      - REDIS_DB=0
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DATABASE_USER=${DB_USER:-trading}
+      - DATABASE_PASSWORD=${DB_PASSWORD:?DB_PASSWORD is required}
+      - DATABASE_NAME=${DB_NAME:-trading_bot}
+      - DATABASE_SSLMODE=disable
+      # Security
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY is required (32+ chars)}
+      - FRONTEND_URL=${FRONTEND_URL:-https://your-domain.com}
+      # Admin account (created on first startup)
+      - FIRST_ADMIN_EMAIL=${FIRST_ADMIN_EMAIL:-admin@your-domain.com}
+      - FIRST_ADMIN_PASSWORD=${FIRST_ADMIN_PASSWORD:?FIRST_ADMIN_PASSWORD is required}
+      - FIRST_ADMIN_NAME=${FIRST_ADMIN_NAME:-Admin}
+      # Exchange Provider Selection
+      - EXCHANGE_PROVIDER=${EXCHANGE_PROVIDER:-binance_th}
+      # Binance Global API Credentials
+      - BINANCE_API_KEY=${BINANCE_API_KEY:-}
+      - BINANCE_API_SECRET=${BINANCE_API_SECRET:-}
+      - BINANCE_USE_TESTNET=${BINANCE_USE_TESTNET:-false}
+      # Binance Thailand API Credentials
+      - BINANCE_TH_API_KEY=${BINANCE_TH_API_KEY:-}
+      - BINANCE_TH_API_SECRET=${BINANCE_TH_API_SECRET:-}
+      # Bitkub API Credentials
+      - BITKUB_API_KEY=${BITKUB_API_KEY:-}
+      - BITKUB_API_SECRET=${BITKUB_API_SECRET:-}
+      - BITKUB_USE_TESTNET=${BITKUB_USE_TESTNET:-false}
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - bookfinance-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+  # Strategy Service (Python) - The Brain
+  strategy:
+    image: bookfinance-strategy:latest
+    build:
+      context: ./strategy
+      dockerfile: Dockerfile
+    container_name: bookfinance-strategy
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      - REDIS_DB=0
+      - GRPC_HOST=backend
+      - GRPC_PORT=9000
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - AUTH_TOKEN=${AUTH_TOKEN:-}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ALLOWED_ORIGINS=${FRONTEND_URL:-https://your-domain.com}
+      - RSI_PERIOD=14
+      - EMA_PERIOD=14
+      - RSI_OVERSOLD=30.0
+      - RSI_OVERBOUGHT=70.0
+      - MIN_SIGNAL_STRENGTH=0.5
+      - SYMBOLS=BTCUSDT,ETHUSDT
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - bookfinance-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+  # Frontend (Next.js) - Monitoring Dashboard
+  frontend:
+    image: bookfinance-frontend:latest
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=
+        - NEXT_PUBLIC_STRATEGY_URL=
+        - NEXT_PUBLIC_WS_URL=wss://your-domain.com/ws
+        - BACKEND_URL=http://backend:8080
+        - STRATEGY_URL=http://strategy:8000
+    container_name: bookfinance-frontend
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      - BACKEND_URL=http://backend:8080
+      - STRATEGY_URL=http://strategy:8000
+      - NEXT_PUBLIC_WS_URL=wss://your-domain.com/ws
+      - NODE_ENV=production
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - bookfinance-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+  # Caddy - Reverse Proxy with TLS
+  caddy:
+    image: caddy:2-alpine
+    container_name: bookfinance-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - bookfinance-network
+    restart: unless-stopped
+    depends_on:
+      - frontend
+      - backend
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+
+networks:
+  bookfinance-network:
+    driver: bridge
+
+volumes:
+  redis_data:
+  postgres_data:
+  caddy_data:
+  caddy_config:

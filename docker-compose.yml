@@ -1,0 +1,177 @@
+services:
+  # PostgreSQL + TimescaleDB - Persistent Storage
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: trading-bot-postgres
+    ports:
+      - "5434:5432"
+    environment:
+      - POSTGRES_USER=trading
+      - POSTGRES_PASSWORD=${DB_PASSWORD:?DB_PASSWORD is required}
+      - POSTGRES_DB=trading_bot
+    command: >
+      -c log_min_messages=WARNING
+      -c log_connections=off
+      -c log_disconnections=off
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trading -d trading_bot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - trading-bot-network
+    restart: unless-stopped
+
+  # Redis - Message Broker
+  redis:
+    image: redis:7-alpine
+    container_name: trading-bot-redis
+    ports:
+      - "6380:6379"
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - trading-bot-network
+
+  # Backend (Go) - Execution & Data Hub
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: trading-bot-backend
+    ports:
+      - "8080:8080"  # HTTP API
+      - "8081:8081"  # WebSocket
+      - "9000:9000"  # gRPC
+    environment:
+      - SERVER_PORT=8080
+      - WS_PORT=8081
+      - GRPC_PORT=9000
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      - REDIS_DB=0
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DATABASE_USER=trading
+      - DATABASE_PASSWORD=${DB_PASSWORD:?DB_PASSWORD is required}
+      - DATABASE_NAME=trading_bot
+      - DATABASE_SSLMODE=disable
+      # Security
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY is required (32+ chars)}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+      # Admin account (created on first startup)
+      - FIRST_ADMIN_EMAIL=${FIRST_ADMIN_EMAIL:-}
+      - FIRST_ADMIN_PASSWORD=${FIRST_ADMIN_PASSWORD:-}
+      - FIRST_ADMIN_NAME=${FIRST_ADMIN_NAME:-Admin}
+      # Exchange Provider Selection
+      - EXCHANGE_PROVIDER=${EXCHANGE_PROVIDER:-binance_th}
+      # Binance Global API Credentials
+      - BINANCE_API_KEY=${BINANCE_API_KEY:-}
+      - BINANCE_API_SECRET=${BINANCE_API_SECRET:-}
+      - BINANCE_USE_TESTNET=${BINANCE_USE_TESTNET:-true}
+      # Binance Thailand API Credentials
+      - BINANCE_TH_API_KEY=${BINANCE_TH_API_KEY:-}
+      - BINANCE_TH_API_SECRET=${BINANCE_TH_API_SECRET:-}
+      # Bitkub API Credentials
+      - BITKUB_API_KEY=${BITKUB_API_KEY:-}
+      - BITKUB_API_SECRET=${BITKUB_API_SECRET:-}
+      - BITKUB_USE_TESTNET=${BITKUB_USE_TESTNET:-false}
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - trading-bot-network
+    restart: unless-stopped
+
+  # Strategy Service (Python) - The Brain
+  strategy:
+    build:
+      context: ./strategy
+      dockerfile: Dockerfile
+    container_name: trading-bot-strategy
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      - REDIS_DB=0
+      - GRPC_HOST=backend
+      - GRPC_PORT=9000
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - AUTH_TOKEN=${AUTH_TOKEN:-}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ALLOWED_ORIGINS=${FRONTEND_URL:-http://localhost:3000}
+      - RSI_PERIOD=14
+      - EMA_PERIOD=14
+      - RSI_OVERSOLD=30.0
+      - RSI_OVERBOUGHT=70.0
+      - MIN_SIGNAL_STRENGTH=0.5
+      - SYMBOLS=BTCUSDT,ETHUSDT
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - trading-bot-network
+    restart: unless-stopped
+
+  # Frontend (Next.js) - Monitoring Dashboard
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-}
+        - NEXT_PUBLIC_STRATEGY_URL=${NEXT_PUBLIC_STRATEGY_URL:-}
+        - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-ws://localhost:8081/ws}
+        - BACKEND_URL=${BACKEND_URL:-http://backend:8080}
+        - STRATEGY_URL=${STRATEGY_URL:-http://strategy:8000}
+    container_name: trading-bot-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - BACKEND_URL=${BACKEND_URL:-http://backend:8080}
+      - STRATEGY_URL=${STRATEGY_URL:-http://strategy:8000}
+      - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-ws://localhost:8081/ws}
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - trading-bot-network
+    restart: unless-stopped
+
+networks:
+  trading-bot-network:
+    driver: bridge
+
+volumes:
+  redis_data:
+  postgres_data:
