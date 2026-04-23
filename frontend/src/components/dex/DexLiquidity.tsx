@@ -472,39 +472,41 @@ export default function DexLiquidity({ loadedWallet }: DexLiquidityProps) {
           className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
           onClick={() => { setShowTokenPicker(null); setTokenSearch(''); }}
         >
-          <Card variant="elevated" className="w-full max-w-sm p-4" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Select Token</h3>
-            <div className="relative mb-4">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Search by symbol or address"
-                value={tokenSearch}
-                onChange={(e) => setTokenSearch(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                autoFocus
-              />
-            </div>
-            <div className="space-y-1 max-h-64 overflow-y-auto">
-              {filteredTokens.map((t) => (
-                <button
-                  key={t.address}
-                  onClick={() => {
-                    if (showTokenPicker) handleSelectToken(showTokenPicker, t.address, t.symbol);
-                  }}
-                  className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                >
-                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-100 to-blue-100 dark:from-purple-900/50 dark:to-blue-900/50 flex items-center justify-center text-sm font-bold text-purple-600 dark:text-purple-400">
-                    {t.symbol.slice(0, 2)}
-                  </div>
-                  <div className="text-left">
-                    <div className="text-sm font-medium text-gray-900 dark:text-white">{t.symbol}</div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400">{t.name}</div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </Card>
+          <div onClick={(e) => e.stopPropagation()}>
+            <Card variant="elevated" className="w-full max-w-sm p-4">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Select Token</h3>
+              <div className="relative mb-4">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search by symbol or address"
+                  value={tokenSearch}
+                  onChange={(e) => setTokenSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  autoFocus
+                />
+              </div>
+              <div className="space-y-1 max-h-64 overflow-y-auto">
+                {filteredTokens.map((t) => (
+                  <button
+                    key={t.address}
+                    onClick={() => {
+                      if (showTokenPicker) handleSelectToken(showTokenPicker, t.address, t.symbol);
+                    }}
+                    className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                  >
+                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-100 to-blue-100 dark:from-purple-900/50 dark:to-blue-900/50 flex items-center justify-center text-sm font-bold text-purple-600 dark:text-purple-400">
+                      {t.symbol.slice(0, 2)}
+                    </div>
+                    <div className="text-left">
+                      <div className="text-sm font-medium text-gray-900 dark:text-white">{t.symbol}</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400">{t.name}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </Card>
+          </div>
         </div>
       )}
     </div>

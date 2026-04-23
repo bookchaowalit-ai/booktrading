@@ -223,11 +223,10 @@ export default function DexSwap({ chains, selectedChain, wallets, loadedWallet }
                   <button
                     key={s}
                     onClick={() => handleSetSlippage(s)}
-                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                      slippage === s && !customSlippage
-                        ? 'bg-purple-600 text-white'
-                        : 'bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-500'
-                    }`}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${slippage === s && !customSlippage
+                      ? 'bg-purple-600 text-white'
+                      : 'bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-500'
+                      }`}
                   >
                     {s}%
                   </button>
@@ -248,14 +247,12 @@ export default function DexSwap({ chains, selectedChain, wallets, loadedWallet }
               </div>
               <button
                 onClick={() => setBestRoute(!bestRoute)}
-                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                  bestRoute ? 'bg-purple-600' : 'bg-gray-300 dark:bg-gray-600'
-                }`}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${bestRoute ? 'bg-purple-600' : 'bg-gray-300 dark:bg-gray-600'
+                  }`}
               >
                 <span
-                  className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                    bestRoute ? 'translate-x-5' : 'translate-x-1'
-                  }`}
+                  className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${bestRoute ? 'translate-x-5' : 'translate-x-1'
+                    }`}
                 />
               </button>
             </div>
@@ -423,60 +420,61 @@ export default function DexSwap({ chains, selectedChain, wallets, loadedWallet }
           className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
           onClick={() => { setShowTokenSelector(null); setTokenSearch(''); }}
         >
-          <Card
-            variant="elevated"
-            className="w-full max-w-sm p-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Select Token
-              </h3>
-              <button
-                onClick={() => { setShowTokenSelector(null); setTokenSearch(''); }}
-                className="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700"
-              >
-                <X className="w-5 h-5 text-gray-500" />
-              </button>
-            </div>
-
-            {/* Search */}
-            <div className="relative mb-4">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Search by symbol or address"
-                value={tokenSearch}
-                onChange={(e) => setTokenSearch(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                autoFocus
-              />
-            </div>
-
-            {/* Token List */}
-            <div className="space-y-1 max-h-64 overflow-y-auto">
-              {filteredTokens.map((token) => (
+          <div onClick={(e) => e.stopPropagation()}>
+            <Card
+              variant="elevated"
+              className="w-full max-w-sm p-4"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  Select Token
+                </h3>
                 <button
-                  key={token.address}
-                  onClick={() => handleSelectToken(token)}
-                  className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                  onClick={() => { setShowTokenSelector(null); setTokenSearch(''); }}
+                  className="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700"
                 >
-                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-100 to-blue-100 dark:from-purple-900/50 dark:to-blue-900/50 flex items-center justify-center text-sm font-bold text-purple-600 dark:text-purple-400">
-                    {token.icon}
-                  </div>
-                  <div className="text-left">
-                    <div className="text-sm font-medium text-gray-900 dark:text-white">{token.symbol}</div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400">{token.name}</div>
-                  </div>
+                  <X className="w-5 h-5 text-gray-500" />
                 </button>
-              ))}
-              {filteredTokens.length === 0 && (
-                <div className="py-8 text-center text-sm text-gray-500 dark:text-gray-400">
-                  No tokens found
-                </div>
-              )}
-            </div>
-          </Card>
+              </div>
+
+              {/* Search */}
+              <div className="relative mb-4">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search by symbol or address"
+                  value={tokenSearch}
+                  onChange={(e) => setTokenSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  autoFocus
+                />
+              </div>
+
+              {/* Token List */}
+              <div className="space-y-1 max-h-64 overflow-y-auto">
+                {filteredTokens.map((token) => (
+                  <button
+                    key={token.address}
+                    onClick={() => handleSelectToken(token)}
+                    className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                  >
+                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-100 to-blue-100 dark:from-purple-900/50 dark:to-blue-900/50 flex items-center justify-center text-sm font-bold text-purple-600 dark:text-purple-400">
+                      {token.icon}
+                    </div>
+                    <div className="text-left">
+                      <div className="text-sm font-medium text-gray-900 dark:text-white">{token.symbol}</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400">{token.name}</div>
+                    </div>
+                  </button>
+                ))}
+                {filteredTokens.length === 0 && (
+                  <div className="py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                    No tokens found
+                  </div>
+                )}
+              </div>
+            </Card>
+          </div>
         </div>
       )}
     </div>
