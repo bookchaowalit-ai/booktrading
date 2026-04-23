@@ -843,6 +843,31 @@ export const th = {
   'ai-insights.bullish': 'ขาขึ้น',
   'ai-insights.bearish': 'ขาลง',
   'ai-insights.neutral': 'เป็นกลาง',
+
+  // Form Validation
+  'validation.required': 'กรุณากรอกข้อมูล',
+  'validation.invalid-email': 'อีเมลไม่ถูกต้อง',
+  'validation.min-length': 'ต้องมีความยาวอย่างน้อย {min} ตัวอักษร',
+  'validation.max-length': 'ต้องมีความยาวไม่เกิน {max} ตัวอักษร',
+  'validation.min-value': 'ต้องมากกว่าหรือเท่ากับ {min}',
+  'validation.max-value': 'ต้องน้อยกว่าหรือเท่ากับ {max}',
+  'validation.invalid-number': 'กรุณากรอกตัวเลขที่ถูกต้อง',
+  'validation.negative-not-allowed': 'ไม่อนุญาตให้กรอกค่าลบ',
+  'validation.positive-number': 'กรุณากรอกตัวเลขบวก',
+  'validation.insufficient-balance': 'ยอดเงินไม่เพียงพอ คุณมี {balance} {currency}',
+  'validation.price-range': 'ราคาสูงสุดต้องมากกว่าราคาต่ำสุด',
+  'validation.grid-levels': 'จำนวน Grid ต้องอยู่ระหว่าง 2 ถึง 50',
+  'validation.symbol-required': 'กรุณากรอกสัญลักษณ์คู่เทรด',
+
+  // Form Labels
+  'form.submit': 'ยืนยัน',
+  'form.reset': 'รีเซ็ต',
+  'form.cancel': 'ยกเลิก',
+  'form.confirm': 'ยืนยัน',
+  'form.apply': 'ใช้งาน',
+  'form.save-changes': 'บันทึกการเปลี่ยนแปลง',
+  'form.field-required': 'จำเป็น',
+  'form.field-optional': 'ไม่บังคับ',
 };
 
 export type TranslationKey = keyof typeof th;

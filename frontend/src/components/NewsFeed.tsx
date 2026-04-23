@@ -9,10 +9,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { newsService, getSentimentLabel, getSentimentColor, getSentimentGradient } from '@/services/news';
 import { NewsArticle, SentimentLabel, NewsFilters } from '@/types/news';
 import Card from './ui/Card';
-import { ExternalLink, TrendingUp, TrendingDown, Minus, Clock, Filter } from 'lucide-react';
+import { ExternalLink, TrendingUp, TrendingDown, Minus, Clock, Filter, Newspaper } from 'lucide-react';
 import CategoryIcon from './CategoryIcon';
 import { getAssetCategory } from '@/types';
 import Button from './ui/Button';
+import EmptyState from './EmptyState';
 
 interface NewsFeedProps {
   symbol?: string;
@@ -157,9 +158,12 @@ export default function NewsFeed({ symbol, limit = 5, showFilters = true }: News
       {/* News Articles */}
       <div className="space-y-4">
         {articles.length === 0 ? (
-          <Card padding="lg" className="text-center">
-            <p className="text-gray-500 dark:text-gray-400">No news articles found</p>
-          </Card>
+          <EmptyState
+            icon={<Newspaper className="w-12 h-12 text-gray-300 dark:text-gray-600" />}
+            title="No news articles"
+            description="Check back later for the latest crypto news and updates"
+            size="sm"
+          />
         ) : (
           articles.map((article, index) => {
             const sentimentLabel = article.sentimentLabel || getSentimentLabel(article.sentiment || 0);

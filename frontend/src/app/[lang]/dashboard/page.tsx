@@ -23,6 +23,7 @@ import { Tabs } from '@/components/ui';
 import { DollarSign, TrendingUp, Activity, Wallet, BarChart3, Zap, ArrowRight, Settings, LayoutDashboard, RefreshCw, Bitcoin } from 'lucide-react';
 import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
+import { CompactStatsGridSkeleton, ChartSkeleton, PortfolioItemSkeleton } from '@/components/ui/Skeleton';
 
 const SYMBOLS = ['BTCUSDT', 'ETHUSDT'];
 
@@ -99,10 +100,39 @@ export default function Dashboard() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-purple-200 border-t-purple-600 rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-gray-600 dark:text-gray-400">Loading dashboard...</p>
+      <div className="space-y-4">
+        {/* Trading Control Banner Skeleton */}
+        <div className="p-4 bg-gray-100 dark:bg-gray-800 rounded-xl">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-gray-200 dark:bg-gray-700 rounded-md animate-pulse" />
+            <div className="flex-1 space-y-2">
+              <div className="h-4 w-32 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+              <div className="h-3 w-48 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+            </div>
+          </div>
+        </div>
+
+        {/* Stats Grid Skeleton */}
+        <CompactStatsGridSkeleton />
+
+        {/* Category Summary Skeleton */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="p-4 space-y-3 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
+              <div className="h-4 w-20 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+              <div className="h-6 w-24 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+            </div>
+          ))}
+        </div>
+
+        {/* Main Grid Skeleton */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2">
+            <ChartSkeleton height={300} />
+          </div>
+          <div>
+            <PortfolioItemSkeleton count={4} />
+          </div>
         </div>
       </div>
     );

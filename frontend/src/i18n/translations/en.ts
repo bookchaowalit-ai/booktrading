@@ -735,6 +735,31 @@ export const en = {
   'ai-insights.bullish': 'Bullish',
   'ai-insights.bearish': 'Bearish',
   'ai-insights.neutral': 'Neutral',
+
+  // Form Validation
+  'validation.required': 'This field is required',
+  'validation.invalid-email': 'Invalid email address',
+  'validation.min-length': 'Must be at least {min} characters',
+  'validation.max-length': 'Must be no more than {max} characters',
+  'validation.min-value': 'Must be at least {min}',
+  'validation.max-value': 'Must be no more than {max}',
+  'validation.invalid-number': 'Please enter a valid number',
+  'validation.negative-not-allowed': 'Negative values are not allowed',
+  'validation.positive-number': 'Please enter a positive number',
+  'validation.insufficient-balance': 'Insufficient balance. You have {balance} {currency}',
+  'validation.price-range': 'Upper price must be greater than lower price',
+  'validation.grid-levels': 'Grid levels must be between 2 and 50',
+  'validation.symbol-required': 'Please enter a trading symbol',
+
+  // Form Labels
+  'form.submit': 'Submit',
+  'form.reset': 'Reset',
+  'form.cancel': 'Cancel',
+  'form.confirm': 'Confirm',
+  'form.apply': 'Apply',
+  'form.save-changes': 'Save Changes',
+  'form.field-required': 'Required',
+  'form.field-optional': 'Optional',
 };
 
 export type TranslationKey = keyof typeof en;

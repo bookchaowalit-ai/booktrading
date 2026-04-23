@@ -15,6 +15,7 @@ import Badge from '@/components/ui/Badge';
 import EmptyState from '@/components/EmptyState';
 import PortfolioPerformance from '@/components/PortfolioPerformance';
 import { useTranslation } from '@/i18n/translations';
+import { CompactStatsGridSkeleton, ChartSkeleton } from '@/components/ui/Skeleton';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
@@ -122,10 +123,21 @@ export default function AnalyticsPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-purple-200 border-t-purple-600 rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-gray-600 dark:text-gray-400">Loading analytics...</p>
+      <div className="p-6 space-y-6">
+        {/* Header Skeleton */}
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 bg-gray-200 dark:bg-gray-700 rounded-xl animate-pulse" />
+          <div className="space-y-2">
+            <div className="h-7 w-48 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+            <div className="h-4 w-64 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+          </div>
+        </div>
+        {/* Stats Grid Skeleton */}
+        <CompactStatsGridSkeleton />
+        {/* Charts Skeleton */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <ChartSkeleton height={250} />
+          <ChartSkeleton height={250} />
         </div>
       </div>
     );

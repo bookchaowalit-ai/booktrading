@@ -8,6 +8,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useTranslation } from '@/i18n/translations';
 import { useToast } from '@/components/ui/Toast';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
+import { useFormValidation } from '@/hooks/useFormValidation';
 import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
@@ -25,8 +26,9 @@ import {
   PlayCircle, StopCircle, RefreshCw, ChevronDown,
   DollarSign, BarChart2, Target, Layers,
   ArrowUpRight, ArrowDownRight, Wallet, AlertTriangle,
-  CheckCircle2, Zap as ZapIcon,
+  CheckCircle2, Zap as ZapIcon, HelpCircle,
 } from 'lucide-react';
+import HelpTooltip, { TradingTooltips } from '@/components/ui/HelpTooltip';
 
 const SYMBOLS = [
   { value: 'BINANCE:BTCUSDT', label: 'BTC/USDT' },
@@ -54,6 +56,7 @@ const INTERVALS: { value: string; label: string }[] = [
 export default function TradingPage() {
   const { t } = useTranslation();
   const { success, error } = useToast();
+  const { validateGridConfig, positiveNumber, priceRange, gridLevelsRange, sufficientBalance } = useFormValidation();
 
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
@@ -80,6 +83,8 @@ export default function TradingPage() {
     investmentAmount: 500,
     gridType: 'arithmetic',
   });
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [touchedFields, setTouchedFields] = useState<Record<string, boolean>>({});
   const [stats, setStats] = useState({
     totalProfit: 0,
     totalTrades: 0,
@@ -103,6 +108,45 @@ export default function TradingPage() {
   const quoteBalance = balances.find((b) => b.currency === quoteCurrency);
   const freeQuoteBalance = quoteBalance?.free ?? 0;
   const hasEnoughBalance = freeQuoteBalance >= gridConfig.investmentAmount;
+
+  // Validate form fields on change
+  useEffect(() => {
+    const newErrors: Record<string, string> = {};
+
+    // Validate symbol
+    if (!gridConfig.symbol) {
+      newErrors.symbol = t('validation.required');
+    }
+
+    // Validate lower price
+    if (gridConfig.lowerPrice <= 0) {
+      newErrors.lowerPrice = t('validation.positive-number');
+    }
+
+    // Validate upper price
+    if (gridConfig.upperPrice <= 0) {
+      newErrors.upperPrice = t('validation.positive-number');
+    } else if (gridConfig.upperPrice <= gridConfig.lowerPrice) {
+      newErrors.upperPrice = t('validation.price-range');
+    }
+
+    // Validate grid levels
+    if (gridConfig.gridLevels < 2 || gridConfig.gridLevels > 50) {
+      newErrors.gridLevels = t('validation.grid-levels');
+    }
+
+    // Validate investment amount
+    if (gridConfig.investmentAmount <= 0) {
+      newErrors.investmentAmount = t('validation.negative-not-allowed');
+    } else if (freeQuoteBalance > 0 && gridConfig.investmentAmount > freeQuoteBalance) {
+      newErrors.investmentAmount = t('validation.insufficient-balance', {
+        balance: freeQuoteBalance.toLocaleString(undefined, { maximumFractionDigits: 2 }),
+        currency: quoteCurrency,
+      });
+    }
+
+    setFormErrors(newErrors);
+  }, [gridConfig, freeQuoteBalance, quoteCurrency, t]);
 
   const loadBalances = useCallback(async () => {
     setBalancesLoading(true);
@@ -186,24 +230,35 @@ export default function TradingPage() {
   };
 
   const handleStartBot = async () => {
-    // ── Balance pre-flight check ──────────────────────────────────
-    try {
-      const freshBalances = await api.getExchangeBalances();
-      setBalances(freshBalances);
-      const fresh = freshBalances.find((b) => b.currency === quoteCurrency);
-      const available = fresh?.free ?? 0;
+    // Mark all fields as touched to show validation errors
+    setTouchedFields({
+      symbol: true,
+      lowerPrice: true,
+      upperPrice: true,
+      gridLevels: true,
+      investmentAmount: true,
+    });
 
-      if (available < gridConfig.investmentAmount) {
-        error(
-          `ยอดเงินไม่เพียงพอ: มี ${available.toLocaleString(undefined, { maximumFractionDigits: 8 })} ${quoteCurrency} ` +
-          `แต่ต้องการ ${gridConfig.investmentAmount.toLocaleString()} ${quoteCurrency}`
-        );
-        return;
-      }
-    } catch {
-      // If balance check fails, continue to API call and let backend handle validation
+    // Validate form before submission
+    const validation = validateGridConfig(
+      {
+        symbol: gridConfig.symbol,
+        lowerPrice: gridConfig.lowerPrice,
+        upperPrice: gridConfig.upperPrice,
+        gridLevels: gridConfig.gridLevels,
+        investmentAmount: gridConfig.investmentAmount,
+      },
+      freeQuoteBalance,
+      quoteCurrency
+    );
+
+    if (!validation.isValid) {
+      // Show first error as toast
+      error(validation.errors[0].message);
+      // Switch to config tab to show errors
+      setActiveTab('config');
+      return;
     }
-    // ─────────────────────────────────────────────────────────────
 
     setIsLoading(true);
     try {
@@ -371,16 +426,16 @@ export default function TradingPage() {
 
         {/* ── OVERVIEW ─────────────────────────────────────────────── */}
         {activeTab === 'overview' && (
-          <div className="h-full flex gap-0">
+          <div className="h-full flex flex-col md:flex-row gap-0">
             {/* Chart area */}
-            <div className="flex-1 flex flex-col min-w-0 border-r border-gray-200 dark:border-gray-800">
-              {/* Interval selector */}
-              <div className="flex items-center gap-1 px-3 py-1.5 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+            <div className="flex-1 flex flex-col min-w-0 border-b md:border-r border-gray-200 dark:border-gray-800">
+              {/* Interval selector - horizontal scroll on mobile */}
+              <div className="flex items-center gap-1 px-3 py-1.5 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 overflow-x-auto">
                 {INTERVALS.map((iv) => (
                   <button
                     key={iv.value}
                     onClick={() => setChartInterval(iv.value)}
-                    className={`px-2.5 py-1 text-xs font-medium rounded transition-colors ${chartInterval === iv.value
+                    className={`px-2.5 py-1 text-xs font-medium rounded transition-colors whitespace-nowrap ${chartInterval === iv.value
                       ? 'bg-purple-600 text-white'
                       : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'
                       }`}
@@ -390,7 +445,7 @@ export default function TradingPage() {
                 ))}
               </div>
               {/* Chart */}
-              <div className="flex-1">
+              <div className="flex-1 min-h-[300px] md:min-h-[400px]">
                 <TradingViewChart
                   symbol={chartSymbol}
                   interval={chartInterval}
@@ -400,8 +455,8 @@ export default function TradingPage() {
               </div>
             </div>
 
-            {/* Right sidebar */}
-            <div className="w-72 shrink-0 flex flex-col gap-0 overflow-y-auto bg-white dark:bg-gray-900">
+            {/* Right sidebar - becomes bottom panel on mobile */}
+            <div className="w-full md:w-72 shrink-0 flex flex-col gap-0 overflow-y-auto bg-white dark:bg-gray-900 border-t md:border-l border-gray-200 dark:border-gray-800">
 
               {/* Stats Grid */}
               <div className="p-3 border-b border-gray-100 dark:border-gray-800">
@@ -596,35 +651,59 @@ export default function TradingPage() {
 
         {/* ── GRID CONFIG ──────────────────────────────────────────── */}
         {activeTab === 'config' && (
-          <div className="h-full flex overflow-hidden">
+          <div className="h-full flex flex-col md:flex-row overflow-hidden">
             {/* Form */}
-            <div className="w-80 shrink-0 overflow-y-auto border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-4">
+            <div className="w-full md:w-80 shrink-0 overflow-y-auto border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-4">
               <div className="flex items-center gap-2 mb-5">
                 <div className="p-1.5 bg-purple-100 dark:bg-purple-900/40 rounded-md">
                   <Settings className="w-4 h-4 text-purple-600" />
                 </div>
-                <div>
-                  <h2 className="text-sm font-bold">Grid Configuration</h2>
-                  <p className="text-[10px] text-gray-400">Set parameters for grid trading</p>
+                <div className="flex-1 min-w-0">
+                  <h2 className="text-sm font-bold truncate">Grid Configuration</h2>
+                  <p className="text-[10px] text-gray-400 truncate">Set parameters for grid trading</p>
                 </div>
               </div>
 
               <div className="space-y-4">
                 {/* Symbol */}
                 <div>
-                  <label className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1.5 block">Symbol</label>
+                  <div className="flex items-center gap-1 mb-1.5">
+                    <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Symbol</label>
+                    <HelpTooltip content={TradingTooltips.gridLevels.content} title={TradingTooltips.gridLevels.title} />
+                  </div>
                   <input
                     type="text"
                     value={gridConfig.symbol}
                     onChange={(e) => setGridConfig((p) => ({ ...p, symbol: e.target.value }))}
-                    className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    onBlur={() => setTouchedFields((p) => ({ ...p, symbol: true }))}
+                    className={`w-full px-3 py-2 text-sm border rounded-lg bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:border-transparent ${
+                      formErrors.symbol && touchedFields.symbol
+                        ? 'border-red-500 focus:ring-red-500'
+                        : 'border-gray-200 dark:border-gray-700 focus:ring-purple-500'
+                    }`}
                     placeholder="e.g. BTCUSDT"
                   />
+                  {formErrors.symbol && touchedFields.symbol && (
+                    <p className="text-[10px] text-red-500 mt-1 flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3" />
+                      {formErrors.symbol}
+                    </p>
+                  )}
                 </div>
 
                 {/* Grid Type */}
                 <div>
-                  <label className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1.5 block">Grid Type</label>
+                  <div className="flex items-center gap-1 mb-1.5">
+                    <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Grid Type</label>
+                    <HelpTooltip
+                      content={gridConfig.gridType === 'arithmetic'
+                        ? TradingTooltips.arithmeticGrid.content
+                        : TradingTooltips.geometricGrid.content}
+                      title={gridConfig.gridType === 'arithmetic'
+                        ? TradingTooltips.arithmeticGrid.title
+                        : TradingTooltips.geometricGrid.title}
+                    />
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     {['arithmetic', 'geometric'].map((type) => (
                       <button
@@ -643,25 +722,50 @@ export default function TradingPage() {
 
                 {/* Price Range */}
                 <div>
-                  <label className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1.5 block">Price Range</label>
+                  <div className="flex items-center gap-1 mb-1.5">
+                    <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Price Range</label>
+                    <HelpTooltip content={TradingTooltips.lowerPrice.content} title={TradingTooltips.lowerPrice.title} />
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <p className="text-[10px] text-gray-400 mb-1">Lower</p>
+                      <div className="flex items-center gap-1 mb-1">
+                        <p className="text-[10px] text-gray-400">Lower</p>
+                        <HelpTooltip content="The bottom price of your grid range where buy orders are placed" position="right" />
+                      </div>
                       <input
                         type="number"
                         value={gridConfig.lowerPrice}
                         onChange={(e) => setGridConfig((p) => ({ ...p, lowerPrice: Number(e.target.value) }))}
-                        className="w-full px-2.5 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                        onBlur={() => setTouchedFields((p) => ({ ...p, lowerPrice: true }))}
+                        className={`w-full px-2.5 py-2 text-sm border rounded-lg bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:border-transparent ${
+                          formErrors.lowerPrice && touchedFields.lowerPrice
+                            ? 'border-red-500 focus:ring-red-500'
+                            : 'border-gray-200 dark:border-gray-700 focus:ring-purple-500'
+                        }`}
                       />
+                      {formErrors.lowerPrice && touchedFields.lowerPrice && (
+                        <p className="text-[10px] text-red-500 mt-1">{formErrors.lowerPrice}</p>
+                      )}
                     </div>
                     <div>
-                      <p className="text-[10px] text-gray-400 mb-1">Upper</p>
+                      <div className="flex items-center gap-1 mb-1">
+                        <p className="text-[10px] text-gray-400">Upper</p>
+                        <HelpTooltip content="The top price of your grid range where sell orders are placed" position="right" />
+                      </div>
                       <input
                         type="number"
                         value={gridConfig.upperPrice}
                         onChange={(e) => setGridConfig((p) => ({ ...p, upperPrice: Number(e.target.value) }))}
-                        className="w-full px-2.5 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                        onBlur={() => setTouchedFields((p) => ({ ...p, upperPrice: true }))}
+                        className={`w-full px-2.5 py-2 text-sm border rounded-lg bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:border-transparent ${
+                          formErrors.upperPrice && touchedFields.upperPrice
+                            ? 'border-red-500 focus:ring-red-500'
+                            : 'border-gray-200 dark:border-gray-700 focus:ring-purple-500'
+                        }`}
                       />
+                      {formErrors.upperPrice && touchedFields.upperPrice && (
+                        <p className="text-[10px] text-red-500 mt-1">{formErrors.upperPrice}</p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -669,7 +773,10 @@ export default function TradingPage() {
                 {/* Grid Levels */}
                 <div>
                   <div className="flex justify-between items-center mb-1.5">
-                    <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Grid Levels</label>
+                    <div className="flex items-center gap-1">
+                      <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Grid Levels</label>
+                      <HelpTooltip content={TradingTooltips.gridLevels.content} title={TradingTooltips.gridLevels.title} />
+                    </div>
                     <span className="text-sm font-bold text-purple-600">{gridConfig.gridLevels}</span>
                   </div>
                   <input
@@ -683,11 +790,17 @@ export default function TradingPage() {
                   <div className="flex justify-between text-[10px] text-gray-400 mt-0.5">
                     <span>2</span><span>50</span>
                   </div>
+                  {formErrors.gridLevels && touchedFields.gridLevels && (
+                    <p className="text-[10px] text-red-500 mt-1">{formErrors.gridLevels}</p>
+                  )}
                 </div>
 
                 {/* Investment */}
                 <div>
-                  <label className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1.5 block">Investment Amount</label>
+                  <div className="flex items-center gap-1 mb-1.5">
+                    <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Investment Amount</label>
+                    <HelpTooltip content={TradingTooltips.investmentAmount.content} title={TradingTooltips.investmentAmount.title} />
+                  </div>
                   <div className="relative">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
                     <input
@@ -695,10 +808,25 @@ export default function TradingPage() {
                       min={1}
                       value={gridConfig.investmentAmount}
                       onChange={(e) => setGridConfig((p) => ({ ...p, investmentAmount: Number(e.target.value) }))}
-                      className="w-full pl-7 pr-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      onBlur={() => setTouchedFields((p) => ({ ...p, investmentAmount: true }))}
+                      className={`w-full pl-7 pr-3 py-2 text-sm border rounded-lg bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:border-transparent ${
+                        formErrors.investmentAmount && touchedFields.investmentAmount
+                          ? 'border-red-500 focus:ring-red-500'
+                          : 'border-gray-200 dark:border-gray-700 focus:ring-purple-500'
+                      }`}
                     />
                   </div>
-                  <p className="text-[10px] text-gray-400 mt-1">${perGridInvestment.toFixed(2)} per grid level</p>
+                  <div className="flex justify-between items-center mt-1">
+                    <p className="text-[10px] text-gray-400">${perGridInvestment.toFixed(2)} per grid level</p>
+                    {freeQuoteBalance > 0 && (
+                      <p className={`text-[10px] ${hasEnoughBalance ? 'text-green-500' : 'text-red-500'}`}>
+                        Balance: {freeQuoteBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })} {quoteCurrency}
+                      </p>
+                    )}
+                  </div>
+                  {formErrors.investmentAmount && touchedFields.investmentAmount && (
+                    <p className="text-[10px] text-red-500 mt-1">{formErrors.investmentAmount}</p>
+                  )}
                 </div>
               </div>
 
@@ -718,9 +846,14 @@ export default function TradingPage() {
             </div>
 
             {/* Grid Visual Preview */}
-            <div className="flex-1 overflow-y-auto p-6 bg-gray-50 dark:bg-gray-950">
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">Grid Preview</p>
-              <div className="max-w-md">
+            <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-gray-50 dark:bg-gray-950">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="p-1 bg-purple-100 dark:bg-purple-900/40 rounded">
+                  <BarChart2 className="w-3.5 h-3.5 text-purple-600" />
+                </div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Grid Preview</p>
+              </div>
+              <div className="max-w-full md:max-w-md">
                 {/* Grid bars */}
                 <div className="relative bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4 overflow-hidden">
                   <div className="absolute inset-0 bg-gradient-to-b from-green-500/5 to-red-500/5 pointer-events-none" />

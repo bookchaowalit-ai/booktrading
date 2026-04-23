@@ -9,6 +9,7 @@ import SentimentDashboard from '@/components/SentimentDashboard';
 import EmptyState from '@/components/EmptyState';
 import { useTranslation } from '@/i18n/translations';
 import { Activity } from 'lucide-react';
+import { ChartSkeleton, CompactListSkeleton } from '@/components/ui/Skeleton';
 
 export default function SentimentPage() {
   const { t } = useTranslation();
@@ -23,11 +24,26 @@ export default function SentimentPage() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-purple-200 border-t-purple-600 rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-gray-600 dark:text-gray-400">Loading...</p>
+      <div className="p-6 space-y-6">
+        {/* Header Skeleton */}
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 bg-gray-200 dark:bg-gray-700 rounded-lg animate-pulse" />
+          <div className="space-y-2">
+            <div className="h-7 w-48 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+            <div className="h-4 w-64 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+          </div>
         </div>
+        {/* Sentiment Gauges Skeleton */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
+              <div className="h-4 w-24 bg-gray-200 dark:bg-gray-700 rounded animate-pulse mb-4" />
+              <div className="w-32 h-32 mx-auto bg-gray-200 dark:bg-gray-700 rounded-full animate-pulse" />
+            </div>
+          ))}
+        </div>
+        {/* News List Skeleton */}
+        <CompactListSkeleton items={5} />
       </div>
     );
   }
