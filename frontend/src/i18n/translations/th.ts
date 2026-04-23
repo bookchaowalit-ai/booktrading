@@ -38,6 +38,7 @@ export const th = {
   'nav.news': 'ข่าวสาร',
   'nav.bot': 'บอท',
   'nav.settings': 'ตั้งค่า',
+  'nav.dex': 'DEX Trading',
   'nav.docs': 'เอกสาร',
   'nav.logout': 'ออกจากระบบ',
   

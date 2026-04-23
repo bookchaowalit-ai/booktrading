@@ -38,6 +38,7 @@ export const en = {
   'nav.news': 'News',
   'nav.bot': 'Bot',
   'nav.settings': 'Settings',
+  'nav.dex': 'DEX Trading',
   'nav.docs': 'Documentation',
   'nav.logout': 'Logout',
   

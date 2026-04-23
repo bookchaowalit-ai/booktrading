@@ -9,15 +9,16 @@ import (
 	"syscall"
 	"time"
 
-	"trading-bot-system/backend/internal/adapter/exchange"
-	httpadapter "trading-bot-system/backend/internal/adapter/http"
-	repositoryadapter "trading-bot-system/backend/internal/adapter/repository"
-	"trading-bot-system/backend/internal/adapter/redis"
-	"trading-bot-system/backend/internal/adapter/websocket"
 	"trading-bot-system/backend/internal/adapter/database"
+	"trading-bot-system/backend/internal/adapter/dex"
+	"trading-bot-system/backend/internal/adapter/exchange"
+	"trading-bot-system/backend/internal/adapter/grpcserver"
+	httpadapter "trading-bot-system/backend/internal/adapter/http"
+	"trading-bot-system/backend/internal/adapter/redis"
+	repositoryadapter "trading-bot-system/backend/internal/adapter/repository"
+	"trading-bot-system/backend/internal/adapter/websocket"
 	"trading-bot-system/backend/internal/config"
 	"trading-bot-system/backend/internal/domain/model"
-	"trading-bot-system/backend/internal/adapter/grpcserver"
 	"trading-bot-system/backend/internal/domain/service"
 	"trading-bot-system/backend/internal/logger"
 )
@@ -97,7 +98,7 @@ func main() {
 	binanceKey := cfg.Exchange.APIKeys[string(config.ExchangeBinance)]
 	var binanceStream *exchange.BinanceAdapter
 	var binanceExecutor *exchange.BinanceOrderExecutor
-	
+
 	if binanceKey != nil && binanceKey.Enabled {
 		binanceStream = exchange.NewBinanceAdapter(
 			binanceKey.APIKey,
@@ -263,10 +264,10 @@ func main() {
 					return map[string]any{"isActive": false, "totalTrades": 0, "totalProfit": 0.0}
 				}
 				return map[string]any{
-					"isActive":     status.IsActive,
-					"startedAt":    status.StartedAt,
-					"totalTrades":  status.TotalTrades,
-					"totalProfit":  status.TotalProfit,
+					"isActive":    status.IsActive,
+					"startedAt":   status.StartedAt,
+					"totalTrades": status.TotalTrades,
+					"totalProfit": status.TotalProfit,
 				}
 			},
 			func() map[string]any {
@@ -275,13 +276,13 @@ func main() {
 			},
 			func() map[string]any {
 				return map[string]any{
-					"winRate":       0.0,
-					"profitFactor":  0.0,
-					"avgWin":        0.0,
-					"avgLoss":       0.0,
-					"bestTrade":     0.0,
-					"worstTrade":    0.0,
-					"sharpeRatio":   0.0,
+					"winRate":      0.0,
+					"profitFactor": 0.0,
+					"avgWin":       0.0,
+					"avgLoss":      0.0,
+					"bestTrade":    0.0,
+					"worstTrade":   0.0,
+					"sharpeRatio":  0.0,
 				}
 			},
 			func() error {
@@ -293,13 +294,13 @@ func main() {
 			func() map[string]any {
 				p := paperEngine.GetPortfolio()
 				return map[string]any{
-					"totalValue":       p.TotalValue,
-					"initialBalance":   p.InitialBalance,
-					"totalPnL":         p.TotalPnL,
-					"totalPnLPercent":  p.TotalPnLPercent,
-					"winTrades":        p.WinTrades,
-					"lossTrades":       p.LossTrades,
-					"totalTrades":      p.TotalTrades,
+					"totalValue":      p.TotalValue,
+					"initialBalance":  p.InitialBalance,
+					"totalPnL":        p.TotalPnL,
+					"totalPnLPercent": p.TotalPnLPercent,
+					"winTrades":       p.WinTrades,
+					"lossTrades":      p.LossTrades,
+					"totalTrades":     p.TotalTrades,
 				}
 			},
 		)
@@ -380,6 +381,19 @@ func main() {
 	rebalancingService := service.NewRebalancingService(db.Pool)
 	rebalancingHandler := httpadapter.NewRebalancingHandler(rebalancingService, authHandler)
 	rebalancingHandler.RegisterRoutes(router.Mux())
+
+	// DEX/AMM Trading
+	dexManager := dex.NewDEXManager(db.Pool, &cfg.Dex)
+	dexCtx, dexCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := dexManager.Initialize(dexCtx); err != nil {
+		logger.Info("DEX manager initialization", "error", err)
+	}
+	dexCancel()
+	walletService := service.NewWalletService(db.Pool, &cfg.Dex)
+	dexService := service.NewDexService(dexManager, walletService, db.Pool, &cfg.Dex)
+	dexHandler := httpadapter.NewDexHandler(dexService, walletService, authHandler)
+	dexHandler.RegisterRoutes(router.Mux())
+	logger.Info("DEX/AMM trading initialized", "enabled", cfg.Dex.Enabled, "default_dex", cfg.Dex.DefaultDEX)
 
 	// Wrap with audit middleware
 	auditMiddleware := httpadapter.NewAuditMiddleware(auditService, authHandler)

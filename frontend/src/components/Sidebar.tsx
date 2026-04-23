@@ -38,6 +38,7 @@ import {
   Landmark,
   Building2,
   Flag,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { useTranslation, TranslationKey } from '@/i18n/translations';
 
@@ -70,6 +71,7 @@ const menuGroups: MenuGroup[] = [
     icon: <Bot className="w-4 h-4" />,
     items: [
       { nameKey: 'nav.strategy', href: '/dashboard/strategy', icon: <Bot className="w-5 h-5" /> },
+      { nameKey: 'nav.dex', href: '/dashboard/dex', icon: <ArrowLeftRight className="w-5 h-5" /> },
       { nameKey: 'nav.gridTrading', href: '/dashboard/grid-trading', icon: <Grid3x3 className="w-5 h-5" /> },
       { nameKey: 'nav.dca', href: '/dashboard/dca', icon: <Repeat className="w-5 h-5" /> },
       { nameKey: 'nav.copyTrading', href: '/dashboard/copy-trading', icon: <Users className="w-5 h-5" /> },
