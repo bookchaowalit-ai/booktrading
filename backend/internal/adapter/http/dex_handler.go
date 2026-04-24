@@ -4,12 +4,16 @@ import (
 	"encoding/json"
 	"math/big"
 	"net/http"
+	"regexp"
 	"strconv"
+	"strings"
 
 	"trading-bot-system/backend/internal/config"
 	"trading-bot-system/backend/internal/domain/service"
 	"trading-bot-system/backend/internal/logger"
 )
+
+var ethHashRegex = regexp.MustCompile(`^0x[a-fA-F0-9]{64}$`)
 
 // DexHandler handles DEX/AMM HTTP requests
 type DexHandler struct {
@@ -168,6 +172,36 @@ func (h *DexHandler) LoadWallet(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, map[string]string{"status": "loaded", "address": req.Address})
 }
 
+// ExportWallet handles GET /api/dex/wallets/{id}/export - export private key
+func (h *DexHandler) ExportWallet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	userID := h.getUserID(r)
+	if userID == "" {
+		h.writeError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	walletID := r.URL.Query().Get("id")
+	if walletID == "" {
+		h.writeError(w, http.StatusBadRequest, "Wallet ID required")
+		return
+	}
+
+	privateKey, err := h.walletSvc.ExportWallet(r.Context(), userID, walletID)
+	if err != nil {
+		h.writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]string{
+		"privateKey": privateKey,
+	})
+}
+
 // GetBalance handles GET /api/dex/balance - get wallet balance
 func (h *DexHandler) GetBalance(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -255,6 +289,7 @@ func (h *DexHandler) Swap(w http.ResponseWriter, r *http.Request) {
 		TokenOut    string  `json:"token_out"`
 		AmountIn    string  `json:"amount_in"`
 		SlippagePct float64 `json:"slippage_pct"`
+		WalletId    string  `json:"wallet_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "Invalid request body")
@@ -266,7 +301,7 @@ func (h *DexHandler) Swap(w http.ResponseWriter, r *http.Request) {
 	}
 
 	amountIn := parseBigInt(req.AmountIn)
-	result, err := h.dexService.SwapTokens(r.Context(), userID, req.TokenIn, req.TokenOut, amountIn, req.SlippagePct)
+	result, err := h.dexService.SwapTokens(r.Context(), userID, req.WalletId, req.TokenIn, req.TokenOut, amountIn, req.SlippagePct)
 	if err != nil {
 		logger.Error("Swap failed", "error", err)
 		h.writeError(w, http.StatusBadRequest, err.Error())
@@ -274,6 +309,68 @@ func (h *DexHandler) Swap(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeJSON(w, http.StatusOK, result)
+}
+
+// Approve handles POST /api/dex/approve - approve a token for the router
+func (h *DexHandler) Approve(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	userID := h.getUserID(r)
+	if userID == "" {
+		h.writeError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	var req struct {
+		TokenAddress string `json:"token_address"`
+		Amount       string `json:"amount"`
+		WalletId     string `json:"wallet_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	amount := parseBigInt(req.Amount)
+	result, err := h.dexService.ApproveToken(r.Context(), userID, req.WalletId, req.TokenAddress, amount)
+	if err != nil {
+		logger.Error("Approve failed", "error", err)
+		h.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, result)
+}
+
+// CheckAllowance handles GET /api/dex/allowance - check token allowance
+func (h *DexHandler) CheckAllowance(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	tokenAddress := r.URL.Query().Get("token_address")
+	owner := r.URL.Query().Get("owner")
+	spender := r.URL.Query().Get("spender")
+
+	if tokenAddress == "" || owner == "" || spender == "" {
+		h.writeError(w, http.StatusBadRequest, "token_address, owner, and spender parameters required")
+		return
+	}
+
+	allowance, err := h.dexService.CheckAllowance(r.Context(), tokenAddress, owner, spender)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"allowance":   allowance.String(),
+		"sufficient": allowance.Cmp(big.NewInt(0)) > 0,
+	})
 }
 
 // GetLiquidityPools handles GET /api/dex/liquidity - get LP positions
@@ -391,6 +488,31 @@ func (h *DexHandler) CalculateIL(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, result)
 }
 
+// GetTxStatus handles GET /api/dex/tx/{hash}/status - get transaction status
+func (h *DexHandler) GetTxStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	// Extract tx hash from URL path: /api/dex/tx/{hash}/status
+	path := strings.TrimPrefix(r.URL.Path, "/api/dex/tx/")
+	txHash := strings.TrimSuffix(path, "/status")
+	if txHash == "" || !ethHashRegex.MatchString(txHash) {
+		h.writeError(w, http.StatusBadRequest, "invalid transaction hash")
+		return
+	}
+
+	result, err := h.dexService.GetTransactionStatus(r.Context(), txHash)
+	if err != nil {
+		logger.Error("Failed to get tx status", "error", err)
+		h.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, result)
+}
+
 // GetConfig handles GET /api/dex/config - get DEX configuration
 func (h *DexHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -435,19 +557,57 @@ func (h *DexHandler) SwitchProvider(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "provider": req.Provider})
 }
 
+// GetTokenInfo handles GET /api/dex/token - get ERC20 token info by address
+func (h *DexHandler) GetTokenInfo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	address := r.URL.Query().Get("address")
+	if address == "" {
+		h.writeError(w, http.StatusBadRequest, "address parameter required")
+		return
+	}
+
+	token, err := h.dexService.GetTokenInfo(r.Context(), address)
+	if err != nil {
+		// Return a generic "Unknown" token instead of an error
+		h.writeJSON(w, http.StatusOK, map[string]interface{}{
+			"address":  address,
+			"symbol":   "Unknown",
+			"name":     "Unknown Token",
+			"decimals": 18,
+		})
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"address":  token.Address,
+		"symbol":   token.Symbol,
+		"name":     token.Name,
+		"decimals": token.Decimals,
+	})
+}
+
 // RegisterRoutes registers all DEX routes
 func (h *DexHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/dex/wallets", h.GetWallets)
 	mux.HandleFunc("/api/dex/wallets/create", h.CreateWallet)
 	mux.HandleFunc("/api/dex/wallets/import", h.ImportWallet)
 	mux.HandleFunc("/api/dex/wallets/load", h.LoadWallet)
+	mux.HandleFunc("/api/dex/wallets/export", h.ExportWallet)
 	mux.HandleFunc("/api/dex/balance", h.GetBalance)
 	mux.HandleFunc("/api/dex/quote", h.GetQuote)
 	mux.HandleFunc("/api/dex/swap", h.Swap)
+	mux.HandleFunc("/api/dex/approve", h.Approve)
+	mux.HandleFunc("/api/dex/token", h.GetTokenInfo)
+	mux.HandleFunc("/api/dex/allowance", h.CheckAllowance)
 	mux.HandleFunc("/api/dex/liquidity", h.GetLiquidityPools)
 	mux.HandleFunc("/api/dex/liquidity/add", h.AddLiquidity)
 	mux.HandleFunc("/api/dex/liquidity/remove", h.RemoveLiquidity)
 	mux.HandleFunc("/api/dex/impermanent-loss", h.CalculateIL)
 	mux.HandleFunc("/api/dex/config", h.GetConfig)
 	mux.HandleFunc("/api/dex/provider/switch", h.SwitchProvider)
+	mux.HandleFunc("/api/dex/tx/", h.GetTxStatus)
 }

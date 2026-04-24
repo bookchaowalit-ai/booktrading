@@ -21,6 +21,9 @@ type UnimplementedBotStatusServiceServer struct{}
 // UnimplementedMarketDataServiceServer for embedding
 type UnimplementedMarketDataServiceServer struct{}
 
+// UnimplementedDexServiceServer for embedding
+type UnimplementedDexServiceServer struct{}
+
 // MarketDataService_SubscribeMarketDataServer interface
 type MarketDataService_SubscribeMarketDataServer interface {
 	Send(*MarketData) error
@@ -42,6 +45,11 @@ func RegisterMarketDataServiceServer(s *grpc.Server, srv MarketDataServiceServer
 	// Stub implementation
 }
 
+// RegisterDexServiceServer stub
+func RegisterDexServiceServer(s *grpc.Server, srv DexServiceServer) {
+	// Stub implementation
+}
+
 // OrderExecutionServiceServer interface
 type OrderExecutionServiceServer interface {
 	ExecuteOrder(context.Context, *OrderRequest) (*OrderResponse, error)
@@ -58,6 +66,14 @@ type BotStatusServiceServer interface {
 // MarketDataServiceServer interface
 type MarketDataServiceServer interface {
 	SubscribeMarketData(*SubscribeRequest, MarketDataService_SubscribeMarketDataServer) error
+}
+
+// DexServiceServer interface
+type DexServiceServer interface {
+	GetQuote(context.Context, *GetQuoteRequest) (*QuoteResponse, error)
+	Swap(context.Context, *SwapRequest) (*SwapTxResponse, error)
+	GetTokenInfo(context.Context, *TokenInfoRequest) (*TokenInfoResponse, error)
+	GetBalance(context.Context, *BalanceRequest) (*BalanceResponse, error)
 }
 
 // MarketData represents market data message
@@ -137,6 +153,82 @@ type StopBotResponse struct {
 	Message string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
 }
 
+// GetQuoteRequest represents a DEX quote request
+type GetQuoteRequest struct {
+	TokenIn     string  `protobuf:"bytes,1,opt,name=token_in,json=tokenIn,proto3" json:"token_in,omitempty"`
+	TokenOut    string  `protobuf:"bytes,2,opt,name=token_out,json=tokenOut,proto3" json:"token_out,omitempty"`
+	AmountIn    string  `protobuf:"bytes,3,opt,name=amount_in,json=amountIn,proto3" json:"amount_in,omitempty"`
+	SlippagePct float64 `protobuf:"fixed64,4,opt,name=slippage_pct,json=slippagePct,proto3" json:"slippage_pct,omitempty"`
+	BestRoute   bool    `protobuf:"varint,5,opt,name=best_route,json=bestRoute,proto3" json:"best_route,omitempty"`
+}
+
+// QuoteResponse represents a DEX quote response
+type QuoteResponse struct {
+	TokenInAddress  string   `protobuf:"bytes,1,opt,name=token_in_address,json=tokenInAddress,proto3" json:"token_in_address,omitempty"`
+	TokenOutAddress string   `protobuf:"bytes,2,opt,name=token_out_address,json=tokenOutAddress,proto3" json:"token_out_address,omitempty"`
+	TokenInSymbol   string   `protobuf:"bytes,3,opt,name=token_in_symbol,json=tokenInSymbol,proto3" json:"token_in_symbol,omitempty"`
+	TokenOutSymbol  string   `protobuf:"bytes,4,opt,name=token_out_symbol,json=tokenOutSymbol,proto3" json:"token_out_symbol,omitempty"`
+	AmountIn        string   `protobuf:"bytes,5,opt,name=amount_in,json=amountIn,proto3" json:"amount_in,omitempty"`
+	AmountOut       string   `protobuf:"bytes,6,opt,name=amount_out,json=amountOut,proto3" json:"amount_out,omitempty"`
+	AmountOutMin    string   `protobuf:"bytes,7,opt,name=amount_out_min,json=amountOutMin,proto3" json:"amount_out_min,omitempty"`
+	PriceImpact     float64  `protobuf:"fixed64,8,opt,name=price_impact,json=priceImpact,proto3" json:"price_impact,omitempty"`
+	MinimumReceived string   `protobuf:"bytes,9,opt,name=minimum_received,json=minimumReceived,proto3" json:"minimum_received,omitempty"`
+	GasEstimate     uint64   `protobuf:"varint,10,opt,name=gas_estimate,json=gasEstimate,proto3" json:"gas_estimate,omitempty"`
+	Route           []string `protobuf:"bytes,11,rep,name=route,proto3" json:"route,omitempty"`
+	DexProvider     string   `protobuf:"bytes,12,opt,name=dex_provider,json=dexProvider,proto3" json:"dex_provider,omitempty"`
+	Error           string   `protobuf:"bytes,13,opt,name=error,proto3" json:"error,omitempty"`
+}
+
+// SwapRequest represents a DEX swap request
+type SwapRequest struct {
+	TokenInAddress  string  `protobuf:"bytes,1,opt,name=token_in_address,json=tokenInAddress,proto3" json:"token_in_address,omitempty"`
+	TokenOutAddress string  `protobuf:"bytes,2,opt,name=token_out_address,json=tokenOutAddress,proto3" json:"token_out_address,omitempty"`
+	AmountIn        string  `protobuf:"bytes,3,opt,name=amount_in,json=amountIn,proto3" json:"amount_in,omitempty"`
+	AmountOutMin    string  `protobuf:"bytes,4,opt,name=amount_out_min,json=amountOutMin,proto3" json:"amount_out_min,omitempty"`
+	Recipient       string  `protobuf:"bytes,5,opt,name=recipient,proto3" json:"recipient,omitempty"`
+	SlippagePct     float64 `protobuf:"fixed64,6,opt,name=slippage_pct,json=slippagePct,proto3" json:"slippage_pct,omitempty"`
+	Deadline        string  `protobuf:"bytes,7,opt,name=deadline,proto3" json:"deadline,omitempty"`
+}
+
+// SwapTxResponse represents a DEX swap transaction response
+type SwapTxResponse struct {
+	TxHash      string `protobuf:"bytes,1,opt,name=tx_hash,json=txHash,proto3" json:"tx_hash,omitempty"`
+	BlockNumber uint64 `protobuf:"varint,2,opt,name=block_number,json=blockNumber,proto3" json:"block_number,omitempty"`
+	GasUsed     uint64 `protobuf:"varint,3,opt,name=gas_used,json=gasUsed,proto3" json:"gas_used,omitempty"`
+	GasPrice    string `protobuf:"bytes,4,opt,name=gas_price,json=gasPrice,proto3" json:"gas_price,omitempty"`
+	AmountIn    string `protobuf:"bytes,5,opt,name=amount_in,json=amountIn,proto3" json:"amount_in,omitempty"`
+	AmountOut   string `protobuf:"bytes,6,opt,name=amount_out,json=amountOut,proto3" json:"amount_out,omitempty"`
+	Status      string `protobuf:"bytes,7,opt,name=status,proto3" json:"status,omitempty"`
+	Error       string `protobuf:"bytes,8,opt,name=error,proto3" json:"error,omitempty"`
+}
+
+// TokenInfoRequest represents a token info request
+type TokenInfoRequest struct {
+	TokenAddress string `protobuf:"bytes,1,opt,name=token_address,json=tokenAddress,proto3" json:"token_address,omitempty"`
+}
+
+// TokenInfoResponse represents a token info response
+type TokenInfoResponse struct {
+	Address  string `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
+	Symbol   string `protobuf:"bytes,2,opt,name=symbol,proto3" json:"symbol,omitempty"`
+	Name     string `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	Decimals uint32 `protobuf:"varint,4,opt,name=decimals,proto3" json:"decimals,omitempty"`
+	LogoUri  string `protobuf:"bytes,5,opt,name=logo_uri,json=logoUri,proto3" json:"logo_uri,omitempty"`
+	Error    string `protobuf:"bytes,6,opt,name=error,proto3" json:"error,omitempty"`
+}
+
+// BalanceRequest represents a balance request
+type BalanceRequest struct {
+	TokenAddress string `protobuf:"bytes,1,opt,name=token_address,json=tokenAddress,proto3" json:"token_address,omitempty"`
+	UserAddress  string `protobuf:"bytes,2,opt,name=user_address,json=userAddress,proto3" json:"user_address,omitempty"`
+}
+
+// BalanceResponse represents a balance response
+type BalanceResponse struct {
+	Balance string `protobuf:"bytes,1,opt,name=balance,proto3" json:"balance,omitempty"`
+	Error   string `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+}
+
 // Convert MarketData from domain model
 func MarketDataFromDomain(symbol string, price, volume float64) *MarketData {
 	return &MarketData{
@@ -176,6 +268,14 @@ type BotStatusServiceClient interface {
 // MarketDataServiceClient is the client interface for market data
 type MarketDataServiceClient interface {
 	SubscribeMarketData(ctx context.Context, req *SubscribeRequest, opts ...grpc.CallOption) (MarketDataService_SubscribeMarketDataClient, error)
+}
+
+// DexServiceClient is the client interface for DEX operations
+type DexServiceClient interface {
+	GetQuote(ctx context.Context, req *GetQuoteRequest, opts ...grpc.CallOption) (*QuoteResponse, error)
+	Swap(ctx context.Context, req *SwapRequest, opts ...grpc.CallOption) (*SwapTxResponse, error)
+	GetTokenInfo(ctx context.Context, req *TokenInfoRequest, opts ...grpc.CallOption) (*TokenInfoResponse, error)
+	GetBalance(ctx context.Context, req *BalanceRequest, opts ...grpc.CallOption) (*BalanceResponse, error)
 }
 
 // MarketDataService_SubscribeMarketDataClient is the stream client interface

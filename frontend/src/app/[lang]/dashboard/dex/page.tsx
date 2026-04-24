@@ -106,12 +106,12 @@ export default function DexPage() {
   if (dexEnabled === false) {
     return (
       <div className="space-y-4">
-        <Card variant="elevated" className="p-12 text-center">
-          <AlertTriangle className="w-16 h-16 text-yellow-500 mx-auto mb-4" />
-          <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
+        <Card variant="elevated" className="p-8 sm:p-12 text-center">
+          <AlertTriangle className="w-12 h-12 sm:w-16 sm:h-16 text-yellow-500 mx-auto mb-4" />
+          <h2 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white mb-2">
             DEX Trading is Disabled
           </h2>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
+          <p className="text-sm text-gray-500 dark:text-gray-400 mb-6 max-w-md mx-auto">
             DEX trading features are currently disabled. This may be due to configuration (DEX_ENABLED=false) or the feature is not yet deployed.
           </p>
           <Button
@@ -130,7 +130,7 @@ export default function DexPage() {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-gradient-to-br from-purple-100 to-blue-100 dark:from-purple-900/30 dark:to-blue-900/30 rounded-lg">
             <ArrowLeftRight className="w-5 h-5 text-purple-600" />
@@ -156,7 +156,7 @@ export default function DexPage() {
       <Tabs tabs={tabItems} activeTab={activeTab} onChange={(id) => setActiveTab(id as typeof activeTab)} />
 
       {/* Tab Content */}
-      <div className="max-w-xl mx-auto">
+      <div className="w-full max-w-xl sm:max-w-2xl lg:max-w-3xl mx-auto">
         {activeTab === 'swap' && (
           <DexSwap
             chains={chains}

@@ -101,3 +101,80 @@ message StopBotResponse {
   bool success = 1;
   string message = 2;
 }
+
+// DEX Service - DEX trading operations from Python to Go
+service DexService {
+  rpc GetQuote(GetQuoteRequest) returns (QuoteResponse) {}
+  rpc Swap(SwapRequest) returns (SwapTxResponse) {}
+  rpc GetTokenInfo(TokenInfoRequest) returns (TokenInfoResponse) {}
+  rpc GetBalance(BalanceRequest) returns (BalanceResponse) {}
+}
+
+// DEX Messages
+message GetQuoteRequest {
+  string token_in = 1;
+  string token_out = 2;
+  string amount_in = 3;       // Decimal string (big.Int)
+  double slippage_pct = 4;
+  bool best_route = 5;
+}
+
+message QuoteResponse {
+  string token_in_address = 1;
+  string token_out_address = 2;
+  string token_in_symbol = 3;
+  string token_out_symbol = 4;
+  string amount_in = 5;
+  string amount_out = 6;
+  string amount_out_min = 7;
+  double price_impact = 8;
+  string minimum_received = 9;
+  uint64 gas_estimate = 10;
+  repeated string route = 11;
+  string dex_provider = 12;
+  string error = 13;
+}
+
+message SwapRequest {
+  string token_in_address = 1;
+  string token_out_address = 2;
+  string amount_in = 3;         // Decimal string (big.Int)
+  string amount_out_min = 4;
+  string recipient = 5;
+  double slippage_pct = 6;
+  string deadline = 7;          // Decimal string (big.Int)
+}
+
+message SwapTxResponse {
+  string tx_hash = 1;
+  uint64 block_number = 2;
+  uint64 gas_used = 3;
+  string gas_price = 4;
+  string amount_in = 5;
+  string amount_out = 6;
+  string status = 7;
+  string error = 8;
+}
+
+message TokenInfoRequest {
+  string token_address = 1;
+}
+
+message TokenInfoResponse {
+  string address = 1;
+  string symbol = 2;
+  string name = 3;
+  uint32 decimals = 4;
+  string logo_uri = 5;
+  string error = 6;
+}
+
+message BalanceRequest {
+  string token_address = 1;     // Empty for native balance
+  string user_address = 2;
+}
+
+message BalanceResponse {
+  string balance = 1;           // Decimal string (big.Int)
+  string error = 2;
+}

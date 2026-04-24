@@ -3,17 +3,19 @@ package grpcserver
 import (
 	"context"
 	"fmt"
-	"trading-bot-system/backend/internal/logger"
 	"net"
 	"sync"
 	"time"
+	"trading-bot-system/backend/internal/adapter/dex"
+	"trading-bot-system/backend/internal/logger"
+
+	"trading-bot-system/backend/internal/domain/model"
+	"trading-bot-system/backend/internal/port/input"
+	"trading-bot-system/backend/internal/port/output/pb"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"trading-bot-system/backend/internal/domain/model"
-	"trading-bot-system/backend/internal/port/input"
-	"trading-bot-system/backend/internal/port/output/pb"
 )
 
 // GRPCServer implements the gRPC server for inter-service communication
@@ -21,15 +23,17 @@ type GRPCServer struct {
 	pb.UnimplementedOrderExecutionServiceServer
 	pb.UnimplementedBotStatusServiceServer
 	pb.UnimplementedMarketDataServiceServer
+	pb.UnimplementedDexServiceServer
 
-	orderHandler    input.OrderHandler
-	botHandler      input.BotHandler
+	orderHandler      input.OrderHandler
+	botHandler        input.BotHandler
 	marketDataHandler input.MarketDataHandler
-	
+	dexGRPC           *dexGRPCServer
+
 	server *grpc.Server
 	port   string
 	mu     sync.Mutex
-	
+
 	// Market data subscribers
 	subscribers map[chan *pb.MarketData]bool
 	subMu       sync.RWMutex
@@ -41,13 +45,15 @@ func NewGRPCServer(
 	orderHandler input.OrderHandler,
 	botHandler input.BotHandler,
 	marketDataHandler input.MarketDataHandler,
+	dexManager *dex.DEXManager,
 ) *GRPCServer {
 	return &GRPCServer{
-		port:            port,
-		orderHandler:    orderHandler,
-		botHandler:      botHandler,
+		port:              port,
+		orderHandler:      orderHandler,
+		botHandler:        botHandler,
 		marketDataHandler: marketDataHandler,
-		subscribers:     make(map[chan *pb.MarketData]bool),
+		dexGRPC:           newDexGRPCServer(dexManager),
+		subscribers:       make(map[chan *pb.MarketData]bool),
 	}
 }
 
@@ -67,6 +73,7 @@ func (s *GRPCServer) Start() error {
 	pb.RegisterOrderExecutionServiceServer(s.server, s)
 	pb.RegisterBotStatusServiceServer(s.server, s)
 	pb.RegisterMarketDataServiceServer(s.server, s)
+	pb.RegisterDexServiceServer(s.server, s.dexGRPC)
 
 	logger.Info("Starting gRPC server", "port", s.port)
 
@@ -212,7 +219,7 @@ func (s *GRPCServer) SubscribeMarketData(req *pb.SubscribeRequest, stream pb.Mar
 
 	// Create channel for this subscriber
 	ch := make(chan *pb.MarketData, 100)
-	
+
 	s.subMu.Lock()
 	s.subscribers[ch] = true
 	s.subMu.Unlock()
@@ -273,9 +280,9 @@ func (s *GRPCServer) unaryInterceptor(
 	handler grpc.UnaryHandler,
 ) (interface{}, error) {
 	start := time.Now()
-	
+
 	resp, err := handler(ctx, req)
-	
+
 	duration := time.Since(start)
 	logger.Info("gRPC unary request completed", "method", info.FullMethod, "duration", duration)
 
@@ -294,6 +301,6 @@ func (s *GRPCServer) streamInterceptor(
 
 	duration := time.Since(start)
 	logger.Info("gRPC stream request completed", "method", info.FullMethod, "duration", duration)
-	
+
 	return err
 }

@@ -133,6 +133,7 @@ export default function DashboardLayout({
     { id: 'portfolio', label: 'Go to Portfolio', action: () => router.push(`/${locale}/dashboard/portfolio`), shortcut: 'G P' },
     { id: 'wallet', label: 'Go to Wallet', action: () => router.push(`/${locale}/dashboard/wallet`), shortcut: 'G W' },
     { id: 'strategy', label: 'Go to Strategy', action: () => router.push(`/${locale}/dashboard/strategy`), shortcut: 'G S' },
+    { id: 'dex', label: 'Go to DEX Trading', action: () => router.push(`/${locale}/dashboard/dex`) },
     { id: 'grid-trading', label: 'Go to Grid Trading', action: () => router.push(`/${locale}/dashboard/grid-trading`) },
     { id: 'dca', label: 'Go to DCA Bot', action: () => router.push(`/${locale}/dashboard/dca`) },
     { id: 'copy-trading', label: 'Go to Copy Trading', action: () => router.push(`/${locale}/dashboard/copy-trading`) },

@@ -6,6 +6,8 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"trading-bot-system/backend/internal/adapter/dex"
@@ -38,9 +40,16 @@ func NewDexService(dexManager *dex.DEXManager, walletSvc *WalletService, pool *p
 }
 
 // SwapTokens executes a token swap
-func (s *DexService) SwapTokens(ctx context.Context, userID, tokenIn, tokenOut string, amountIn *big.Int, slippagePct float64) (*dex.SwapResult, error) {
+func (s *DexService) SwapTokens(ctx context.Context, userID, walletID, tokenIn, tokenOut string, amountIn *big.Int, slippagePct float64) (*dex.SwapResult, error) {
 	if !s.dexManager.IsEnabled() {
 		return nil, fmt.Errorf("DEX trading is disabled")
+	}
+
+	// Load wallet for this operation
+	if walletID != "" {
+		if err := s.walletSvc.LoadWalletById(ctx, userID, walletID); err != nil {
+			return nil, fmt.Errorf("failed to load wallet: %w", err)
+		}
 	}
 
 	// Get user's wallet address
@@ -86,6 +95,56 @@ func (s *DexService) SwapTokens(ctx context.Context, userID, tokenIn, tokenOut s
 		"amount_in", amountIn,
 		"amount_out_min", quote.AmountOutMin,
 		"provider", quote.DEXProvider,
+	)
+
+	return result, nil
+}
+
+// ApproveToken approves a token for the router to spend
+func (s *DexService) ApproveToken(ctx context.Context, userID, walletID, tokenAddress string, amount *big.Int) (*dex.SwapResult, error) {
+	if !s.dexManager.IsEnabled() {
+		return nil, fmt.Errorf("DEX trading is disabled")
+	}
+
+	if walletID != "" {
+		if err := s.walletSvc.LoadWalletById(ctx, userID, walletID); err != nil {
+			return nil, fmt.Errorf("failed to load wallet: %w", err)
+		}
+	}
+
+	walletAddr := s.walletSvc.GetAddress()
+	if walletAddr.Hex() == "" {
+		return nil, fmt.Errorf("wallet not loaded")
+	}
+
+	// Get the router address from config
+	chainCfg := s.dexManager.GetChainConfig()
+	if chainCfg == nil {
+		return nil, fmt.Errorf("chain config not found")
+	}
+
+	dexCfg := s.dexManager.GetConfig()
+	routerCfg, ok := dexCfg.DEXRouters[dexCfg.DefaultDEX]
+	if !ok {
+		return nil, fmt.Errorf("router config not found for %s", dexCfg.DefaultDEX)
+	}
+
+	approveParams := &dex.ApproveParams{
+		TokenAddress: tokenAddress,
+		Spender:      routerCfg.RouterAddress,
+		Amount:       amount,
+	}
+
+	result, err := s.dexManager.ApproveToken(ctx, approveParams)
+	if err != nil {
+		return nil, fmt.Errorf("approve failed: %w", err)
+	}
+
+	logger.Info("DEX approve executed",
+		"user_id", userID,
+		"token", tokenAddress,
+		"spender", routerCfg.RouterAddress,
+		"amount", amount,
 	)
 
 	return result, nil
@@ -228,6 +287,104 @@ func (s *DexService) GetNativeBalance(ctx context.Context, userAddress string) (
 // GetTokenInfo returns token information
 func (s *DexService) GetTokenInfo(ctx context.Context, tokenAddress string) (*dex.Token, error) {
 	return s.dexManager.GetTokenInfo(ctx, tokenAddress)
+}
+
+// CheckAllowance returns the approved allowance for a token
+func (s *DexService) CheckAllowance(ctx context.Context, tokenAddress, owner, spender string) (*big.Int, error) {
+	return s.dexManager.CheckAllowance(ctx, tokenAddress, owner, spender)
+}
+
+// SaveTransaction records a swap transaction to the database
+func (s *DexService) SaveTransaction(ctx context.Context, userID, walletID, txHash, dexProvider, tokenInAddr, tokenOutAddr, tokenInAmount string, status string) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO dex_swap_history (user_id, wallet_id, tx_hash, dex_provider, chain_id, token_in_address, token_out_address, token_in_amount, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		ON CONFLICT (tx_hash) DO UPDATE SET status = $9
+	`, userID, walletID, txHash, dexProvider, s.cfg.DefaultChain, tokenInAddr, tokenOutAddr, tokenInAmount, status)
+	return err
+}
+
+// GetTransactionHistory returns recent transactions for a user
+func (s *DexService) GetTransactionHistory(ctx context.Context, userID string, limit int) ([]map[string]interface{}, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT tx_hash, dex_provider, token_in_address, token_out_address, token_in_amount, token_out_amount, status, created_at, confirmed_at
+		FROM dex_swap_history
+		WHERE user_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2
+	`, userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query transaction history: %w", err)
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var txHash, dexProvider, tokenInAddr, tokenOutAddr, tokenInAmount, status string
+		var tokenOutAmount, confirmedAt interface{}
+		var createdAt interface{}
+		err := rows.Scan(&txHash, &dexProvider, &tokenInAddr, &tokenOutAddr, &tokenInAmount, &tokenOutAmount, &status, &createdAt, &confirmedAt)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan transaction: %w", err)
+		}
+		results = append(results, map[string]interface{}{
+			"tx_hash":         txHash,
+			"dex_provider":    dexProvider,
+			"token_in":        map[string]string{"address": tokenInAddr, "amount": tokenInAmount},
+			"token_out":       map[string]string{"address": tokenOutAddr, "amount": fmt.Sprintf("%v", tokenOutAmount)},
+			"status":          status,
+			"created_at":      createdAt,
+			"confirmed_at":    confirmedAt,
+		})
+	}
+	return results, nil
+}
+
+// GetTransactionStatus returns the on-chain status of a transaction
+func (s *DexService) GetTransactionStatus(ctx context.Context, txHash string) (map[string]interface{}, error) {
+	if !s.dexManager.IsEnabled() {
+		return nil, fmt.Errorf("DEX trading is disabled")
+	}
+
+	client := s.dexManager.GetClient()
+	if client == nil {
+		return nil, fmt.Errorf("blockchain client not available")
+	}
+
+	hash := common.HexToHash(txHash)
+	receipt, err := client.TransactionReceipt(ctx, hash)
+	if err != nil {
+		// Transaction not yet mined
+		return map[string]interface{}{"status": "pending"}, nil
+	}
+
+	// Get the block number of the latest block for confirmations
+	header, err := client.HeaderByNumber(ctx, nil)
+	if err != nil {
+		return map[string]interface{}{
+			"status":      "confirmed",
+			"blockNumber": receipt.BlockNumber.Uint64(),
+		}, nil
+	}
+
+	confirmations := uint64(0)
+	if header.Number.Uint64() >= receipt.BlockNumber.Uint64() {
+		confirmations = header.Number.Uint64() - receipt.BlockNumber.Uint64()
+	}
+
+	txStatus := "confirmed"
+	if receipt.Status == types.ReceiptStatusFailed {
+		txStatus = "failed"
+	}
+
+	return map[string]interface{}{
+		"status":        txStatus,
+		"blockNumber":   receipt.BlockNumber.Uint64(),
+		"confirmations": confirmations,
+	}, nil
 }
 
 // GetDEXConfig returns the DEX configuration

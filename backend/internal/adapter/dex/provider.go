@@ -94,6 +94,13 @@ type GasEstimate struct {
 	GasCostUSD *big.Int `json:"gas_cost_usd"`
 }
 
+// ApproveParams contains parameters for token approval
+type ApproveParams struct {
+	TokenAddress string   `json:"token_address"`
+	Spender      string   `json:"spender"` // Router address
+	Amount       *big.Int `json:"amount"`
+}
+
 // Provider defines the interface that all DEX providers must implement
 type Provider interface {
 	// GetQuote returns a quote for a token swap
@@ -101,6 +108,9 @@ type Provider interface {
 
 	// Swap executes a token swap
 	Swap(ctx context.Context, params *SwapParams) (*SwapResult, error)
+
+	// ApproveToken approves a token for the router to spend
+	ApproveToken(ctx context.Context, params *ApproveParams) (*SwapResult, error)
 
 	// GetLiquidityPools returns all pools where the user has liquidity
 	GetLiquidityPools(ctx context.Context, userAddress string) ([]LiquidityPosition, error)
@@ -125,6 +135,9 @@ type Provider interface {
 
 	// GetTokenInfo returns information about an ERC20 token
 	GetTokenInfo(ctx context.Context, tokenAddress string) (*Token, error)
+
+	// CheckAllowance returns the approved allowance for a token
+	CheckAllowance(ctx context.Context, tokenAddress, owner, spender string) (*big.Int, error)
 
 	// GetProvider returns the DEX provider name
 	GetProvider() config.DEXProvider

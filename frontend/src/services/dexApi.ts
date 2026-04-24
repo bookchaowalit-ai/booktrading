@@ -62,10 +62,9 @@ export interface ImportWalletRequest {
 
 export interface BalanceInfo {
   address: string;
-  chain: string;
-  nativeBalance: string;
-  nativeSymbol: string;
-  tokens: TokenBalance[];
+  native_balance: string;
+  native_symbol: string;
+  token_balances: Record<string, string>;
 }
 
 export interface TokenBalance {
@@ -85,21 +84,16 @@ export interface QuoteRequest {
 }
 
 export interface QuoteResponse {
-  amountOut: string;
-  priceImpact: number;
-  minimumReceived: string;
-  gasEstimate: string;
-  route: RouteHop[];
-  dexProvider: string;
-  exchangeRate: string;
-}
-
-export interface RouteHop {
-  dex: string;
-  tokenIn: string;
-  tokenOut: string;
-  amountIn: string;
-  amountOut: string;
+  token_in: { address: string; symbol: string; name: string; decimals: number };
+  token_out: { address: string; symbol: string; name: string; decimals: number };
+  amount_in: string;
+  amount_out: string;
+  amount_out_min: string;
+  price_impact: number;
+  minimum_received: string;
+  gas_estimate: number;
+  route: string[];
+  dex_provider: string;
 }
 
 export interface SwapRequest {
@@ -112,12 +106,14 @@ export interface SwapRequest {
 }
 
 export interface SwapResponse {
-  txHash: string;
-  amountOut: string;
-  route: RouteHop[];
-  dexProvider: string;
-  gasUsed: string;
-  timestamp: string;
+  tx_hash: string;
+  amount_in: string;
+  amount_out: string;
+  gas_used: number;
+  gas_price: string;
+  status: string;
+  dex_provider: string;
+  block_number: number;
 }
 
 export interface LiquidityPosition {
@@ -148,13 +144,14 @@ export interface RemoveLiquidityRequest {
 }
 
 export interface ImpermanentLossResult {
-  token0: string;
-  token1: string;
-  priceRatioChange: number;
-  impermanentLoss: number;
-  valueIfHeld: number;
-  valueInPool: number;
-  loss: number;
+  il_percentage: number;
+  current_value_usd: number;
+  hold_value_usd: number;
+  loss_usd: number;
+  token0_ratio: number;
+  fees_earned_usd: number;
+  net_result_usd: number;
+  is_profitable: boolean;
 }
 
 // ── API Methods ────────────────────────────────────────────────────────────────
@@ -211,6 +208,15 @@ export const dexApi = {
     return response.json();
   },
 
+  async exportWallet(walletId: string): Promise<{ privateKey: string; address: string }> {
+    const response = await apiFetch(`${API_BASE_URL}/api/dex/wallets/${encodeURIComponent(walletId)}/export`);
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ error: 'Failed to export wallet' }));
+      throw new Error(err.error || 'Failed to export wallet');
+    }
+    return response.json();
+  },
+
   async getBalance(address: string): Promise<BalanceInfo> {
     const response = await apiFetch(`${API_BASE_URL}/api/dex/balance?address=${encodeURIComponent(address)}`);
     if (!response.ok) throw new Error('Failed to fetch balance');
@@ -238,11 +244,33 @@ export const dexApi = {
   async swap(req: SwapRequest): Promise<SwapResponse> {
     const response = await apiFetch(`${API_BASE_URL}/api/dex/swap`, {
       method: 'POST',
-      body: JSON.stringify(req),
+      body: JSON.stringify({ token_in: req.tokenIn, token_out: req.tokenOut, amount_in: req.amountIn, slippage_pct: req.slippage }),
     });
     if (!response.ok) {
       const err = await response.json().catch(() => ({ error: 'Swap failed' }));
       throw new Error(err.error || 'Swap failed');
+    }
+    return response.json();
+  },
+
+  // ── Transaction Status ─────────────────────────────────────────────────
+
+  async getTransactionStatus(txHash: string): Promise<{ status: 'pending' | 'confirmed' | 'failed'; blockNumber?: number; confirmations?: number }> {
+    const response = await apiFetch(`${API_BASE_URL}/api/dex/tx/${encodeURIComponent(txHash)}/status`);
+    if (!response.ok) return { status: 'pending' };
+    return response.json();
+  },
+
+  // ── Token Approval ───────────────────────────────────────────────────────
+
+  async approveToken(req: { walletId: string; tokenAddress: string; amount: string }): Promise<{ txHash: string }> {
+    const response = await apiFetch(`${API_BASE_URL}/api/dex/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ token_address: req.tokenAddress, amount: req.amount }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ error: 'Approval failed' }));
+      throw new Error(err.error || 'Approval failed');
     }
     return response.json();
   },
@@ -270,7 +298,7 @@ export const dexApi = {
   async removeLiquidity(req: RemoveLiquidityRequest): Promise<{ txHash: string; amount0: string; amount1: string }> {
     const response = await apiFetch(`${API_BASE_URL}/api/dex/liquidity/remove`, {
       method: 'POST',
-      body: JSON.stringify(req),
+      body: JSON.stringify({ pool_address: req.pool, lp_amount: req.lpAmount }),
     });
     if (!response.ok) {
       const err = await response.json().catch(() => ({ error: 'Failed to remove liquidity' }));
@@ -280,18 +308,28 @@ export const dexApi = {
   },
 
   async calculateImpermanentLoss(
-    token0: string,
-    token1: string,
-    initialPriceRatio: number,
-    currentPriceRatio: number
+    priceRatio: number,
+    initialDeposit: number,
+    feeAPR: number,
+    daysHeld: number
   ): Promise<ImpermanentLossResult> {
     const response = await apiFetch(`${API_BASE_URL}/api/dex/impermanent-loss`, {
       method: 'POST',
-      body: JSON.stringify({ token0, token1, initialPriceRatio, currentPriceRatio }),
+      body: JSON.stringify({ price_ratio: priceRatio, initial_deposit_usd: initialDeposit, fee_apr: feeAPR, days_held: daysHeld }),
     });
     if (!response.ok) {
       const err = await response.json().catch(() => ({ error: 'Failed to calculate IL' }));
       throw new Error(err.error || 'Failed to calculate impermanent loss');
+    }
+    return response.json();
+  },
+
+  // ── Token Info ───────────────────────────────────────────────────────────
+
+  async getTokenInfo(address: string): Promise<{ address: string; symbol: string; name: string; decimals: number }> {
+    const response = await apiFetch(`${API_BASE_URL}/api/dex/token?address=${encodeURIComponent(address)}`);
+    if (!response.ok) {
+      throw new Error('Failed to fetch token info');
     }
     return response.json();
   },

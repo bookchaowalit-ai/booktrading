@@ -182,12 +182,24 @@ func main() {
 		netWorthHistoryRepo,
 	)
 
+	// DEX/AMM Trading (initialized early for gRPC server)
+	dexManager := dex.NewDEXManager(db.Pool, &cfg.Dex)
+	dexCtx, dexCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := dexManager.Initialize(dexCtx); err != nil {
+		logger.Info("DEX manager initialization", "error", err)
+	}
+	dexCancel()
+	walletService := service.NewWalletService(db.Pool, &cfg.Dex)
+	txSigner := service.NewTxSigner(walletService)
+	dexManager.SetSigner(txSigner)
+
 	// Initialize gRPC server
 	grpcServer := grpcserver.NewGRPCServer(
 		cfg.GRPC.Port,
 		orderService,
 		botService,
 		marketDataService,
+		dexManager,
 	)
 
 	// Initialize new feature services
@@ -382,14 +394,7 @@ func main() {
 	rebalancingHandler := httpadapter.NewRebalancingHandler(rebalancingService, authHandler)
 	rebalancingHandler.RegisterRoutes(router.Mux())
 
-	// DEX/AMM Trading
-	dexManager := dex.NewDEXManager(db.Pool, &cfg.Dex)
-	dexCtx, dexCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	if err := dexManager.Initialize(dexCtx); err != nil {
-		logger.Info("DEX manager initialization", "error", err)
-	}
-	dexCancel()
-	walletService := service.NewWalletService(db.Pool, &cfg.Dex)
+	// DEX/AMM HTTP routes (dexManager already initialized above)
 	dexService := service.NewDexService(dexManager, walletService, db.Pool, &cfg.Dex)
 	dexHandler := httpadapter.NewDexHandler(dexService, walletService, authHandler)
 	dexHandler.RegisterRoutes(router.Mux())

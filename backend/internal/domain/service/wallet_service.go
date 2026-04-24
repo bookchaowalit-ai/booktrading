@@ -25,22 +25,22 @@ import (
 
 // Wallet represents a DEX wallet
 type Wallet struct {
-	ID          string    `json:"id"`
-	UserID      string    `json:"user_id"`
-	Address     string    `json:"address"`
-	ChainID     int64     `json:"chain_id"`
-	ChainName   string    `json:"chain_name"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	Address   string    `json:"address"`
+	ChainID   int64     `json:"chain_id"`
+	ChainName string    `json:"chain_name"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // WalletBalance represents wallet balance information
 type WalletBalance struct {
-	Address        string     `json:"address"`
-	NativeBalance  *big.Int   `json:"native_balance"`
-	NativeSymbol   string     `json:"native_symbol"`
-	TokenBalances  map[string]*big.Int `json:"token_balances"`
-	USDEquivalent  float64    `json:"usd_equivalent"`
+	Address       string              `json:"address"`
+	NativeBalance *big.Int            `json:"native_balance"`
+	NativeSymbol  string              `json:"native_symbol"`
+	TokenBalances map[string]*big.Int `json:"token_balances"`
+	USDEquivalent float64             `json:"usd_equivalent"`
 }
 
 // WalletService manages DEX wallets (creation, import, signing, transactions)
@@ -204,6 +204,54 @@ func (s *WalletService) LoadWallet(ctx context.Context, userID, address string) 
 
 	logger.Info("DEX wallet loaded for signing", "address", s.address.Hex())
 	return nil
+}
+
+// LoadWalletById loads a wallet by its database ID
+func (s *WalletService) LoadWalletById(ctx context.Context, userID, walletID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var encryptedKey, publicKeyHex string
+	err := s.pool.QueryRow(ctx, `
+		SELECT private_key_encrypted, public_key FROM dex_wallets
+		WHERE id = $1 AND user_id = $2
+	`, walletID, userID).Scan(&encryptedKey, &publicKeyHex)
+	if err != nil {
+		return fmt.Errorf("wallet not found: %w", err)
+	}
+
+	privateKey, err := s.decryptPrivateKey(encryptedKey)
+	if err != nil {
+		return fmt.Errorf("failed to decrypt private key: %w", err)
+	}
+
+	s.privateKey = privateKey
+	s.address = crypto.PubkeyToAddress(privateKey.PublicKey)
+
+	logger.Info("DEX wallet loaded by ID", "wallet_id", walletID, "address", s.address.Hex())
+	return nil
+}
+
+// ExportWallet returns the decrypted private key for a wallet
+func (s *WalletService) ExportWallet(ctx context.Context, userID, walletID string) (string, error) {
+	var encryptedKey, address string
+	err := s.pool.QueryRow(ctx, `
+		SELECT private_key_encrypted, address FROM dex_wallets
+		WHERE id = $1 AND user_id = $2
+	`, walletID, userID).Scan(&encryptedKey, &address)
+	if err != nil {
+		return "", fmt.Errorf("wallet not found: %w", err)
+	}
+
+	// Decrypt private key
+	privateKey, err := s.decryptPrivateKey(encryptedKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to decrypt private key: %w", err)
+	}
+
+	privateKeyHex := hex.EncodeToString(crypto.FromECDSA(privateKey))
+	logger.Info("DEX wallet exported", "user_id", userID, "address", address)
+	return privateKeyHex, nil
 }
 
 // GetAddress returns the loaded wallet address

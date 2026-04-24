@@ -5,8 +5,9 @@
 'use client';
 
 import { useState, useCallback, useEffect } from 'react';
-import { Wallet, Plus, Download, Key, RefreshCw, Copy, ExternalLink, Trash2, Loader2 } from 'lucide-react';
+import { Wallet, Plus, Download, Key, RefreshCw, Copy, ExternalLink, Trash2, Loader2, Eye, EyeOff, AlertTriangle, X } from 'lucide-react';
 import { dexApi, type WalletInfo, type BalanceInfo, type ChainInfo, type TokenBalance } from '@/services/dexApi';
+import { fetchTokenPrices, getTokenPrice, formatUSD } from '@/services/tokenPrices';
 import { useToast } from '@/components/ui/Toast';
 import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
@@ -49,6 +50,14 @@ export default function DexWallet({
   // Load wallet (decrypt for signing)
   const [loadingWallet, setLoadingWallet] = useState<string | null>(null);
 
+  // Export wallet
+  const [exportingWallet, setExportingWallet] = useState<string | null>(null);
+  const [exportedKey, setExportedKey] = useState<string | null>(null);
+  const [showExportedKey, setShowExportedKey] = useState(false);
+
+  // Import warning acknowledgment
+  const [importWarningAcknowledged, setImportWarningAcknowledged] = useState(false);
+
   // Balance
   const [balance, setBalance] = useState<BalanceInfo | null>(null);
   const [loadingBalance, setLoadingBalance] = useState(false);
@@ -63,11 +72,18 @@ export default function DexWallet({
   useEffect(() => {
     if (loadedWallet) {
       loadBalance(loadedWallet.address);
+      fetchTokenPrices();
     } else {
       setBalance(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadedWallet]);
+
+  // Refresh prices every 30 seconds
+  useEffect(() => {
+    const timer = setInterval(() => fetchTokenPrices(), 30_000);
+    return () => clearInterval(timer);
+  }, []);
 
   const loadWallets = useCallback(async () => {
     setLoadingWallets(true);
@@ -149,6 +165,20 @@ export default function DexWallet({
       setLoadingWallet(null);
     }
   }, [onWalletLoaded, success, showError]);
+
+  const handleExportWallet = useCallback(async (wallet: WalletInfo) => {
+    setExportingWallet(wallet.id);
+    try {
+      const result = await dexApi.exportWallet(wallet.id);
+      setExportedKey(result.privateKey);
+      setShowExportedKey(false);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to export wallet';
+      showError(msg);
+    } finally {
+      setExportingWallet(null);
+    }
+  }, [success, showError]);
 
   const handleCopyAddress = (address: string) => {
     navigator.clipboard.writeText(address).then(() => {
@@ -253,41 +283,70 @@ export default function DexWallet({
             <Key className="w-4 h-4" />
             Import Wallet by Private Key
           </h4>
-          <div className="space-y-3">
-            <div>
-              <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
-                Private Key (hex)
-              </label>
-              <input
-                type="password"
-                placeholder="0x..."
-                value={importPrivateKey}
-                onChange={(e) => setImportPrivateKey(e.target.value)}
-                className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono"
-              />
+
+          {/* Security Warning */}
+          {!importWarningAcknowledged ? (
+            <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg space-y-3">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold text-red-700 dark:text-red-400">
+                    Security Warning
+                  </p>
+                  <ul className="text-xs text-red-600 dark:text-red-400 space-y-1 list-disc list-inside">
+                    <li>Never share your private key with anyone</li>
+                    <li>Anyone with your private key can steal your funds</li>
+                    <li>Make sure you are on the correct website URL</li>
+                    <li>Bookmark this page to avoid phishing sites</li>
+                  </ul>
+                </div>
+              </div>
+              <Button
+                variant="danger"
+                size="sm"
+                fullWidth
+                onClick={() => setImportWarningAcknowledged(true)}
+              >
+                I Understand the Risks
+              </Button>
             </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
-                Label (optional)
-              </label>
-              <input
-                type="text"
-                placeholder="Imported Wallet"
-                value={importLabel}
-                onChange={(e) => setImportLabel(e.target.value)}
-                className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
-              />
+          ) : (
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+                  Private Key (hex)
+                </label>
+                <input
+                  type="password"
+                  placeholder="0x..."
+                  value={importPrivateKey}
+                  onChange={(e) => setImportPrivateKey(e.target.value)}
+                  className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+                  Label (optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Imported Wallet"
+                  value={importLabel}
+                  onChange={(e) => setImportLabel(e.target.value)}
+                  className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+              </div>
+              <Button
+                variant="warning"
+                size="sm"
+                fullWidth
+                onClick={handleImportWallet}
+                isLoading={importing}
+              >
+                Import
+              </Button>
             </div>
-            <Button
-              variant="warning"
-              size="sm"
-              fullWidth
-              onClick={handleImportWallet}
-              isLoading={importing}
-            >
-              Import
-            </Button>
-          </div>
+          )}
         </Card>
       )}
 
@@ -335,39 +394,50 @@ export default function DexWallet({
                 <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
                   {chain?.nativeSymbol || 'Native'}
                 </span>
-                <span className="text-sm font-mono font-bold text-gray-900 dark:text-white">
-                  {formatBalance(balance.nativeBalance)}
-                </span>
+                <div className="text-right">
+                  <span className="text-sm font-mono font-bold text-gray-900 dark:text-white">
+                    {formatBalance(balance.native_balance)}
+                  </span>
+                  {(() => {
+                    const price = getTokenPrice('NATIVE');
+                    const usd = formatUSD(parseFloat(balance.native_balance), price);
+                    return usd ? (
+                      <div className="text-xs text-gray-400 dark:text-gray-500">{usd}</div>
+                    ) : null;
+                  })()}
+                </div>
               </div>
 
               {/* Token Balances */}
-              {balance.tokens.length > 0 && (
+              {Object.keys(balance.token_balances).length > 0 && (
                 <div>
                   <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Tokens</div>
                   <div className="space-y-1">
-                    {balance.tokens
-                      .filter((t) => parseFloat(t.balance) > 0)
-                      .map((t) => (
+                    {Object.entries(balance.token_balances)
+                      .filter(([, bal]) => parseFloat(bal) > 0)
+                      .map(([addr, bal]) => (
                         <div
-                          key={t.address}
+                          key={addr}
                           className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-700/50 rounded-lg"
                         >
                           <div className="flex items-center gap-2">
                             <span className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-100 to-blue-100 dark:from-purple-900/50 dark:to-blue-900/50 flex items-center justify-center text-xs font-bold text-purple-600 dark:text-purple-400">
-                              {t.symbol.slice(0, 2)}
+                              {addr.slice(0, 2)}
                             </span>
-                            <span className="text-sm text-gray-700 dark:text-gray-300">{t.symbol}</span>
+                            <span className="text-sm text-gray-700 dark:text-gray-300">{addr}</span>
                           </div>
-                          <span className="text-sm font-mono text-gray-900 dark:text-white">
-                            {formatBalance(t.balance, t.decimals)}
-                          </span>
+                          <div className="text-right">
+                            <span className="text-sm font-mono text-gray-900 dark:text-white">
+                              {formatBalance(bal)}
+                            </span>
+                          </div>
                         </div>
                       ))}
                   </div>
                 </div>
               )}
 
-              {balance.tokens.filter((t) => parseFloat(t.balance) > 0).length === 0 && (
+              {Object.keys(balance.token_balances).filter((k) => parseFloat(balance.token_balances[k]) > 0).length === 0 && (
                 <div className="text-xs text-gray-400 dark:text-gray-500 text-center py-2">
                   No token balances
                 </div>
@@ -410,11 +480,10 @@ export default function DexWallet({
               return (
                 <div
                   key={w.id}
-                  className={`flex items-center justify-between p-3 rounded-lg border transition-colors ${
-                    isLoaded
-                      ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/10'
-                      : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/30'
-                  }`}
+                  className={`flex items-center justify-between p-3 rounded-lg border transition-colors ${isLoaded
+                    ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/10'
+                    : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/30'
+                    }`}
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-100 to-blue-100 dark:from-purple-900/50 dark:to-blue-900/50 flex items-center justify-center text-xs font-bold text-purple-600 dark:text-purple-400 flex-shrink-0">
@@ -430,7 +499,7 @@ export default function DexWallet({
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 flex-shrink-0">
+                  <div className="flex items-center gap-1 flex-shrink-0">
                     {w.chain && (
                       <Badge variant="info" className="text-[10px]">{w.chain}</Badge>
                     )}
@@ -450,8 +519,16 @@ export default function DexWallet({
                     <button
                       onClick={() => handleCopyAddress(w.address)}
                       className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-400"
+                      title="Copy Address"
                     >
                       <Copy className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={() => handleExportWallet(w)}
+                      className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-400"
+                      title="Export Private Key"
+                    >
+                      {exportingWallet === w.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Eye className="w-3 h-3" />}
                     </button>
                   </div>
                 </div>
@@ -460,6 +537,73 @@ export default function DexWallet({
           </div>
         )}
       </Card>
+
+      {/* Export Key Modal */}
+      {exportedKey && (
+        <div
+          className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+          onClick={() => { setExportedKey(null); setShowExportedKey(false); }}
+        >
+          <div onClick={(e) => e.stopPropagation()}>
+            <Card variant="elevated" className="w-full sm:max-w-sm p-5 rounded-t-xl sm:rounded-xl">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                  <Key className="w-5 h-5 text-yellow-500" />
+                  Private Key
+                </h3>
+                <button
+                  onClick={() => { setExportedKey(null); setShowExportedKey(false); }}
+                  className="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700"
+                >
+                  <X className="w-5 h-5 text-gray-500" />
+                </button>
+              </div>
+
+              <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg mb-4">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+                  <p className="text-xs text-red-600 dark:text-red-400">
+                    Never share your private key. Anyone with this key has full control of your funds.
+                  </p>
+                </div>
+              </div>
+
+              <div className="relative mb-4">
+                <div className="w-full p-3 bg-gray-50 dark:bg-gray-700 rounded-lg font-mono text-xs text-gray-900 dark:text-white break-all">
+                  {showExportedKey ? exportedKey : '••••••••••••••••••••••••••••••••••••••••••••••••••••'}
+                </div>
+                <button
+                  onClick={() => setShowExportedKey(!showExportedKey)}
+                  className="absolute right-2 top-2 p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-400"
+                >
+                  {showExportedKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+
+              <div className="flex gap-2">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => {
+                    navigator.clipboard.writeText(exportedKey);
+                    success('Private key copied to clipboard');
+                  }}
+                >
+                  Copy Key
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => { setExportedKey(null); setShowExportedKey(false); }}
+                >
+                  Close
+                </Button>
+              </div>
+            </Card>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

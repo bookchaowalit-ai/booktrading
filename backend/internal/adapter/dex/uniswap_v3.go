@@ -124,8 +124,105 @@ func (p *UniswapV3Provider) Swap(ctx context.Context, params *SwapParams) (*Swap
 	return p.signAndSend(ctx, p.swapRouterAddr, data, big.NewInt(0), gasEst)
 }
 
+func (p *UniswapV3Provider) CheckAllowance(ctx context.Context, tokenAddress, owner, spender string) (*big.Int, error) {
+	allowanceABI, _ := abi.JSON(strings.NewReader(`[{"inputs":[{"type":"address","name":"owner"},{"type":"address","name":"spender"}],"name":"allowance","outputs":[{"type":"uint256","name":""}],"stateMutability":"view","type":"function"}]`))
+	data, _ := allowanceABI.Pack("allowance", common.HexToAddress(owner), common.HexToAddress(spender))
+	addr := common.HexToAddress(tokenAddress)
+	result, err := p.client.CallContract(ctx, ethereum.CallMsg{To: &addr, Data: data}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check allowance: %w", err)
+	}
+	var allowance *big.Int
+	allowanceABI.UnpackIntoInterface(&allowance, "allowance", result)
+	return allowance, nil
+}
+
+func (p *UniswapV3Provider) ApproveToken(ctx context.Context, params *ApproveParams) (*SwapResult, error) {
+	approveABI, _ := abi.JSON(strings.NewReader(`[{"inputs":[{"type":"address","name":"spender"},{"type":"uint256","name":"amount"}],"name":"approve","outputs":[{"type":"bool","name":""}],"stateMutability":"nonpayable","type":"function"}]`))
+	data, err := approveABI.Pack("approve", common.HexToAddress(params.Spender), params.Amount)
+	if err != nil {
+		return nil, fmt.Errorf("failed to pack approve calldata: %w", err)
+	}
+	tokenAddr := common.HexToAddress(params.TokenAddress)
+	gasEst, err := p.client.EstimateGas(ctx, ethereum.CallMsg{To: &tokenAddr, Data: data})
+	if err != nil {
+		gasEst = 50000
+	}
+	logger.Info("Uniswap V3 approve", "token", params.TokenAddress, "spender", params.Spender, "gas", gasEst)
+	return p.signAndSend(ctx, tokenAddr, data, big.NewInt(0), gasEst)
+}
+
 func (p *UniswapV3Provider) GetLiquidityPools(ctx context.Context, userAddress string) ([]LiquidityPosition, error) {
-	return []LiquidityPosition{}, nil
+	userAddr := common.HexToAddress(userAddress)
+	var positions []LiquidityPosition
+
+	// NPM is ERC721 — get balance first
+	balanceOfABI, _ := abi.JSON(strings.NewReader(`[{"inputs":[{"type":"address","name":"owner"}],"name":"balanceOf","outputs":[{"type":"uint256","name":""}],"stateMutability":"view","type":"function"}]`))
+	tokenOfOwnerABI, _ := abi.JSON(strings.NewReader(`[{"inputs":[{"type":"address","name":"owner"},{"type":"uint256","name":"index"}],"name":"tokenOfOwnerByIndex","outputs":[{"type":"uint256","name":""}],"stateMutability":"view","type":"function"}]`))
+	positionABI, _ := abi.JSON(strings.NewReader(`[{"inputs":[{"type":"uint256","name":"tokenId"}],"name":"positions","outputs":[{"type":"uint96","name":"nonce"},{"type":"address","name":"operator"},{"type":"uint256","name":"tokenId"},{"type":"address","name":"token0"},{"type":"address","name":"token1"},{"type":"uint24","name":"fee"},{"type":"int24","name":"tickLower"},{"type":"int24","name":"tickUpper"},{"type":"uint128","name":"liquidity"},{"type":"uint256","name":"feeGrowthInside0LastX128"},{"type":"uint256","name":"feeGrowthInside1LastX128"},{"type":"uint128","name":"tokensOwed0"},{"type":"uint128","name":"tokensOwed1"}],"stateMutability":"view","type":"function"}]`))
+
+	balData, _ := balanceOfABI.Pack("balanceOf", userAddr)
+	balResult, err := p.client.CallContract(ctx, ethereum.CallMsg{To: &p.positionMgrAddr, Data: balData}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get position count: %w", err)
+	}
+	var posCount *big.Int
+	balanceOfABI.UnpackIntoInterface(&posCount, "balanceOf", balResult)
+	if posCount == nil || posCount.Cmp(big.NewInt(0)) == 0 {
+		return positions, nil
+	}
+
+	for i := uint64(0); i < posCount.Uint64(); i++ {
+		tokenIdxData, _ := tokenOfOwnerABI.Pack("tokenOfOwnerByIndex", userAddr, big.NewInt(int64(i)))
+		tokenIdxResult, err := p.client.CallContract(ctx, ethereum.CallMsg{To: &p.positionMgrAddr, Data: tokenIdxData}, nil)
+		if err != nil {
+			continue
+		}
+		var tokenId *big.Int
+		tokenOfOwnerABI.UnpackIntoInterface(&tokenId, "tokenOfOwnerByIndex", tokenIdxResult)
+
+		posData, _ := positionABI.Pack("positions", tokenId)
+		posResult, err := p.client.CallContract(ctx, ethereum.CallMsg{To: &p.positionMgrAddr, Data: posData}, nil)
+		if err != nil {
+			continue
+		}
+
+		var posDataStruct struct {
+			Nonce                        uint64
+			Operator                     common.Address
+			TokenId                      *big.Int
+			Token0                       common.Address
+			Token1                       common.Address
+			Fee                          uint32
+			TickLower                    int32
+			TickUpper                    int32
+			Liquidity                    uint64
+			FeeGrowthInside0LastX128     *big.Int
+			FeeGrowthInside1LastX128     *big.Int
+			TokensOwed0                  uint64
+			TokensOwed1                  uint64
+		}
+		positionABI.UnpackIntoInterface(&posDataStruct, "positions", posResult)
+
+		if posDataStruct.Liquidity == 0 {
+			continue
+		}
+
+		// Calculate user's share of pool reserves and token amounts
+		token0Info, _ := p.GetTokenInfo(ctx, posDataStruct.Token0.Hex())
+		token1Info, _ := p.GetTokenInfo(ctx, posDataStruct.Token1.Hex())
+
+		positions = append(positions, LiquidityPosition{
+			PoolAddress:   posDataStruct.Token0.Hex(), // V3 uses token0 as pool identifier
+			Token0:        *token0Info,
+			Token1:        *token1Info,
+			LPTokenAmount: tokenId,
+			Token0Amount:  new(big.Int).SetUint64(posDataStruct.TokensOwed0),
+			Token1Amount:  new(big.Int).SetUint64(posDataStruct.TokensOwed1),
+		})
+	}
+
+	return positions, nil
 }
 func (p *UniswapV3Provider) AddLiquidity(ctx context.Context, params *AddLiquidityParams) (*SwapResult, error) {
 	// V3 uses PositionManager for minting positions

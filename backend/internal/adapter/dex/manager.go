@@ -186,6 +186,15 @@ func (m *DEXManager) Swap(ctx context.Context, params *SwapParams) (*SwapResult,
 	return provider.Swap(ctx, params)
 }
 
+// ApproveToken approves a token for the router to spend
+func (m *DEXManager) ApproveToken(ctx context.Context, params *ApproveParams) (*SwapResult, error) {
+	provider, err := m.GetCurrentProvider()
+	if err != nil {
+		return nil, err
+	}
+	return provider.ApproveToken(ctx, params)
+}
+
 // GetLiquidityPools returns all LP positions
 func (m *DEXManager) GetLiquidityPools(ctx context.Context, userAddress string) ([]LiquidityPosition, error) {
 	provider, err := m.GetCurrentProvider()
@@ -256,6 +265,15 @@ func (m *DEXManager) GetTokenInfo(ctx context.Context, tokenAddress string) (*To
 		return nil, err
 	}
 	return provider.GetTokenInfo(ctx, tokenAddress)
+}
+
+// CheckAllowance returns approved allowance for a token
+func (m *DEXManager) CheckAllowance(ctx context.Context, tokenAddress, owner, spender string) (*big.Int, error) {
+	provider, err := m.GetCurrentProvider()
+	if err != nil {
+		return nil, err
+	}
+	return provider.CheckAllowance(ctx, tokenAddress, owner, spender)
 }
 
 // GetClient returns the Ethereum client
