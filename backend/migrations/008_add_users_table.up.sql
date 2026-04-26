@@ -14,9 +14,21 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 
 -- Add foreign key constraint to orders table (was missing)
-ALTER TABLE orders ADD CONSTRAINT fk_orders_user_id
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fk_orders_user_id'
+    ) THEN
+        ALTER TABLE orders ADD CONSTRAINT fk_orders_user_id
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL;
+    END IF;
+END $$;
 
 -- +migrate Down
-ALTER TABLE orders DROP CONSTRAINT IF EXISTS fk_orders_user_id;
+DO $$
+BEGIN
+    ALTER TABLE orders DROP CONSTRAINT IF EXISTS fk_orders_user_id;
+EXCEPTION
+    WHEN undefined_table THEN NULL;
+END $$;
 DROP TABLE IF EXISTS users;

@@ -9,5 +9,5 @@ CREATE TABLE IF NOT EXISTS telegram_users (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
-CREATE INDEX idx_telegram_users_telegram_id ON telegram_users(telegram_id);
-CREATE INDEX idx_telegram_users_authorized ON telegram_users(is_authorized);
+CREATE INDEX IF NOT EXISTS idx_telegram_users_telegram_id ON telegram_users(telegram_id);
+CREATE INDEX IF NOT EXISTS idx_telegram_users_authorized ON telegram_users(is_authorized);

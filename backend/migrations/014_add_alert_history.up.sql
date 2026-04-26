@@ -12,9 +12,9 @@ CREATE TABLE IF NOT EXISTS alert_history (
     error TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
-CREATE INDEX idx_alert_history_type ON alert_history(alert_type);
-CREATE INDEX idx_alert_history_channel ON alert_history(channel);
-CREATE INDEX idx_alert_history_created_at ON alert_history(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_alert_history_type ON alert_history(alert_type);
+CREATE INDEX IF NOT EXISTS idx_alert_history_channel ON alert_history(channel);
+CREATE INDEX IF NOT EXISTS idx_alert_history_created_at ON alert_history(created_at DESC);
 
 -- +migrate Down
 DROP TABLE IF EXISTS alert_history;

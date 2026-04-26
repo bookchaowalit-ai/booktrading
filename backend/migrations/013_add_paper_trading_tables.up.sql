@@ -16,9 +16,9 @@ CREATE TABLE IF NOT EXISTS paper_orders (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     filled_at TIMESTAMPTZ
 );
-CREATE INDEX idx_paper_orders_user_id ON paper_orders(user_id);
-CREATE INDEX idx_paper_orders_symbol ON paper_orders(symbol);
-CREATE INDEX idx_paper_orders_created_at ON paper_orders(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_paper_orders_user_id ON paper_orders(user_id);
+CREATE INDEX IF NOT EXISTS idx_paper_orders_symbol ON paper_orders(symbol);
+CREATE INDEX IF NOT EXISTS idx_paper_orders_created_at ON paper_orders(created_at DESC);
 
 CREATE TABLE IF NOT EXISTS paper_positions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS paper_positions (
     realized_pnl NUMERIC(20, 8) DEFAULT 0,
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
-CREATE INDEX idx_paper_positions_user_id ON paper_positions(user_id);
+CREATE INDEX IF NOT EXISTS idx_paper_positions_user_id ON paper_positions(user_id);
 
 CREATE TABLE IF NOT EXISTS paper_portfolios (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS paper_portfolios (
     max_drawdown NUMERIC(10, 4) DEFAULT 0,
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
-CREATE INDEX idx_paper_portfolios_user_id ON paper_portfolios(user_id);
+CREATE INDEX IF NOT EXISTS idx_paper_portfolios_user_id ON paper_portfolios(user_id);
 
 -- +migrate Down
 DROP TABLE IF EXISTS paper_orders;

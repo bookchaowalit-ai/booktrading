@@ -158,8 +158,9 @@ func (h *BotHandler) StartBot(w http.ResponseWriter, r *http.Request) {
 		json.NewDecoder(r.Body).Decode(&reqBody)
 	}
 
-	if reqBody != nil && reqBody["symbol"] != nil {
+	if reqBody != nil {
 		params = &input.BotStartParams{}
+
 		if v, ok := reqBody["symbol"].(string); ok {
 			params.Symbol = v
 		}
@@ -177,6 +178,34 @@ func (h *BotHandler) StartBot(w http.ResponseWriter, r *http.Request) {
 		}
 		if v, ok := reqBody["investment"].(float64); ok {
 			params.Investment = v
+		}
+		if v, ok := reqBody["botMode"].(string); ok {
+			params.BotMode = v
+		}
+
+		// Parse signal config (nested object)
+		if cfg, ok := reqBody["signalConfig"].(map[string]interface{}); ok {
+			if v, ok := cfg["symbol"].(string); ok {
+				params.SignalConfig.Symbol = v
+			}
+			if v, ok := cfg["riskLevel"].(string); ok {
+				params.SignalConfig.RiskLevel = v
+			}
+			if v, ok := cfg["maxPositionPct"].(float64); ok {
+				params.SignalConfig.MaxPositionPct = v
+			}
+			if v, ok := cfg["stopLossPct"].(float64); ok {
+				params.SignalConfig.StopLossPct = v
+			}
+			if v, ok := cfg["takeProfitPct"].(float64); ok {
+				params.SignalConfig.TakeProfitPct = v
+			}
+			if v, ok := cfg["minStrength"].(float64); ok {
+				params.SignalConfig.MinStrength = v
+			}
+			if v, ok := cfg["quantity"].(float64); ok {
+				params.SignalConfig.Quantity = v
+			}
 		}
 	}
 

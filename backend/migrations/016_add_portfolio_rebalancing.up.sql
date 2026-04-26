@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS rebalance_targets (
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(user_id, symbol)
 );
-CREATE INDEX idx_rebalance_targets_user ON rebalance_targets(user_id);
+CREATE INDEX IF NOT EXISTS idx_rebalance_targets_user ON rebalance_targets(user_id);
 
 CREATE TABLE IF NOT EXISTS rebalance_history (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -21,4 +21,4 @@ CREATE TABLE IF NOT EXISTS rebalance_history (
     status VARCHAR(20) DEFAULT 'COMPLETED',
     executed_at TIMESTAMPTZ DEFAULT NOW()
 );
-CREATE INDEX idx_rebalance_history_user ON rebalance_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_rebalance_history_user ON rebalance_history(user_id);

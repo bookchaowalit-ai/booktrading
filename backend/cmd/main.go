@@ -444,6 +444,38 @@ func main() {
 		}()
 	}
 
+	// Fallback price poller: REST-based polling to feed strategy service when WS is unavailable
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		symbols := []string{"BTCUSDT", "ETHUSDT", "BTCTHB", "ETHTHB"}
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				for _, symbol := range symbols {
+					tickerInfo, err := exchangeManager.GetTicker(ctx, symbol)
+					if err != nil {
+						logger.Info("Price poller: failed to fetch ticker", "symbol", symbol, "error", err)
+						continue
+					}
+					marketData := &model.MarketData{
+						Symbol:    model.TradeSymbol(symbol),
+						Price:     tickerInfo.LastPrice,
+						Volume:    tickerInfo.Volume,
+						Timestamp: time.Now(),
+					}
+					// Publish to Redis so strategy service can analyze
+					if err := redisAdapter.PublishMarketData(ctx, marketData); err != nil {
+						logger.Info("Price poller: failed to publish to Redis", "symbol", symbol, "error", err)
+					}
+				}
+			}
+		}
+	}()
+
 	// Start HTTP/HTTPS server in goroutine
 	go func() {
 		if cfg.Server.TLSCertFile != "" && cfg.Server.TLSKeyFile != "" {

@@ -8,6 +8,8 @@ type TradeSymbol string
 const (
 	BTCUSDT TradeSymbol = "BTCUSDT"
 	ETHUSDT TradeSymbol = "ETHUSDT"
+	BTCTHB  TradeSymbol = "BTCTHB"
+	ETHTHB  TradeSymbol = "ETHTHB"
 )
 
 // OrderSide represents buy or sell

@@ -18,8 +18,8 @@ CREATE TABLE IF NOT EXISTS dca_bots (
     started_at TIMESTAMP WITH TIME ZONE,
     stopped_at TIMESTAMP WITH TIME ZONE
 );
-CREATE INDEX idx_dca_bots_user_id ON dca_bots(user_id);
-CREATE INDEX idx_dca_bots_status ON dca_bots(status);
+CREATE INDEX IF NOT EXISTS idx_dca_bots_user_id ON dca_bots(user_id);
+CREATE INDEX IF NOT EXISTS idx_dca_bots_status ON dca_bots(status);
 
 CREATE TABLE IF NOT EXISTS dca_orders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -34,4 +34,4 @@ CREATE TABLE IF NOT EXISTS dca_orders (
     executed_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
-CREATE INDEX idx_dca_orders_bot_id ON dca_orders(bot_id);
+CREATE INDEX IF NOT EXISTS idx_dca_orders_bot_id ON dca_orders(bot_id);

@@ -4,7 +4,7 @@
 -- DEX wallets table (stores encrypted private keys)
 CREATE TABLE IF NOT EXISTS dex_wallets (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     address VARCHAR(42) NOT NULL UNIQUE,
     chain_id BIGINT NOT NULL,
     private_key_encrypted TEXT NOT NULL,
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS dex_tokens (
 -- DEX liquidity positions
 CREATE TABLE IF NOT EXISTS dex_liquidity_positions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     wallet_id UUID NOT NULL REFERENCES dex_wallets(id) ON DELETE CASCADE,
     pool_address VARCHAR(42) NOT NULL,
     dex_provider VARCHAR(50) NOT NULL,
@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS dex_liquidity_positions (
 -- DEX swap history
 CREATE TABLE IF NOT EXISTS dex_swap_history (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     wallet_id UUID NOT NULL REFERENCES dex_wallets(id) ON DELETE CASCADE,
     tx_hash VARCHAR(66) NOT NULL UNIQUE,
     dex_provider VARCHAR(50) NOT NULL,
@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS dex_swap_history (
 -- DEX add/remove liquidity history
 CREATE TABLE IF NOT EXISTS dex_liquidity_history (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     wallet_id UUID NOT NULL REFERENCES dex_wallets(id) ON DELETE CASCADE,
     tx_hash VARCHAR(66) NOT NULL UNIQUE,
     dex_provider VARCHAR(50) NOT NULL,
@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS dex_liquidity_history (
 -- DEX settings per user
 CREATE TABLE IF NOT EXISTS dex_user_settings (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE UNIQUE,
     default_dex_provider VARCHAR(50) DEFAULT 'uniswap_v3',
     slippage_tolerance NUMERIC(5, 2) DEFAULT 0.5,
     max_price_impact NUMERIC(5, 2) DEFAULT 3.0,
@@ -108,12 +108,12 @@ CREATE TABLE IF NOT EXISTS dex_user_settings (
 );
 
 -- Create indexes
-CREATE INDEX idx_dex_wallets_user_id ON dex_wallets(user_id);
-CREATE INDEX idx_dex_wallets_address ON dex_wallets(address);
-CREATE INDEX idx_dex_liquidity_positions_user_id ON dex_liquidity_positions(user_id);
-CREATE INDEX idx_dex_liquidity_positions_wallet_id ON dex_liquidity_positions(wallet_id);
-CREATE INDEX idx_dex_swap_history_user_id ON dex_swap_history(user_id);
-CREATE INDEX idx_dex_swap_history_wallet_id ON dex_swap_history(wallet_id);
-CREATE INDEX idx_dex_swap_history_tx_hash ON dex_swap_history(tx_hash);
-CREATE INDEX idx_dex_liquidity_history_user_id ON dex_liquidity_history(user_id);
-CREATE INDEX idx_dex_liquidity_history_wallet_id ON dex_liquidity_history(wallet_id);
+CREATE INDEX IF NOT EXISTS idx_dex_wallets_user_id ON dex_wallets(user_id);
+CREATE INDEX IF NOT EXISTS idx_dex_wallets_address ON dex_wallets(address);
+CREATE INDEX IF NOT EXISTS idx_dex_liquidity_positions_user_id ON dex_liquidity_positions(user_id);
+CREATE INDEX IF NOT EXISTS idx_dex_liquidity_positions_wallet_id ON dex_liquidity_positions(wallet_id);
+CREATE INDEX IF NOT EXISTS idx_dex_swap_history_user_id ON dex_swap_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_dex_swap_history_wallet_id ON dex_swap_history(wallet_id);
+CREATE INDEX IF NOT EXISTS idx_dex_swap_history_tx_hash ON dex_swap_history(tx_hash);
+CREATE INDEX IF NOT EXISTS idx_dex_liquidity_history_user_id ON dex_liquidity_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_dex_liquidity_history_wallet_id ON dex_liquidity_history(wallet_id);

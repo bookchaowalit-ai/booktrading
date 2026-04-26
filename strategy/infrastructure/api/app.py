@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from core.domain.models import OrderSide, StrategyConfig, TradeSymbol, OrderSignal
 from core.service.strategy import MultiSymbolStrategy, TradingStrategy, MultiSymbolStrategyWithGRPC
 from core.service.indicators import TechnicalAnalysisService
+from core.service.scoring import CompositeScorer
 from core.service.ai_predictor import AIPredictor, AISignal
 from core.service.strategy_recommender import StrategyRecommender, MarketRegime
 from core.service.anomaly_detector import AnomalyDetector
@@ -93,11 +94,26 @@ class StrategyConfigRequest(BaseModel):
 
 class IndicatorResponse(BaseModel):
     symbol: str
+    # Existing
     rsi: Optional[float] = None
     ema: Optional[float] = None
     sma: Optional[float] = None
     macd: Optional[float] = None
     macd_signal: Optional[float] = None
+    # New
+    bb_upper: Optional[float] = None
+    bb_lower: Optional[float] = None
+    bb_width: Optional[float] = None
+    atr: Optional[float] = None
+    stoch_k: Optional[float] = None
+    stoch_d: Optional[float] = None
+    macd_histogram: Optional[float] = None
+    ema_fast: Optional[float] = None
+    ema_slow: Optional[float] = None
+    ema_cross: Optional[str] = None
+    adx: Optional[float] = None
+    roc: Optional[float] = None
+    obv_trend: Optional[float] = None
 
 
 class SignalResponse(BaseModel):
@@ -166,11 +182,11 @@ async def lifespan(app: FastAPI):
     global strategy, redis_adapter, grpc_client_manager
 
     # Startup
-    redis_host = app.state.config.get("REDIS_HOST", "localhost")
-    redis_port = app.state.config.get("REDIS_PORT", 6379)
-    redis_password = app.state.config.get("REDIS_PASSWORD", "") or None
-    grpc_host = app.state.config.get("GRPC_HOST", "backend")
-    grpc_port = app.state.config.get("GRPC_PORT", 9000)
+    redis_host = app.state.config.get("redis_host", "localhost")
+    redis_port = app.state.config.get("redis_port", 6379)
+    redis_password = app.state.config.get("redis_password") or None
+    grpc_host = app.state.config.get("grpc_host", "backend")
+    grpc_port = app.state.config.get("grpc_port", 9000)
 
     # Initialize gRPC client
     grpc_client_manager = GRPCClientManager(host=grpc_host, port=grpc_port)
@@ -191,8 +207,51 @@ async def lifespan(app: FastAPI):
             return response is not None and response.status != "REJECTED"
         return False
 
+    # Build StrategyConfig from app config (which contains env vars)
+    symbols_str = app.state.config.get("symbols", "BTCUSDT,ETHUSDT")
+    symbol_list = [s.strip() for s in symbols_str.split(",") if s.strip()]
+    trade_symbols = []
+    for sym_str in symbol_list:
+        try:
+            trade_symbols.append(TradeSymbol(sym_str))
+        except ValueError:
+            sym = TradeSymbol.__new__(TradeSymbol, sym_str)
+            sym._name_ = sym_str
+            sym._value_ = sym_str
+            sym._sorted_ = False
+            TradeSymbol._member_map_[sym_str] = sym
+            TradeSymbol._value2member_map_[sym_str] = sym
+            TradeSymbol._member_names_.append(sym_str)
+            trade_symbols.append(sym)
+
+    strategy_config = StrategyConfig(
+        rsi_period=int(app.state.config.get("rsi_period", 14)),
+        ema_period=int(app.state.config.get("ema_period", 14)),
+        rsi_oversold=float(app.state.config.get("rsi_oversold", 30.0)),
+        rsi_overbought=float(app.state.config.get("rsi_overbought", 70.0)),
+        min_signal_strength=float(app.state.config.get("min_signal_strength", 0.5)),
+        weight_trend=float(app.state.config.get("weight_trend", 0.25)),
+        weight_momentum=float(app.state.config.get("weight_momentum", 0.30)),
+        weight_volatility=float(app.state.config.get("weight_volatility", 0.20)),
+        weight_rsi=float(app.state.config.get("weight_rsi", 0.15)),
+        ema_fast_period=int(app.state.config.get("ema_fast_period", 9)),
+        ema_slow_period=int(app.state.config.get("ema_slow_period", 21)),
+        macd_fast=int(app.state.config.get("macd_fast", 12)),
+        macd_slow=int(app.state.config.get("macd_slow", 26)),
+        macd_signal=int(app.state.config.get("macd_signal_period", 9)),
+        bollinger_period=int(app.state.config.get("bollinger_period", 20)),
+        bollinger_std=float(app.state.config.get("bollinger_std", 2.0)),
+        atr_period=int(app.state.config.get("atr_period", 14)),
+        adx_period=int(app.state.config.get("adx_period", 14)),
+        roc_period=int(app.state.config.get("roc_period", 10)),
+        stoch_rsi_period=int(app.state.config.get("stoch_rsi_period", 14)),
+        adx_min_trend=float(app.state.config.get("adx_min_trend", 25.0)),
+        min_composite_score=float(app.state.config.get("min_composite_score", 0.5)),
+        symbols=trade_symbols,
+    )
+
     # Initialize strategy with gRPC order executor
-    strategy = MultiSymbolStrategyWithGRPC(execute_order_via_grpc)
+    strategy = MultiSymbolStrategyWithGRPC(execute_order_via_grpc, config=strategy_config)
 
     # Start market data consumer in background with error handling
     app.state.market_data_task = asyncio.create_task(
@@ -325,6 +384,19 @@ def register_routes(app: FastAPI):
                 sma=ind.sma if ind else None,
                 macd=ind.macd if ind else None,
                 macd_signal=ind.macd_signal if ind else None,
+                bb_upper=ind.bb_upper if ind else None,
+                bb_lower=ind.bb_lower if ind else None,
+                bb_width=ind.bb_width if ind else None,
+                atr=ind.atr if ind else None,
+                stoch_k=ind.stoch_k if ind else None,
+                stoch_d=ind.stoch_d if ind else None,
+                macd_histogram=ind.macd_histogram if ind else None,
+                ema_fast=ind.ema_fast if ind else None,
+                ema_slow=ind.ema_slow if ind else None,
+                ema_cross=ind.ema_cross if ind else None,
+                adx=ind.adx if ind else None,
+                roc=ind.roc if ind else None,
+                obv_trend=ind.obv_trend if ind else None,
             )
             for symbol, ind in indicators.items()
         }
@@ -353,6 +425,19 @@ def register_routes(app: FastAPI):
             sma=current.sma if current else None,
             macd=current.macd if current else None,
             macd_signal=current.macd_signal if current else None,
+            bb_upper=current.bb_upper if current else None,
+            bb_lower=current.bb_lower if current else None,
+            bb_width=current.bb_width if current else None,
+            atr=current.atr if current else None,
+            stoch_k=current.stoch_k if current else None,
+            stoch_d=current.stoch_d if current else None,
+            macd_histogram=current.macd_histogram if current else None,
+            ema_fast=current.ema_fast if current else None,
+            ema_slow=current.ema_slow if current else None,
+            ema_cross=current.ema_cross if current else None,
+            adx=current.adx if current else None,
+            roc=current.roc if current else None,
+            obv_trend=current.obv_trend if current else None,
         )
 
     @app.get("/api/strategy/config", response_model=StrategyConfigRequest)
@@ -408,7 +493,7 @@ def register_routes(app: FastAPI):
     async def get_signals(request: Request):
         """
         Get current trading signals for all symbols.
-        Derives signals from current indicators using the same RSI logic as the live strategy.
+        Uses composite scoring from all indicators.
         """
         if not strategy:
             raise HTTPException(status_code=503, detail="Strategy not initialized")
@@ -418,34 +503,44 @@ def register_routes(app: FastAPI):
 
         for symbol, sym_strategy in strategy.strategies.items():
             indicators = sym_strategy.get_current_indicators(symbol)
-            if indicators is None or indicators.rsi is None:
+            if indicators is None:
                 continue
 
-            rsi = indicators.rsi
-            side: Optional[str] = None
-            reason = ""
+            # Get current price from history
+            history = sym_strategy.get_price_history(symbol)
+            if not history:
+                continue
+            price = history[-1].price
 
-            if rsi < config.rsi_oversold:
+            # Calculate composite score
+            composite_score, breakdown = CompositeScorer.composite(
+                indicators, price, config
+            )
+
+            threshold = config.min_composite_score
+            side: Optional[str] = None
+
+            if composite_score > threshold:
                 side = OrderSide.BUY.value
-                reason = f"RSI oversold ({rsi:.2f} < {config.rsi_oversold})"
-            elif rsi > config.rsi_overbought:
+            elif composite_score < -threshold:
                 side = OrderSide.SELL.value
-                reason = f"RSI overbought ({rsi:.2f} > {config.rsi_overbought})"
 
             if side is None:
                 continue
 
-            # Simple strength calculation based on RSI distance from threshold
-            if side == OrderSide.BUY.value:
-                strength = min(1.0, (config.rsi_oversold - rsi) / config.rsi_oversold)
-            else:
-                strength = min(1.0, (rsi - config.rsi_overbought) / (100 - config.rsi_overbought))
+            # Build reason from breakdown
+            reasons = []
+            for comp in ("trend", "momentum", "volatility", "rsi"):
+                if comp in breakdown:
+                    reasons.append(breakdown[comp].get("reason", ""))
+
+            strength = round(abs(composite_score), 4)
 
             signals.append(SignalResponse(
                 symbol=symbol.value,
                 side=side,
-                strength=round(strength, 4),
-                reason=reason,
+                strength=strength,
+                reason=f"Score={composite_score:.3f}: " + "; ".join(r for r in reasons if r),
             ))
 
         market_sentiment = round(sum(s.strength for s in signals) / len(signals), 4) if signals else 0.0

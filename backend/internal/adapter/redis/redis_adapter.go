@@ -75,7 +75,7 @@ func (r *RedisAdapter) PublishOrderSignal(ctx context.Context, signal *output.Or
 func (r *RedisAdapter) SubscribeOrderSignals(ctx context.Context) (<-chan *output.OrderSignal, error) {
 	pubsub := r.client.Subscribe(ctx, "order_signals")
 
-	// Subscribe to channel
+	// Wait for subscription confirmation
 	_, err := pubsub.Receive(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to subscribe: %w", err)

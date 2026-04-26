@@ -12,9 +12,9 @@ CREATE TABLE IF NOT EXISTS strategy_profiles (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
-CREATE INDEX idx_strategy_profiles_owner ON strategy_profiles(owner_id);
-CREATE INDEX idx_strategy_profiles_public ON strategy_profiles(is_public) WHERE is_public = true;
-CREATE INDEX idx_strategy_profiles_copiers ON strategy_profiles(total_copiers DESC);
+CREATE INDEX IF NOT EXISTS idx_strategy_profiles_owner ON strategy_profiles(owner_id);
+CREATE INDEX IF NOT EXISTS idx_strategy_profiles_public ON strategy_profiles(is_public) WHERE is_public = true;
+CREATE INDEX IF NOT EXISTS idx_strategy_profiles_copiers ON strategy_profiles(total_copiers DESC);
 
 -- Active copy relationships
 CREATE TABLE IF NOT EXISTS copy_relationships (
@@ -26,9 +26,9 @@ CREATE TABLE IF NOT EXISTS copy_relationships (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
-CREATE INDEX idx_copy_relationships_copier ON copy_relationships(copier_id);
-CREATE INDEX idx_copy_relationships_strategy ON copy_relationships(strategy_id);
-CREATE INDEX idx_copy_relationships_active ON copy_relationships(is_active) WHERE is_active = true;
+CREATE INDEX IF NOT EXISTS idx_copy_relationships_copier ON copy_relationships(copier_id);
+CREATE INDEX IF NOT EXISTS idx_copy_relationships_strategy ON copy_relationships(strategy_id);
+CREATE INDEX IF NOT EXISTS idx_copy_relationships_active ON copy_relationships(is_active) WHERE is_active = true;
 
 -- Copy trade log (tracks copied trades)
 CREATE TABLE IF NOT EXISTS copy_trades (
@@ -45,5 +45,5 @@ CREATE TABLE IF NOT EXISTS copy_trades (
     opened_at TIMESTAMPTZ DEFAULT NOW(),
     closed_at TIMESTAMPTZ
 );
-CREATE INDEX idx_copy_trades_relationship ON copy_trades(copy_relationship_id);
-CREATE INDEX idx_copy_trades_status ON copy_trades(status);
+CREATE INDEX IF NOT EXISTS idx_copy_trades_relationship ON copy_trades(copy_relationship_id);
+CREATE INDEX IF NOT EXISTS idx_copy_trades_status ON copy_trades(status);

@@ -20,7 +20,6 @@ import PositionSizingCalculator from '@/components/PositionSizingCalculator';
 import OrderTracking from '@/components/OrderTracking';
 import ActivityFeed from '@/components/ActivityFeed';
 import { api } from '@/services/api';
-import { BotMode } from '@/types';
 import {
   Zap, LayoutDashboard, Settings, Shield, Activity,
   PlayCircle, StopCircle, RefreshCw, ChevronDown,
@@ -65,7 +64,7 @@ export default function TradingPage() {
     return token ? { Authorization: `Bearer ${token}` } : {};
   };
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'config' | 'risk' | 'orders'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'config' | 'signal' | 'risk' | 'orders'>('overview');
   const [isRunning, setIsRunning] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [chartSymbol, setChartSymbol] = useState('BINANCE:BTCUSDT');
@@ -91,8 +90,17 @@ export default function TradingPage() {
     activeOrders: 0,
     profitRate: 0,
   });
-  const [botMode, setBotMode] = useState<BotMode>('AUTO');
+  const [botMode, setBotMode] = useState<'GRID' | 'SIGNAL' | 'AUTO'>('GRID');
   const [currentActivity, setCurrentActivity] = useState<string>('Waiting for bot to start...');
+  const [signalConfig, setSignalConfig] = useState({
+    symbol: 'BTCTHB',
+    riskLevel: 'moderate' as 'conservative' | 'moderate' | 'aggressive',
+    maxPositionPct: 0.25,
+    stopLossPct: 0.05,
+    takeProfitPct: 0.10,
+    minStrength: 0.5,
+    quantity: 0.001,
+  });
 
   /** Derive the quote currency from a trading symbol, e.g. BTCTHB → THB, BTCUSDT → USDT */
   const getQuoteCurrency = (symbol: string): string => {
@@ -230,57 +238,73 @@ export default function TradingPage() {
   };
 
   const handleStartBot = async () => {
-    // Mark all fields as touched to show validation errors
-    setTouchedFields({
-      symbol: true,
-      lowerPrice: true,
-      upperPrice: true,
-      gridLevels: true,
-      investmentAmount: true,
-    });
+    // Validate based on bot mode
+    if (botMode === 'GRID') {
+      setTouchedFields({
+        symbol: true,
+        lowerPrice: true,
+        upperPrice: true,
+        gridLevels: true,
+        investmentAmount: true,
+      });
 
-    // Validate form before submission
-    const validation = validateGridConfig(
-      {
-        symbol: gridConfig.symbol,
-        lowerPrice: gridConfig.lowerPrice,
-        upperPrice: gridConfig.upperPrice,
-        gridLevels: gridConfig.gridLevels,
-        investmentAmount: gridConfig.investmentAmount,
-      },
-      freeQuoteBalance,
-      quoteCurrency
-    );
-
-    if (!validation.isValid) {
-      // Show first error as toast
-      error(validation.errors[0].message);
-      // Switch to config tab to show errors
-      setActiveTab('config');
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/bot/start`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({
+      const validation = validateGridConfig(
+        {
           symbol: gridConfig.symbol,
           lowerPrice: gridConfig.lowerPrice,
           upperPrice: gridConfig.upperPrice,
           gridLevels: gridConfig.gridLevels,
           investmentAmount: gridConfig.investmentAmount,
-          gridType: gridConfig.gridType,
-        }),
+        },
+        freeQuoteBalance,
+        quoteCurrency
+      );
+
+      if (!validation.isValid) {
+        error(validation.errors[0].message);
+        setActiveTab('config');
+        return;
+      }
+    }
+
+    setIsLoading(true);
+    try {
+      const requestBody: Record<string, unknown> = {
+        botMode,
+      };
+
+      if (botMode === 'GRID') {
+        requestBody.symbol = gridConfig.symbol;
+        requestBody.lowerPrice = gridConfig.lowerPrice;
+        requestBody.upperPrice = gridConfig.upperPrice;
+        requestBody.gridLevels = gridConfig.gridLevels;
+        requestBody.investment = gridConfig.investmentAmount;
+      }
+
+      // Signal/AUTO modes also need signal config
+      if (botMode === 'SIGNAL' || botMode === 'AUTO') {
+        requestBody.signalConfig = {
+          symbol: signalConfig.symbol,
+          riskLevel: signalConfig.riskLevel,
+          maxPositionPct: signalConfig.maxPositionPct,
+          stopLossPct: signalConfig.stopLossPct,
+          takeProfitPct: signalConfig.takeProfitPct,
+          minStrength: signalConfig.minStrength,
+          quantity: signalConfig.quantity,
+        };
+      }
+
+      const response = await fetch(`${API_BASE_URL}/api/bot/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify(requestBody),
       });
       if (response.ok) {
         success('✅ เปิดใช้งานบอทเทรดสำเร็จ! บอทกำลังเริ่มต้นระบบ...');
         setIsRunning(true);
-        setCurrentActivity('Bot started — Initializing...');
+        setCurrentActivity(`Bot started — Mode: ${botMode}`);
         loadBotStatus();
       } else {
-        // Read error from backend response
         try {
           const data = await response.json();
           error(data.error || data.message || '❌ ไม่สามารถเปิดใช้งานบอทได้');
@@ -349,6 +373,42 @@ export default function TradingPage() {
 
           <div className="w-px h-6 bg-gray-200 dark:bg-gray-700 hidden sm:block" />
 
+          {/* Mode Selector */}
+          <div className="flex items-center gap-1">
+            {(['GRID', 'SIGNAL', 'AUTO'] as const).map((mode) => {
+              const icons = { GRID: '⚡', SIGNAL: '📡', AUTO: '🤖' };
+              const labels = { GRID: 'Grid', SIGNAL: 'Signal', AUTO: 'Auto' };
+              const isActive = botMode === mode;
+              return (
+                <button
+                  key={mode}
+                  disabled={isRunning}
+                  onClick={() => setBotMode(mode)}
+                  className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${
+                    isRunning && !isActive
+                      ? 'opacity-40 cursor-not-allowed'
+                      : 'cursor-pointer'
+                  } ${
+                    isActive
+                      ? 'bg-purple-600 text-white shadow-sm'
+                      : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+                  }`}
+                  title={
+                    mode === 'GRID'
+                      ? 'Grid bot: Buys at lower price levels, sells at higher levels'
+                      : mode === 'SIGNAL'
+                      ? 'Signal bot: Trades based on RSI/EMA signals from strategy service'
+                      : 'Auto bot: Signal-based entry with auto stop-loss/take-profit'
+                  }
+                >
+                  {icons[mode]} {labels[mode]}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="w-px h-6 bg-gray-200 dark:bg-gray-700 hidden sm:block" />
+
           {/* Symbol Dropdown */}
           <div className="relative">
             <button
@@ -412,6 +472,7 @@ export default function TradingPage() {
           tabs={[
             { id: 'overview', label: 'Overview', icon: <LayoutDashboard className="w-3.5 h-3.5" /> },
             { id: 'config', label: 'Grid Config', icon: <Settings className="w-3.5 h-3.5" /> },
+            { id: 'signal', label: 'Signal', icon: <Zap className="w-3.5 h-3.5" /> },
             { id: 'risk', label: 'Risk', icon: <Shield className="w-3.5 h-3.5" /> },
             { id: 'orders', label: 'Orders', icon: <Activity className="w-3.5 h-3.5" /> },
           ]}
@@ -644,6 +705,269 @@ export default function TradingPage() {
                       })}
                   </div>
                 )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── SIGNAL CONFIG ────────────────────────────────────────── */}
+        {activeTab === 'signal' && (
+          <div className="h-full flex flex-col md:flex-row overflow-hidden">
+            {/* Signal Bot Config Form */}
+            <div className="w-full md:w-80 shrink-0 overflow-y-auto border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-4">
+              <div className="flex items-center gap-2 mb-5">
+                <div className="p-1.5 bg-blue-100 dark:bg-blue-900/40 rounded-md">
+                  <Zap className="w-4 h-4 text-blue-600" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h2 className="text-sm font-bold truncate">Signal Bot Config</h2>
+                  <p className="text-[10px] text-gray-400 truncate">Configure signal-driven trading</p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                {/* Signal Symbol */}
+                <div>
+                  <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Symbol</label>
+                  <select
+                    value={signalConfig.symbol}
+                    onChange={(e) => setSignalConfig((p) => ({ ...p, symbol: e.target.value }))}
+                    className="w-full mt-1 px-3 py-2 text-sm border rounded-lg bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 focus:ring-purple-500 focus:ring-2 focus:outline-none"
+                  >
+                    {SYMBOLS.map((s) => (
+                      <option key={s.value} value={s.value.replace('BINANCE:', '')}>{s.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Risk Level */}
+                <div>
+                  <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Risk Level</label>
+                  <div className="grid grid-cols-3 gap-1.5 mt-1.5">
+                    {(['conservative', 'moderate', 'aggressive'] as const).map((level) => (
+                      <button
+                        key={level}
+                        onClick={() => {
+                          const presets = {
+                            conservative: { stopLossPct: 0.03, takeProfitPct: 0.08, maxPositionPct: 0.15, minStrength: 0.7, quantity: 0.0005 },
+                            moderate: { stopLossPct: 0.05, takeProfitPct: 0.10, maxPositionPct: 0.25, minStrength: 0.5, quantity: 0.001 },
+                            aggressive: { stopLossPct: 0.08, takeProfitPct: 0.15, maxPositionPct: 0.4, minStrength: 0.3, quantity: 0.002 },
+                          };
+                          setSignalConfig((p) => ({ ...p, riskLevel: level, ...presets[level] }));
+                        }}
+                        className={`py-2 text-xs font-medium rounded-lg border transition-all ${
+                          signalConfig.riskLevel === level
+                            ? level === 'conservative'
+                              ? 'border-green-500 bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300'
+                              : level === 'moderate'
+                              ? 'border-yellow-500 bg-yellow-50 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300'
+                              : 'border-red-500 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300'
+                            : 'border-gray-200 dark:border-gray-700 text-gray-500 hover:border-gray-300'
+                        }`}
+                      >
+                        {level.charAt(0).toUpperCase() + level.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Quantity */}
+                <div>
+                  <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Quantity per Trade</label>
+                  <input
+                    type="number"
+                    step="0.001"
+                    min="0.001"
+                    value={signalConfig.quantity}
+                    onChange={(e) => setSignalConfig((p) => ({ ...p, quantity: Number(e.target.value) }))}
+                    className="w-full mt-1 px-3 py-2 text-sm border rounded-lg bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 focus:ring-purple-500 focus:ring-2 focus:outline-none"
+                  />
+                </div>
+
+                {/* Min Strength */}
+                <div>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Min Signal Strength</label>
+                    <span className="text-sm font-bold text-purple-600">{signalConfig.minStrength}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="1.0"
+                    step="0.1"
+                    value={signalConfig.minStrength}
+                    onChange={(e) => setSignalConfig((p) => ({ ...p, minStrength: Number(e.target.value) }))}
+                    className="w-full mt-1 accent-purple-600"
+                  />
+                  <div className="flex justify-between text-[10px] text-gray-400 mt-0.5">
+                    <span>Low (more trades)</span><span>High (fewer trades)</span>
+                  </div>
+                </div>
+
+                {/* Stop Loss */}
+                <div>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Stop Loss</label>
+                    <span className="text-sm font-bold text-red-600">{(signalConfig.stopLossPct * 100).toFixed(1)}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="1"
+                    max="15"
+                    step="0.5"
+                    value={signalConfig.stopLossPct * 100}
+                    onChange={(e) => setSignalConfig((p) => ({ ...p, stopLossPct: Number(e.target.value) / 100 }))}
+                    className="w-full mt-1 accent-red-500"
+                  />
+                  <div className="flex justify-between text-[10px] text-gray-400 mt-0.5">
+                    <span>1%</span><span>15%</span>
+                  </div>
+                </div>
+
+                {/* Take Profit */}
+                <div>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Take Profit</label>
+                    <span className="text-sm font-bold text-green-600">{(signalConfig.takeProfitPct * 100).toFixed(1)}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="2"
+                    max="30"
+                    step="1"
+                    value={signalConfig.takeProfitPct * 100}
+                    onChange={(e) => setSignalConfig((p) => ({ ...p, takeProfitPct: Number(e.target.value) / 100 }))}
+                    className="w-full mt-1 accent-green-500"
+                  />
+                  <div className="flex justify-between text-[10px] text-gray-400 mt-0.5">
+                    <span>2%</span><span>30%</span>
+                  </div>
+                </div>
+
+                {/* Max Position */}
+                <div>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Max Position</label>
+                    <span className="text-sm font-bold text-blue-600">{(signalConfig.maxPositionPct * 100).toFixed(0)}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="5"
+                    max="50"
+                    step="5"
+                    value={signalConfig.maxPositionPct * 100}
+                    onChange={(e) => setSignalConfig((p) => ({ ...p, maxPositionPct: Number(e.target.value) / 100 }))}
+                    className="w-full mt-1 accent-blue-500"
+                  />
+                  <div className="flex justify-between text-[10px] text-gray-400 mt-0.5">
+                    <span>5%</span><span>50%</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 flex gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  fullWidth
+                  onClick={() => setSignalConfig({
+                    symbol: 'BTCUSDT',
+                    riskLevel: 'moderate',
+                    maxPositionPct: 0.25,
+                    stopLossPct: 0.05,
+                    takeProfitPct: 0.10,
+                    minStrength: 0.5,
+                    quantity: 0.001,
+                  })}
+                >
+                  Reset
+                </Button>
+              </div>
+            </div>
+
+            {/* Signal Bot Info / Preview */}
+            <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-gray-50 dark:bg-gray-950">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="p-1 bg-blue-100 dark:bg-blue-900/40 rounded">
+                  <Zap className="w-3.5 h-3.5 text-blue-600" />
+                </div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">How It Works</p>
+              </div>
+
+              <div className="max-w-2xl space-y-4">
+                {/* Mode Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <Card className="p-4 border-l-4 border-l-blue-500">
+                    <h4 className="text-sm font-bold text-blue-600 mb-1">Signal Bot</h4>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      Listens to strategy service (RSI/EMA) signals from Redis and automatically buys/sells.
+                      Simple, direct signal-to-trade mapping.
+                    </p>
+                  </Card>
+                  <Card className="p-4 border-l-4 border-l-purple-500">
+                    <h4 className="text-sm font-bold text-purple-600 mb-1">Auto Bot</h4>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      Same as signal bot but with automatic stop-loss and take-profit monitoring.
+                      Closes positions when thresholds are hit.
+                    </p>
+                  </Card>
+                  <Card className="p-4 border-l-4 border-l-gray-500">
+                    <h4 className="text-sm font-bold text-gray-600 mb-1">Grid Bot</h4>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      Buys at lower price levels and sells at higher levels.
+                      No signal-based entry, just price-range trading.
+                    </p>
+                  </Card>
+                </div>
+
+                {/* Signal Flow */}
+                <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
+                  <h4 className="text-sm font-bold mb-3">Signal Flow</h4>
+                  <div className="flex items-center gap-2 text-xs">
+                    <div className="px-3 py-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg text-center">
+                      <p className="font-semibold">Strategy Service</p>
+                      <p className="text-gray-500">RSI + EMA Analysis</p>
+                    </div>
+                    <ArrowUpRight className="w-4 h-4 text-gray-400" />
+                    <div className="px-3 py-2 bg-red-100 dark:bg-red-900/30 rounded-lg text-center">
+                      <p className="font-semibold">Redis Pub/Sub</p>
+                      <p className="text-gray-500">order_signals</p>
+                    </div>
+                    <ArrowUpRight className="w-4 h-4 text-gray-400" />
+                    <div className="px-3 py-2 bg-green-100 dark:bg-green-900/30 rounded-lg text-center">
+                      <p className="font-semibold">Backend Bot</p>
+                      <p className="text-gray-500">Signal Filter + Execute</p>
+                    </div>
+                    <ArrowUpRight className="w-4 h-4 text-gray-400" />
+                    <div className="px-3 py-2 bg-purple-100 dark:bg-purple-900/30 rounded-lg text-center">
+                      <p className="font-semibold">Exchange</p>
+                      <p className="text-gray-500">Market Order</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Config Summary */}
+                <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
+                  <h4 className="text-sm font-bold mb-3">Current Config</h4>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div>
+                      <p className="text-[10px] text-gray-400">Symbol</p>
+                      <p className="text-sm font-bold">{signalConfig.symbol}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-gray-400">Risk Level</p>
+                      <p className="text-sm font-bold capitalize">{signalConfig.riskLevel}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-gray-400">Stop Loss</p>
+                      <p className="text-sm font-bold text-red-600">{(signalConfig.stopLossPct * 100).toFixed(1)}%</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-gray-400">Take Profit</p>
+                      <p className="text-sm font-bold text-green-600">{(signalConfig.takeProfitPct * 100).toFixed(1)}%</p>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
