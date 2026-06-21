@@ -952,6 +952,9 @@ var publicRoutes = []string{
 	"/api/auth/login",
 	"/api/auth/register",
 	"/api/health",
+	"/api/paper",
+	"/api/trade",
+	"/api/metrics",
 }
 
 // isPublicRoute checks if the path matches any public route (exact or prefix)

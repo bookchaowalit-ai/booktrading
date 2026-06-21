@@ -8,7 +8,7 @@ RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
-RUN npm ci
+RUN npm install
 
 # Rebuild the source code only when needed
 FROM base AS builder
@@ -31,6 +31,7 @@ ENV STRATEGY_URL=$STRATEGY_URL
 
 ENV NEXT_TELEMETRY_DISABLED 1
 
+RUN chmod +x node_modules/.bin/next
 RUN npm run build
 
 # Production image, copy all the files and run next

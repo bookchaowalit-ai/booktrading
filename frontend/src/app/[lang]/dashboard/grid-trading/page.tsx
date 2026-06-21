@@ -1,634 +1,813 @@
 /**
- * Grid Trading Page
- * Configure and monitor grid trading strategy with multi-asset support
+ * Real Grid Trading Dashboard
+ * Live monitoring of the BTCTHB grid bot running on Binance TH.
+ * Polls: Go backend (/api/trade/*) + Python strategy (/strategy-api/api/real-grid/*)
  */
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import {
   Grid3X3,
-  Settings,
-  TrendingUp,
-  DollarSign,
-  Percent,
   Activity,
-  ArrowRight,
+  DollarSign,
+  TrendingUp,
+  TrendingDown,
+  RefreshCw,
+  ShieldAlert,
+  ShieldCheck,
+  Wallet,
+  Clock,
+  XCircle,
+  CheckCircle2,
+  AlertTriangle,
+  Power,
+  PowerOff,
+  Shield,
+  BookOpen,
+  BarChart3,
+  Target,
+  Zap,
 } from 'lucide-react';
-import { useTranslation } from '@/i18n/translations';
-import { AssetCategory } from '@/types';
+import { api } from '@/services/api';
 import { useToast } from '@/components/ui/Toast';
-import AssetCategoryFilter from '@/components/AssetCategoryFilter';
-import CategoryIcon from '@/components/CategoryIcon';
-import Card from '@/components/ui/Card';
-import Button from '@/components/ui/Button';
-import {
-  TRADING_PAIRS,
-  EXCHANGE_PROVIDERS,
-  getTradingPairsByCategory,
-  getThaiPopularTradingPairs,
-  searchTradingPairs
-} from '@/config/trading-pairs';
+
+// ── Types ──────────────────────────────────────────────────────────────────────
+
+interface OpenOrder {
+  orderId: number;
+  symbol: string;
+  side: 'BUY' | 'SELL';
+  price: string;
+  origQty: string;
+  status: string;
+  time: number;
+}
+
+interface TradeRecord {
+  id: string;
+  symbol: string;
+  side: string;
+  type: string;
+  quantity: number;
+  price: number;
+  executed_qty: number;
+  executed_price: number;
+  status: string;
+  fee: number;
+  created_at: string;
+  filled_at?: string;
+}
+
+interface BalanceItem {
+  asset: string;
+  free: number;
+  locked: number;
+  total: number;
+}
+
+interface GridSymbolStatus {
+  last_price: number;
+  active_buys: number;
+  active_sells: number;
+  trades_executed: number;
+  daily_pnl: number;
+  daily_trades: number;
+  halted: boolean;
+}
+
+interface GridStatus {
+  running: boolean;
+  enabled: boolean;
+  symbols: Record<string, GridSymbolStatus>;
+  risk?: RiskStatus;
+  journal_stats?: JournalStats;
+}
+
+interface RiskStatus {
+  halted: boolean;
+  halt_reason: string;
+  daily_pnl: number;
+  daily_trades: number;
+  daily_wins: number;
+  daily_losses: number;
+  consecutive_losses: number;
+  max_consecutive_losses: number;
+  current_drawdown_pct: number;
+  max_drawdown_pct: number;
+  peak_equity: number;
+  total_trades: number;
+  win_rate_pct: number;
+  config: {
+    max_daily_loss_thb: number;
+    max_drawdown_pct: number;
+    max_order_size_thb: number;
+    risk_per_trade_pct: number;
+    max_consecutive_losses: number;
+    max_open_orders: number;
+  };
+  recent_events: Array<{ time: number; type: string; message: string }>;
+}
+
+interface JournalStats {
+  total_entries: number;
+  open_entries: number;
+  closed_entries: number;
+  winning_trades: number;
+  losing_trades: number;
+  win_rate: number;
+  total_pnl: number;
+  total_fees: number;
+}
+
+interface JournalEntry {
+  id: number;
+  symbol: string;
+  side: string;
+  strategy: string;
+  entry_reason: string;
+  entry_price: number;
+  quantity: number;
+  expected_risk_thb: number;
+  expected_reward_thb: number;
+  exit_price: number;
+  exit_reason: string;
+  actual_pnl: number;
+  fee: number;
+  exchange_order_id: string;
+  status: string;
+  created_at: string;
+  closed_at?: string;
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+function formatTHB(value: number): string {
+  return new Intl.NumberFormat('th-TH', {
+    style: 'currency',
+    currency: 'THB',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function formatBTC(value: number): string {
+  return `${value.toFixed(5)} BTC`;
+}
+
+function timeAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+// ── Component ──────────────────────────────────────────────────────────────────
 
 export default function GridTradingPage() {
-  const router = useRouter();
-  const pathname = usePathname();
-  const locale = pathname.split('/')[1] || 'th';
-  const { t } = useTranslation();
-  const { error, success } = useToast();
-  const [isRunning, setIsRunning] = useState(false);
-  const [selectedCategories, setSelectedCategories] = useState<AssetCategory[]>(
-    ['crypto', 'stock', 'forex', 'commodity', 'index']
-  );
-  const [config, setConfig] = useState({
-    symbol: 'BTCUSDT',
-    category: 'crypto' as AssetCategory,
-    exchange: 'bitkub' as import('@/config/trading-pairs').ExchangeProvider,
-    lowerPrice: 40000,
-    upperPrice: 50000,
-    gridLevels: 10,
-    investmentAmount: 1000,
-    gridType: 'arithmetic'
-  });
-  const [searchQuery, setSearchQuery] = useState('');
-  const [showThaiPairs, setShowThaiPairs] = useState(true);
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [gridOrders, setGridOrders] = useState<any[]>([]);
-  const [isLoadingOrders, setIsLoadingOrders] = useState(false);
-  const [gridStats, setGridStats] = useState({
-    totalProfit: 0,
-    totalTrades: 0,
-    profitRate: 0,
-    activeOrders: 0,
-  });
+  const { success, error: toastError } = useToast();
 
-  // Validate configuration
-  const validateConfig = () => {
-    const newErrors: Record<string, string> = {};
+  const [gridStatus, setGridStatus] = useState<GridStatus | null>(null);
+  const [openOrders, setOpenOrders] = useState<OpenOrder[]>([]);
+  const [tradeHistory, setTradeHistory] = useState<TradeRecord[]>([]);
+  const [balances, setBalances] = useState<BalanceItem[]>([]);
+  const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [killing, setKilling] = useState(false);
+  const [enabling, setEnabling] = useState(false);
+  const [cancellingIds, setCancellingIds] = useState<Set<number>>(new Set());
+  const [showJournal, setShowJournal] = useState(false);
 
-    if (config.lowerPrice >= config.upperPrice) {
-      newErrors.priceRange = '❌ Lower price must be less than upper price';
+  const fetchData = useCallback(async () => {
+    try {
+      const [status, orders, history, bals, journal] = await Promise.all([
+        api.getRealGridStatus(),
+        api.getTradeOpenOrders('BTCTHB'),
+        api.getRealTradeHistory(30),
+        api.getTradeBalances(),
+        api.getTradeJournalEntries(20),
+      ]);
+
+      setGridStatus(status);
+      setOpenOrders(orders?.orders || []);
+      setTradeHistory(Array.isArray(history) ? history : []);
+      setBalances(bals || []);
+      setJournalEntries(Array.isArray(journal) ? journal : []);
+      setLastRefresh(new Date());
+    } catch (err) {
+      console.error('Failed to fetch grid data:', err);
+    } finally {
+      setLoading(false);
     }
+  }, []);
 
-    if (config.gridLevels < 2 || config.gridLevels > 100) {
-      newErrors.gridLevels = '❌ Grid levels must be between 2 and 100';
-    }
-
-    if (config.investmentAmount <= 0) {
-      newErrors.investment = '❌ Investment must be greater than 0';
-    }
-
-    if (config.gridLevels > 0 && config.investmentAmount / config.gridLevels < 10) {
-      newErrors.investment = '❌ Investment per grid level must be at least $10';
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  // Get available pairs based on filters
-  const availablePairs = TRADING_PAIRS.filter(pair => {
-    const matchesCategory = selectedCategories.includes(pair.category);
-    const matchesSearch = searchQuery === '' ||
-      pair.symbol.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      pair.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      pair.nameTH.includes(searchQuery);
-    const matchesThai = showThaiPairs ? pair.thaiPopular : true;
-
-    return matchesCategory && matchesSearch && matchesThai;
-  });
-
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
-
-  // Fetch real grid orders from backend
   useEffect(() => {
-    const fetchGridOrders = async () => {
-      setIsLoadingOrders(true);
-      try {
-        const [ordersResponse, statsResponse] = await Promise.all([
-          fetch(`${API_BASE_URL}/api/orders/open`),
-          fetch(`${API_BASE_URL}/api/bot/status`),
-        ]);
+    fetchData();
+    const interval = setInterval(fetchData, 10000); // poll every 10s
+    return () => clearInterval(interval);
+  }, [fetchData]);
 
-        const ordersData = await ordersResponse.json().catch(() => ({ orders: [] }));
-        const statsData = await statsResponse.json().catch(() => null);
-
-        setGridOrders(ordersData.orders || []);
-
-        // Update stats from real data
-        if (statsData) {
-          setGridStats({
-            totalProfit: statsData.total_profit || 0,
-            totalTrades: statsData.total_trades || 0,
-            profitRate: statsData.total_trades > 0 ? ((statsData.total_profit / statsData.total_trades) * 100) : 0,
-            activeOrders: ordersData.orders?.length || 0,
-          });
-        }
-      } catch (error) {
-        console.error('Failed to fetch grid orders:', error);
-        setGridOrders([]);
-        setGridStats({
-          totalProfit: 0,
-          totalTrades: 0,
-          profitRate: 0,
-          activeOrders: 0,
-        });
-      } finally {
-        setIsLoadingOrders(false);
-      }
-    };
-
-    if (isRunning) {
-      fetchGridOrders();
-      // Poll for updates every 5 seconds
-      const interval = setInterval(fetchGridOrders, 5000);
-      return () => clearInterval(interval);
-    } else {
-      setGridOrders([]);
-      setGridStats({
-        totalProfit: 0,
-        totalTrades: 0,
-        profitRate: 0,
-        activeOrders: 0,
-      });
-    }
-  }, [isRunning, config.symbol]);
-
-  const handleCategoryToggle = (category: AssetCategory) => {
-    setSelectedCategories((prev) => {
-      if (prev.includes(category)) {
-        return prev.filter((c) => c !== category);
-      }
-      return [...prev, category];
-    });
-  };
-
-  const handleSelectAll = () => {
-    setSelectedCategories(['crypto', 'stock', 'forex', 'commodity', 'index']);
-  };
-
-  const handleSymbolChange = (symbol: string) => {
-    const category = config.category;
-    setConfig({ ...config, symbol, category });
-
-    // Auto-adjust price range based on symbol
-    const symbolPrices: Record<string, number> = {
-      'BTCUSDT': 45000,
-      'ETHUSDT': 2500,
-      'XAUUSD': 1950,
-      'EURUSD': 1.08,
-      'AAPL': 175,
-      'SPX': 4500,
-    };
-    const basePrice = symbolPrices[symbol] || 100;
-    setConfig(prev => ({
-      ...prev,
-      symbol,
-      lowerPrice: basePrice * 0.8,
-      upperPrice: basePrice * 1.2,
-    }));
-  };
-
-  const handleStartGrid = async () => {
-    // Validate configuration first
-    if (!validateConfig()) {
-      error('Please fix configuration errors before starting');
-      return;
-    }
-
-    setIsRunning(true);
+  const handleKill = async () => {
+    if (!confirm('⚠️ KILL SWITCH: This will halt ALL real trading. Continue?')) return;
+    setKilling(true);
     try {
-      // Call backend API to start grid trading
-      const response = await fetch(`${API_BASE_URL}/api/bot/start`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          symbol: config.symbol,
-          quantity: config.investmentAmount / config.gridLevels,
-          gridLevels: config.gridLevels,
-          lowerPrice: config.lowerPrice,
-          upperPrice: config.upperPrice,
-          investment: config.investmentAmount,
-        }),
-      });
-
-      if (response.ok) {
-        success('Grid trading started successfully');
-      } else {
-        const data = await response.json();
-        error(data.error || 'Failed to start grid trading');
-        setIsRunning(false);
-      }
-    } catch (err) {
-      error('Failed to start grid trading - backend unavailable');
-      setIsRunning(false);
+      await api.killRealGrid();
+      success('Grid bot killed — all trading halted');
+      fetchData();
+    } catch (e: any) {
+      toastError(e.message || 'Failed to kill grid bot');
+    } finally {
+      setKilling(false);
     }
   };
 
-  const handleStopGrid = async () => {
+  const handleEnable = async () => {
+    setEnabling(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/bot/stop`, {
-        method: 'POST',
-      });
-
-      if (response.ok) {
-        success('Grid trading stopped successfully');
-        setIsRunning(false);
-      } else {
-        error('Failed to stop grid trading');
-      }
-    } catch (err) {
-      error('Failed to stop grid trading - backend unavailable');
-      setIsRunning(false);
+      await api.enableRealGrid();
+      success('Grid bot re-enabled — trading resumed');
+      fetchData();
+    } catch (e: any) {
+      toastError(e.message || 'Failed to enable grid bot');
+    } finally {
+      setEnabling(false);
     }
   };
+
+  const handleCancelOrder = async (orderId: number, side: string, price: string) => {
+    if (!confirm(`Cancel ${side} order @ ${Number(price).toLocaleString()} THB?`)) return;
+    setCancellingIds(prev => new Set(prev).add(orderId));
+    try {
+      await api.cancelTradeOrder('BTCTHB', orderId);
+      success(`Order #${orderId} cancelled`);
+      fetchData();
+    } catch (e: any) {
+      toastError(e.message || 'Failed to cancel order');
+    } finally {
+      setCancellingIds(prev => { const next = new Set(prev); next.delete(orderId); return next; });
+    }
+  };
+
+  // Derived data
+  const btcStatus = gridStatus?.symbols?.BTCTHB;
+  const currentPrice = btcStatus?.last_price || 0;
+  const buyOrders = openOrders.filter(o => o.side === 'BUY').sort((a, b) => Number(b.price) - Number(a.price));
+  const sellOrders = openOrders.filter(o => o.side === 'SELL').sort((a, b) => Number(a.price) - Number(b.price));
+  const thbBalance = balances.find(b => b.asset === 'THB');
+  const btcBalance = balances.find(b => b.asset === 'BTC');
+  const usdtBalance = balances.find(b => b.asset === 'USDT');
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <RefreshCw className="w-8 h-8 text-purple-600 animate-spin" />
+        <span className="ml-3 text-gray-500 dark:text-gray-400">Loading real trading data...</span>
+      </div>
+    );
+  }
 
   return (
     <div>
-      {/* Trading Control Banner */}
-      <Card variant="elevated" className="p-6 mb-8 bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-900/20 dark:to-blue-900/20">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-purple-100 dark:bg-purple-900/30 rounded-lg">
-              <Settings className="w-8 h-8 text-purple-600" />
-            </div>
-            <div>
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white">
-                Grid Trading Controls
-              </h2>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                Configure and start grid trading from the centralized trading page
-              </p>
-            </div>
-          </div>
-          <Button
-            variant="primary"
-            size="lg"
-            onClick={() => router.push(`/${locale}/dashboard/trading`)}
-            rightIcon={<ArrowRight className="w-5 h-5" />}
-            gradient
-          >
-            Go to Trading Page
-          </Button>
+      {/* ── Header + Controls ─────────────────────────────────────────── */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-3">
+            <Grid3X3 className="w-7 h-7 text-purple-600" />
+            Real Grid Trading
+            <span className="text-sm font-normal px-2 py-0.5 rounded bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300">
+              BTCTHB
+            </span>
+          </h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+            Binance TH · Live orders · Auto-refresh every 10s
+            {lastRefresh && ` · Last: ${lastRefresh.toLocaleTimeString()}`}
+          </p>
         </div>
-      </Card>
 
-      {/* Header */}
-      <div className="mb-8">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2 flex items-center gap-3">
-              <Grid3X3 className="w-8 h-8 text-purple-600" />
-              {t('grid.title')}
-            </h1>
-            <p className="text-gray-600 dark:text-gray-400">
-              {t('grid.subtitle')} - View Only
-            </p>
+        <div className="flex items-center gap-3">
+          {/* Bot status indicator */}
+          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium ${
+            gridStatus?.enabled
+              ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
+              : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
+          }`}>
+            {gridStatus?.enabled ? (
+              <><CheckCircle2 className="w-4 h-4" /> Running</>
+            ) : (
+              <><AlertTriangle className="w-4 h-4" /> Halted</>
+            )}
           </div>
-          {/* Removed Start/Stop buttons - moved to /dashboard/trading */}
+
+          <button
+            onClick={fetchData}
+            className="p-2 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400"
+            title="Refresh"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
+
+          {gridStatus?.enabled ? (
+            <button
+              onClick={handleKill}
+              disabled={killing}
+              className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium text-sm disabled:opacity-50"
+            >
+              <PowerOff className="w-4 h-4" />
+              {killing ? 'Killing...' : 'Kill Switch'}
+            </button>
+          ) : (
+            <button
+              onClick={handleEnable}
+              disabled={enabling}
+              className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium text-sm disabled:opacity-50"
+            >
+              <Power className="w-4 h-4" />
+              {enabling ? 'Enabling...' : 'Re-enable'}
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Status Cards */}
-      <div className="grid md:grid-cols-4 gap-6 mb-8">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700"
-        >
-          <div className="flex items-center gap-3 mb-2">
-            <DollarSign className="w-5 h-5 text-green-600" />
-            <span className="text-sm text-gray-600 dark:text-gray-400">{t('analytics.total-profit')}</span>
+      {/* ── Stats Cards ───────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+          className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
+          <div className="flex items-center gap-2 mb-1">
+            <DollarSign className="w-4 h-4 text-blue-500" />
+            <span className="text-xs text-gray-500 dark:text-gray-400">BTC Price</span>
           </div>
-          <div className={`text-2xl font-bold ${gridStats.totalProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-            {gridStats.totalProfit >= 0 ? '+' : ''}${gridStats.totalProfit.toFixed(2)}
+          <div className="text-lg font-bold text-gray-900 dark:text-white">
+            {currentPrice > 0 ? formatTHB(currentPrice) : '—'}
           </div>
         </motion.div>
 
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700"
-        >
-          <div className="flex items-center gap-3 mb-2">
-            <Activity className="w-5 h-5 text-blue-600" />
-            <span className="text-sm text-gray-600 dark:text-gray-400">{t('grid.grid-trades')}</span>
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}
+          className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
+          <div className="flex items-center gap-2 mb-1">
+            <Activity className="w-4 h-4 text-purple-500" />
+            <span className="text-xs text-gray-500 dark:text-gray-400">Open Orders</span>
           </div>
-          <div className="text-2xl font-bold text-blue-600">
-            {gridStats.totalTrades}
-          </div>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700"
-        >
-          <div className="flex items-center gap-3 mb-2">
-            <Percent className="w-5 h-5 text-purple-600" />
-            <span className="text-sm text-gray-600 dark:text-gray-400">{t('grid.profit-rate')}</span>
-          </div>
-          <div className="text-2xl font-bold text-purple-600">
-            {gridStats.profitRate.toFixed(1)}%
+          <div className="text-lg font-bold text-gray-900 dark:text-white">
+            {openOrders.length}
+            <span className="text-sm font-normal text-gray-500 ml-1">
+              ({buyOrders.length}B / {sellOrders.length}S)
+            </span>
           </div>
         </motion.div>
 
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
-          className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700"
-        >
-          <div className="flex items-center gap-3 mb-2">
-            <TrendingUp className="w-5 h-5 text-orange-600" />
-            <span className="text-sm text-gray-600 dark:text-gray-400">{t('grid.active-orders')}</span>
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
+          className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
+          <div className="flex items-center gap-2 mb-1">
+            {btcStatus && btcStatus.daily_pnl >= 0
+              ? <TrendingUp className="w-4 h-4 text-green-500" />
+              : <TrendingDown className="w-4 h-4 text-red-500" />}
+            <span className="text-xs text-gray-500 dark:text-gray-400">Daily PnL</span>
           </div>
-          <div className="text-2xl font-bold text-orange-600">
-            {gridStats.activeOrders}
+          <div className={`text-lg font-bold ${
+            btcStatus && btcStatus.daily_pnl >= 0 ? 'text-green-600' : 'text-red-600'
+          }`}>
+            {btcStatus ? formatTHB(btcStatus.daily_pnl) : '—'}
+          </div>
+        </motion.div>
+
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}
+          className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
+          <div className="flex items-center gap-2 mb-1">
+            <Clock className="w-4 h-4 text-orange-500" />
+            <span className="text-xs text-gray-500 dark:text-gray-400">Trades Today</span>
+          </div>
+          <div className="text-lg font-bold text-gray-900 dark:text-white">
+            {btcStatus?.daily_trades ?? 0}
           </div>
         </motion.div>
       </div>
 
-      {/* Category Filter */}
-      <div className="mb-6">
-        <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
-          Filter by Asset Category
-        </h3>
-        <AssetCategoryFilter
-          selectedCategories={selectedCategories}
-          onCategoryToggle={handleCategoryToggle}
-          onSelectAll={handleSelectAll}
-        />
-      </div>
+      {/* ── Risk Manager ─────────────────────────────────────────────── */}
+      {gridStatus?.risk && (
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+              <Shield className="w-5 h-5 text-indigo-500" />
+              Risk Manager
+              {gridStatus.risk.halted && (
+                <span className="text-xs px-2 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">
+                  HALTED: {gridStatus.risk.halt_reason}
+                </span>
+              )}
+            </h3>
+            {gridStatus.risk.halted && (
+              <button
+                onClick={async () => {
+                  try {
+                    await api.resetRisk();
+                    success('Risk manager reset');
+                    fetchData();
+                  } catch (e: any) {
+                    toastError(e.message || 'Failed to reset');
+                  }
+                }}
+                className="text-xs px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg"
+              >
+                Reset Kill Switch
+              </button>
+            )}
+          </div>
 
-      <div className="grid lg:grid-cols-3 gap-6">
-        {/* Configuration */}
-        <div className="lg:col-span-1 space-y-6">
-          <motion.div
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700"
-          >
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
-              <Settings className="w-5 h-5 text-purple-600" />
-              {t('grid.configuration')}
-            </h2>
-
-            <div className="space-y-4">
-              {/* Search Box */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Search Trading Pair
-                </label>
-                <input
-                  type="text"
-                  placeholder="Search by symbol, name (e.g., BTC, Bitcoin, บิต)"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-gray-900 dark:text-white"
-                />
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            {/* Win Rate */}
+            <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3">
+              <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Win Rate</div>
+              <div className="text-lg font-bold text-gray-900 dark:text-white">
+                {gridStatus.risk.win_rate_pct}%
               </div>
+              <div className="text-xs text-gray-400">{gridStatus.risk.daily_wins}W / {gridStatus.risk.daily_losses}L today</div>
+            </div>
 
-              {/* Thai Pairs Toggle */}
-              <div className="flex items-center justify-between">
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  Show Popular in Thailand
-                </label>
-                <button
-                  onClick={() => setShowThaiPairs(!showThaiPairs)}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${showThaiPairs ? 'bg-purple-600' : 'bg-gray-300 dark:bg-gray-600'
-                    }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${showThaiPairs ? 'translate-x-6' : 'translate-x-1'
-                      }`}
-                  />
-                </button>
+            {/* Drawdown */}
+            <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3">
+              <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Drawdown</div>
+              <div className={`text-lg font-bold ${
+                gridStatus.risk.current_drawdown_pct > 3 ? 'text-red-600' : 'text-gray-900 dark:text-white'
+              }`}>
+                {gridStatus.risk.current_drawdown_pct}%
               </div>
+              <div className="text-xs text-gray-400">Max: {gridStatus.risk.max_drawdown_pct}%</div>
+            </div>
 
-              {/* Trading Pair Selector */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  {t('grid.trading-pair')}
-                </label>
-                <select
-                  value={config.symbol}
-                  onChange={(e) => handleSymbolChange(e.target.value)}
-                  className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-gray-900 dark:text-white max-h-60 overflow-y-auto"
-                >
-                  {availablePairs.map((pair) => (
-                    <option key={pair.symbol} value={pair.symbol}>
-                      {pair.symbol} - {pair.name} {pair.nameTH && `(${pair.nameTH})`}
-                    </option>
-                  ))}
-                </select>
-                {availablePairs.length === 0 && (
-                  <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                    No pairs found. Try adjusting your filters.
-                  </p>
-                )}
-                <div className="mt-2 flex items-center gap-2">
-                  <CategoryIcon category={config.category} size="sm" />
-                  <span className="text-xs text-gray-500 dark:text-gray-400">
-                    {t(`category.${config.category}.desc`)}
+            {/* Consecutive Losses */}
+            <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3">
+              <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Consec. Losses</div>
+              <div className={`text-lg font-bold ${
+                gridStatus.risk.consecutive_losses >= 3 ? 'text-orange-600' : 'text-gray-900 dark:text-white'
+              }`}>
+                {gridStatus.risk.consecutive_losses}
+              </div>
+              <div className="text-xs text-gray-400">Max: {gridStatus.risk.max_consecutive_losses}</div>
+            </div>
+
+            {/* Total Trades */}
+            <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3">
+              <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Total Trades</div>
+              <div className="text-lg font-bold text-gray-900 dark:text-white">
+                {gridStatus.risk.total_trades}
+              </div>
+              <div className="text-xs text-gray-400">{gridStatus.risk.daily_trades} today</div>
+            </div>
+
+            {/* Daily P&L */}
+            <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3">
+              <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Daily P&L</div>
+              <div className={`text-lg font-bold ${
+                gridStatus.risk.daily_pnl >= 0 ? 'text-green-600' : 'text-red-600'
+              }`}>
+                {formatTHB(gridStatus.risk.daily_pnl)}
+              </div>
+              <div className="text-xs text-gray-400">Limit: {formatTHB(gridStatus.risk.config.max_daily_loss_thb)}</div>
+            </div>
+
+            {/* Risk Events */}
+            <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3">
+              <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Recent Events</div>
+              <div className="text-lg font-bold text-gray-900 dark:text-white">
+                {gridStatus.risk.recent_events?.length || 0}
+              </div>
+              <div className="text-xs text-gray-400">Last 24h</div>
+            </div>
+          </div>
+
+          {/* Recent Risk Events */}
+          {gridStatus.risk.recent_events?.length > 0 && (
+            <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700">
+              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Recent Risk Events</div>
+              <div className="space-y-1 max-h-24 overflow-y-auto">
+                {gridStatus.risk.recent_events.slice(-5).reverse().map((evt, i) => (
+                  <div key={i} className="text-xs flex items-center gap-2">
+                    <span className={`w-1.5 h-1.5 rounded-full ${
+                      evt.type === 'HALT' ? 'bg-red-500' :
+                      evt.type === 'ORDER_PLACED' ? 'bg-green-500' :
+                      evt.type === 'TRADE_RESULT' ? 'bg-blue-500' : 'bg-gray-400'
+                    }`} />
+                    <span className="text-gray-500 dark:text-gray-400">
+                      {new Date(evt.time * 1000).toLocaleTimeString()}
+                    </span>
+                    <span className="text-gray-700 dark:text-gray-300">{evt.message}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Balances ──────────────────────────────────────────────────── */}
+      <div className="grid lg:grid-cols-3 gap-4 mb-6">
+        {[thbBalance, btcBalance, usdtBalance].map((bal, i) => (
+          <div key={i} className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
+            <div className="flex items-center gap-2 mb-2">
+              <Wallet className="w-4 h-4 text-gray-400" />
+              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                {bal?.asset || '—'}
+              </span>
+            </div>
+            {bal ? (
+              <div className="space-y-1">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500 dark:text-gray-400">Free</span>
+                  <span className="font-medium text-gray-900 dark:text-white">
+                    {bal.asset === 'BTC' ? bal.free.toFixed(5) : bal.free.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500 dark:text-gray-400">Locked</span>
+                  <span className="font-medium text-orange-600">
+                    {bal.asset === 'BTC' ? bal.locked.toFixed(5) : bal.locked.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm pt-1 border-t border-gray-100 dark:border-gray-700">
+                  <span className="text-gray-500 dark:text-gray-400">Total</span>
+                  <span className="font-bold text-gray-900 dark:text-white">
+                    {bal.asset === 'BTC' ? bal.total.toFixed(5) : bal.total.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                   </span>
                 </div>
               </div>
+            ) : (
+              <p className="text-sm text-gray-400">No data</p>
+            )}
+          </div>
+        ))}
+      </div>
 
-              {/* Exchange Selector */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Exchange Provider
-                </label>
-                <select
-                  value={config.exchange}
-                  onChange={(e) => setConfig({ ...config, exchange: e.target.value as any })}
-                  className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-gray-900 dark:text-white"
-                >
-                  {Object.entries(EXCHANGE_PROVIDERS).map(([key, provider]) => (
-                    <option key={key} value={key}>
-                      {provider.name} {provider.nameTH && `- ${provider.nameTH}`}
-                      {provider.thaiExchange && ' 🇹🇭'}
-                    </option>
-                  ))}
-                </select>
-                <div className="mt-2 flex items-center gap-2">
-                  <a
-                    href={EXCHANGE_PROVIDERS[config.exchange]?.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-purple-600 hover:text-purple-700 flex items-center gap-1"
-                  >
-                    Visit Exchange
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                    </svg>
-                  </a>
-                  {EXCHANGE_PROVIDERS[config.exchange]?.thaiExchange && (
-                    <span className="text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-2 py-0.5 rounded">
-                      Thai Exchange
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  {t('grid.lower-price')}
-                </label>
-                <input
-                  type="number"
-                  value={config.lowerPrice}
-                  onChange={(e) => setConfig({ ...config, lowerPrice: parseFloat(e.target.value) })}
-                  className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-gray-900 dark:text-white"
-                />
-                {errors.priceRange && (
-                  <p className="text-red-600 text-sm mt-1">{errors.priceRange}</p>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  {t('grid.upper-price')}
-                </label>
-                <input
-                  type="number"
-                  value={config.upperPrice}
-                  onChange={(e) => setConfig({ ...config, upperPrice: parseFloat(e.target.value) })}
-                  className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-gray-900 dark:text-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  {t('grid.levels')}
-                </label>
-                <input
-                  type="number"
-                  value={config.gridLevels}
-                  onChange={(e) => setConfig({ ...config, gridLevels: parseInt(e.target.value) })}
-                  className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-gray-900 dark:text-white"
-                />
-                {errors.gridLevels && (
-                  <p className="text-red-600 text-sm mt-1">{errors.gridLevels}</p>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  {t('grid.investment')}
-                </label>
-                <input
-                  type="number"
-                  value={config.investmentAmount}
-                  onChange={(e) => setConfig({ ...config, investmentAmount: parseFloat(e.target.value) })}
-                  className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-gray-900 dark:text-white"
-                />
-                {errors.investment && (
-                  <p className="text-red-600 text-sm mt-1">{errors.investment}</p>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  {t('grid.type')}
-                </label>
-                <select
-                  value={config.gridType}
-                  onChange={(e) => setConfig({ ...config, gridType: e.target.value })}
-                  className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-gray-900 dark:text-white"
-                >
-                  <option value="arithmetic">{t('grid.arithmetic')}</option>
-                  <option value="geometric">{t('grid.geometric')}</option>
-                </select>
-              </div>
-            </div>
-          </motion.div>
-        </div>
-
-        {/* Grid Visualization */}
-        <div className="lg:col-span-2">
-          <motion.div
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700"
-          >
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
-              {t('grid.grid-levels-table')}
-              <CategoryIcon category={config.category} size="sm" />
-            </h2>
-
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-gray-200 dark:border-gray-700">
-                    <th className="text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-gray-400">
-                      {t('grid.level')}
-                    </th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-gray-400">
-                      {t('grid.price-usdt')}
-                    </th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-gray-400">
-                      {t('grid.buy-amount-usdt')}
-                    </th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-gray-400">
-                      {t('grid.status')}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {isLoadingOrders ? (
-                    <tr>
-                      <td colSpan={4} className="py-8 text-center text-gray-500 dark:text-gray-400">
-                        Loading real orders...
-                      </td>
-                    </tr>
-                  ) : gridOrders.length > 0 ? (
-                    gridOrders.map((order, index) => (
-                      <tr
-                        key={order.id || index}
-                        className="border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700"
+      {/* ── Open Orders ───────────────────────────────────────────────── */}
+      <div className="grid lg:grid-cols-2 gap-6 mb-6">
+        {/* Buy Orders */}
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+            <h3 className="font-semibold text-green-700 dark:text-green-400 flex items-center gap-2">
+              <TrendingDown className="w-4 h-4" />
+              Buy Orders ({buyOrders.length})
+            </h3>
+            <span className="text-xs text-gray-400">Below market</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700">
+                  <th className="text-left px-4 py-2">Price (THB)</th>
+                  <th className="text-right px-4 py-2">Qty (BTC)</th>
+                  <th className="text-right px-4 py-2">Notional</th>
+                  <th className="px-4 py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {buyOrders.length === 0 ? (
+                  <tr><td colSpan={4} className="px-4 py-6 text-center text-sm text-gray-400">No buy orders</td></tr>
+                ) : buyOrders.map(order => (
+                  <tr key={order.orderId} className="border-b border-gray-50 dark:border-gray-700/50 hover:bg-green-50 dark:hover:bg-green-900/10">
+                    <td className="px-4 py-2.5 text-sm font-medium text-green-700 dark:text-green-400">
+                      ฿{Number(order.price).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-2.5 text-sm text-right text-gray-700 dark:text-gray-300">
+                      {Number(order.origQty).toFixed(5)}
+                    </td>
+                    <td className="px-4 py-2.5 text-sm text-right text-gray-500 dark:text-gray-400">
+                      ฿{(Number(order.price) * Number(order.origQty)).toFixed(0)}
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <button
+                        onClick={() => handleCancelOrder(order.orderId, 'BUY', order.price)}
+                        disabled={cancellingIds.has(order.orderId)}
+                        className="text-red-400 hover:text-red-600 disabled:opacity-50"
+                        title="Cancel order"
                       >
-                        <td className="py-3 px-4 text-sm text-gray-900 dark:text-white">
-                          #{index + 1}
-                        </td>
-                        <td className="py-3 px-4 text-sm text-gray-900 dark:text-white">
-                          ${order.price?.toFixed(2) || '0.00'}
-                        </td>
-                        <td className="py-3 px-4 text-sm text-gray-900 dark:text-white">
-                          ${order.quantity?.toFixed(2) || '0.00'}
-                        </td>
-                        <td className="py-3 px-4">
-                          <span
-                            className={`px-2 py-1 rounded text-xs font-medium ${order.status === 'FILLED'
-                              ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
-                              : order.status === 'OPEN'
-                                ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
-                                : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200'
-                              }`}
-                          >
-                            {order.status || 'PENDING'}
-                          </span>
-                        </td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={4} className="py-8 text-center text-gray-500 dark:text-gray-400">
-                        {isRunning
-                          ? 'No active grid orders yet'
-                          : 'Start grid trading to see orders'}
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </motion.div>
+                        <XCircle className="w-4 h-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
+
+        {/* Sell Orders */}
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+            <h3 className="font-semibold text-red-700 dark:text-red-400 flex items-center gap-2">
+              <TrendingUp className="w-4 h-4" />
+              Sell Orders ({sellOrders.length})
+            </h3>
+            <span className="text-xs text-gray-400">Above market</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700">
+                  <th className="text-left px-4 py-2">Price (THB)</th>
+                  <th className="text-right px-4 py-2">Qty (BTC)</th>
+                  <th className="text-right px-4 py-2">Notional</th>
+                  <th className="px-4 py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {sellOrders.length === 0 ? (
+                  <tr><td colSpan={4} className="px-4 py-6 text-center text-sm text-gray-400">No sell orders</td></tr>
+                ) : sellOrders.map(order => (
+                  <tr key={order.orderId} className="border-b border-gray-50 dark:border-gray-700/50 hover:bg-red-50 dark:hover:bg-red-900/10">
+                    <td className="px-4 py-2.5 text-sm font-medium text-red-700 dark:text-red-400">
+                      ฿{Number(order.price).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-2.5 text-sm text-right text-gray-700 dark:text-gray-300">
+                      {Number(order.origQty).toFixed(5)}
+                    </td>
+                    <td className="px-4 py-2.5 text-sm text-right text-gray-500 dark:text-gray-400">
+                      ฿{(Number(order.price) * Number(order.origQty)).toFixed(0)}
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <button
+                        onClick={() => handleCancelOrder(order.orderId, 'SELL', order.price)}
+                        disabled={cancellingIds.has(order.orderId)}
+                        className="text-red-400 hover:text-red-600 disabled:opacity-50"
+                        title="Cancel order"
+                      >
+                        <XCircle className="w-4 h-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Trade History ─────────────────────────────────────────────── */}
+      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+          <h3 className="font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+            <Clock className="w-4 h-4 text-gray-400" />
+            Trade History
+          </h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700">
+                <th className="text-left px-4 py-2">Time</th>
+                <th className="text-left px-4 py-2">Side</th>
+                <th className="text-left px-4 py-2">Type</th>
+                <th className="text-right px-4 py-2">Price</th>
+                <th className="text-right px-4 py-2">Qty</th>
+                <th className="text-right px-4 py-2">Executed</th>
+                <th className="text-left px-4 py-2">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tradeHistory.length === 0 ? (
+                <tr><td colSpan={7} className="px-4 py-6 text-center text-sm text-gray-400">No trades yet</td></tr>
+              ) : tradeHistory.slice(0, 15).map((trade) => (
+                <tr key={trade.id} className="border-b border-gray-50 dark:border-gray-700/50">
+                  <td className="px-4 py-2.5 text-xs text-gray-500 dark:text-gray-400">
+                    {timeAgo(trade.created_at)}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                      trade.side === 'BUY'
+                        ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
+                        : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
+                    }`}>
+                      {trade.side}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5 text-xs text-gray-600 dark:text-gray-400">{trade.type}</td>
+                  <td className="px-4 py-2.5 text-sm text-right text-gray-700 dark:text-gray-300">
+                    ฿{trade.price.toLocaleString()}
+                  </td>
+                  <td className="px-4 py-2.5 text-sm text-right text-gray-700 dark:text-gray-300">
+                    {trade.quantity.toFixed(5)}
+                  </td>
+                  <td className="px-4 py-2.5 text-sm text-right text-gray-700 dark:text-gray-300">
+                    {trade.executed_qty > 0 ? trade.executed_qty.toFixed(5) : '—'}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                      trade.status === 'FILLED'
+                        ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
+                        : trade.status === 'NEW'
+                          ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
+                          : trade.status === 'CANCELLED'
+                            ? 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'
+                            : 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400'
+                    }`}>
+                      {trade.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ── Trade Journal ─────────────────────────────────────────────── */}
+      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden mt-6">
+        <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+          <h3 className="font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+            <BookOpen className="w-4 h-4 text-indigo-400" />
+            Trade Journal
+            {journalEntries.length > 0 && (
+              <span className="text-xs px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400">
+                {journalEntries.length}
+              </span>
+            )}
+          </h3>
+          <button
+            onClick={() => setShowJournal(!showJournal)}
+            className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+          >
+            {showJournal ? 'Hide' : 'Show'}
+          </button>
+        </div>
+
+        {showJournal && (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700">
+                  <th className="text-left px-4 py-2">Time</th>
+                  <th className="text-left px-4 py-2">Symbol</th>
+                  <th className="text-left px-4 py-2">Side</th>
+                  <th className="text-left px-4 py-2">Strategy</th>
+                  <th className="text-left px-4 py-2">Entry Reason</th>
+                  <th className="text-right px-4 py-2">Entry Price</th>
+                  <th className="text-right px-4 py-2">Qty</th>
+                  <th className="text-right px-4 py-2">Risk/Reward</th>
+                  <th className="text-right px-4 py-2">Exit Price</th>
+                  <th className="text-right px-4 py-2">P&L</th>
+                  <th className="text-left px-4 py-2">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {journalEntries.length === 0 ? (
+                  <tr><td colSpan={11} className="px-4 py-6 text-center text-sm text-gray-400">No journal entries yet</td></tr>
+                ) : journalEntries.slice(0, 20).map((entry) => (
+                  <tr key={entry.id} className="border-b border-gray-50 dark:border-gray-700/50">
+                    <td className="px-4 py-2.5 text-xs text-gray-500 dark:text-gray-400">
+                      {timeAgo(entry.created_at)}
+                    </td>
+                    <td className="px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300">{entry.symbol}</td>
+                    <td className="px-4 py-2.5">
+                      <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                        entry.side === 'BUY'
+                          ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
+                          : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
+                      }`}>
+                        {entry.side}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-gray-600 dark:text-gray-400">{entry.strategy}</td>
+                    <td className="px-4 py-2.5 text-xs text-gray-600 dark:text-gray-400 max-w-[120px] truncate" title={entry.entry_reason}>
+                      {entry.entry_reason || '—'}
+                    </td>
+                    <td className="px-4 py-2.5 text-sm text-right text-gray-700 dark:text-gray-300">
+                      ฿{entry.entry_price?.toLocaleString() || '—'}
+                    </td>
+                    <td className="px-4 py-2.5 text-sm text-right text-gray-700 dark:text-gray-300">
+                      {entry.quantity?.toFixed(5) || '—'}
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-right text-gray-500 dark:text-gray-400">
+                      {entry.expected_risk_thb ? `${formatTHB(entry.expected_risk_thb)}` : '—'}
+                      {entry.expected_reward_thb ? ` / ${formatTHB(entry.expected_reward_thb)}` : ''}
+                    </td>
+                    <td className="px-4 py-2.5 text-sm text-right text-gray-700 dark:text-gray-300">
+                      {entry.exit_price ? `฿${entry.exit_price.toLocaleString()}` : '—'}
+                    </td>
+                    <td className={`px-4 py-2.5 text-sm text-right font-medium ${
+                      entry.actual_pnl > 0 ? 'text-green-600' :
+                      entry.actual_pnl < 0 ? 'text-red-600' : 'text-gray-500'
+                    }`}>
+                      {entry.actual_pnl != null ? formatTHB(entry.actual_pnl) : '—'}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                        entry.status === 'OPEN'
+                          ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
+                          : entry.status === 'CLOSED'
+                            ? 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'
+                            : 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400'
+                      }`}>
+                        {entry.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -110,7 +110,7 @@ services:
       dockerfile: Dockerfile
     container_name: trading-bot-strategy
     ports:
-      - "8000:8000"
+      - "8001:8000"
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -129,6 +129,8 @@ services:
       - RSI_OVERBOUGHT=70.0
       - MIN_SIGNAL_STRENGTH=0.2
       - SYMBOLS=BTCUSDT,ETHUSDT
+      - REAL_SYMBOLS=${REAL_SYMBOLS:-BTCTHB}
+      - DISABLE_PAPER_BOT=${DISABLE_PAPER_BOT:-true}
       # Composite scoring weights
       - WEIGHT_TREND=0.25
       - WEIGHT_MOMENTUM=0.30
@@ -148,6 +150,10 @@ services:
       - STOCH_RSI_PERIOD=14
       - ADX_MIN_TREND=25.0
       - MIN_COMPOSITE_SCORE=0.3
+      # Real grid bot config
+      - BACKEND_API_BASE=http://backend:8080
+      - BINANCE_PRICE_API=https://api.binance.th
+      - EXCHANGE_PROVIDER=${EXCHANGE_PROVIDER:-binance_th}
     depends_on:
       redis:
         condition: service_healthy

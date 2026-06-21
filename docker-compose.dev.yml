@@ -34,7 +34,7 @@ services:
   backend:
     build:
       context: ./backend
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     container_name: trading-bot-backend-dev
     ports:
       - "8080:8080"
@@ -66,7 +66,7 @@ services:
     networks:
       - trading-bot-network
     command: >
-      sh -c "go mod download && go run ./cmd"
+      sh -c "go mod tidy && go run ./cmd"
 
   strategy:
     build:
@@ -74,7 +74,7 @@ services:
       dockerfile: Dockerfile
     container_name: trading-bot-strategy-dev
     ports:
-      - "8000:8000"
+      - "8001:8000"
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379

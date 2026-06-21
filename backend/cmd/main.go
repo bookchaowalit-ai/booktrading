@@ -203,7 +203,7 @@ func main() {
 	)
 
 	// Initialize new feature services
-	paperEngine := service.NewPaperEngine(10000.0, 0.001) // $10k initial, 0.1% fee
+	paperEngine := service.NewPaperEngine(10000.0, 0.001, db.Pool) // $10k initial, 0.1% fee, persisted to PostgreSQL
 	riskManager := service.NewRiskManager(nil, 10000.0)
 	alertService := service.NewAlertService(nil)
 	metricsService := service.NewMetricsService()
@@ -380,6 +380,10 @@ func main() {
 
 	// Register new feature routes (paper trading, risk, alerts, backtest, metrics)
 	featureHandler.RegisterRoutes(router.Mux())
+
+	// Register real trade routes
+	tradeHandler := httpadapter.NewTradeHandler(exchangeManager, db.Pool)
+	tradeHandler.RegisterRoutes(router.Mux())
 
 	// Register DCA bot routes
 	dcaHandler.RegisterRoutes(router.Mux())

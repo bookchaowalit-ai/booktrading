@@ -30,24 +30,246 @@ type MarketDataService_SubscribeMarketDataServer interface {
 	grpc.ServerStream
 }
 
-// RegisterOrderExecutionServiceServer stub
+// OrderExecutionService service descriptor for proper gRPC registration
+var OrderExecutionService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "tradingbot.OrderExecutionService",
+	HandlerType: (*OrderExecutionServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ExecuteOrder",
+			Handler:    _OrderExecutionService_ExecuteOrder_Handler,
+		},
+		{
+			MethodName: "CancelOrder",
+			Handler:    _OrderExecutionService_CancelOrder_Handler,
+		},
+	},
+	Streams: []grpc.StreamDesc{},
+}
+
+func _OrderExecutionService_ExecuteOrder_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OrderRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderExecutionServiceServer).ExecuteOrder(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/tradingbot.OrderExecutionService/ExecuteOrder",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderExecutionServiceServer).ExecuteOrder(ctx, req.(*OrderRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrderExecutionService_CancelOrder_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CancelOrderRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderExecutionServiceServer).CancelOrder(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/tradingbot.OrderExecutionService/CancelOrder",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderExecutionServiceServer).CancelOrder(ctx, req.(*CancelOrderRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// RegisterOrderExecutionServiceServer registers the service with gRPC server
 func RegisterOrderExecutionServiceServer(s *grpc.Server, srv OrderExecutionServiceServer) {
-	// Stub implementation - in production use protoc generated code
+	s.RegisterService(&OrderExecutionService_ServiceDesc, srv)
 }
 
-// RegisterBotStatusServiceServer stub
+// BotStatusService service descriptor
+var BotStatusService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "tradingbot.BotStatusService",
+	HandlerType: (*BotStatusServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "GetBotStatus",
+			Handler:    _BotStatusService_GetBotStatus_Handler,
+		},
+		{
+			MethodName: "StartBot",
+			Handler:    _BotStatusService_StartBot_Handler,
+		},
+		{
+			MethodName: "StopBot",
+			Handler:    _BotStatusService_StopBot_Handler,
+		},
+	},
+	Streams: []grpc.StreamDesc{},
+}
+
+func _BotStatusService_GetBotStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetBotStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BotStatusServiceServer).GetBotStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: "/tradingbot.BotStatusService/GetBotStatus"}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BotStatusServiceServer).GetBotStatus(ctx, req.(*GetBotStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BotStatusService_StartBot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StartBotRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BotStatusServiceServer).StartBot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: "/tradingbot.BotStatusService/StartBot"}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BotStatusServiceServer).StartBot(ctx, req.(*StartBotRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BotStatusService_StopBot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StopBotRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BotStatusServiceServer).StopBot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: "/tradingbot.BotStatusService/StopBot"}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BotStatusServiceServer).StopBot(ctx, req.(*StopBotRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// RegisterBotStatusServiceServer registers the service with gRPC server
 func RegisterBotStatusServiceServer(s *grpc.Server, srv BotStatusServiceServer) {
-	// Stub implementation
+	s.RegisterService(&BotStatusService_ServiceDesc, srv)
 }
 
-// RegisterMarketDataServiceServer stub
+// MarketDataService service descriptor
+var MarketDataService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "tradingbot.MarketDataService",
+	HandlerType: (*MarketDataServiceServer)(nil),
+	Methods:     []grpc.MethodDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "SubscribeMarketData",
+			Handler:       _MarketDataService_SubscribeMarketData_Handler,
+			ServerStreams: true,
+		},
+	},
+}
+
+func _MarketDataService_SubscribeMarketData_Handler(srv interface{}, stream grpc.ServerStream) error {
+	req := new(SubscribeRequest)
+	if err := stream.RecvMsg(req); err != nil {
+		return err
+	}
+	return srv.(MarketDataServiceServer).SubscribeMarketData(req, &marketDataSubscribeMarketDataServer{stream})
+}
+
+type marketDataSubscribeMarketDataServer struct {
+	grpc.ServerStream
+}
+
+func (x *marketDataSubscribeMarketDataServer) Send(m *MarketData) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+// RegisterMarketDataServiceServer registers the service with gRPC server
 func RegisterMarketDataServiceServer(s *grpc.Server, srv MarketDataServiceServer) {
-	// Stub implementation
+	s.RegisterService(&MarketDataService_ServiceDesc, srv)
 }
 
-// RegisterDexServiceServer stub
+// DexService service descriptor
+var DexService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "tradingbot.DexService",
+	HandlerType: (*DexServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{MethodName: "GetQuote", Handler: _DexService_GetQuote_Handler},
+		{MethodName: "Swap", Handler: _DexService_Swap_Handler},
+		{MethodName: "GetTokenInfo", Handler: _DexService_GetTokenInfo_Handler},
+		{MethodName: "GetBalance", Handler: _DexService_GetBalance_Handler},
+	},
+	Streams: []grpc.StreamDesc{},
+}
+
+func _DexService_GetQuote_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetQuoteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DexServiceServer).GetQuote(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: "/tradingbot.DexService/GetQuote"}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DexServiceServer).GetQuote(ctx, req.(*GetQuoteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DexService_Swap_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SwapRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DexServiceServer).Swap(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: "/tradingbot.DexService/Swap"}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DexServiceServer).Swap(ctx, req.(*SwapRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DexService_GetTokenInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TokenInfoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DexServiceServer).GetTokenInfo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: "/tradingbot.DexService/GetTokenInfo"}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DexServiceServer).GetTokenInfo(ctx, req.(*TokenInfoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DexService_GetBalance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BalanceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DexServiceServer).GetBalance(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: "/tradingbot.DexService/GetBalance"}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DexServiceServer).GetBalance(ctx, req.(*BalanceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// RegisterDexServiceServer registers the service with gRPC server
 func RegisterDexServiceServer(s *grpc.Server, srv DexServiceServer) {
-	// Stub implementation
+	s.RegisterService(&DexService_ServiceDesc, srv)
 }
 
 // OrderExecutionServiceServer interface

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"trading-bot-system/backend/internal/domain/model"
 	"trading-bot-system/backend/internal/logger"
 )
@@ -35,11 +36,14 @@ type PaperEngine struct {
 
 	// Last trade time for cooldown
 	lastTradeAt time.Time
+
+	// Database pool for persistence
+	db *pgxpool.Pool
 }
 
 // NewPaperEngine creates a new paper trading engine
-func NewPaperEngine(initialBalance float64, feeRate float64) *PaperEngine {
-	return &PaperEngine{
+func NewPaperEngine(initialBalance float64, feeRate float64, db *pgxpool.Pool) *PaperEngine {
+	pe := &PaperEngine{
 		portfolio: &model.PaperPortfolio{
 			InitialBalance: initialBalance,
 			CurrentBalance: initialBalance,
@@ -55,7 +59,11 @@ func NewPaperEngine(initialBalance float64, feeRate float64) *PaperEngine {
 		initialBalance: initialBalance,
 		feeRate:        feeRate,
 		peakBalance:    initialBalance,
+		db:             db,
 	}
+	// Load persisted trades from DB
+	pe.loadFromDB()
+	return pe
 }
 
 // PlaceOrder creates a simulated order
@@ -140,6 +148,9 @@ func (e *PaperEngine) fillOrder(order *model.PaperOrder, marketPrice float64) {
 		"price", execPrice,
 		"fee", order.Fee,
 	)
+
+	// Persist trade to database
+	e.persistTrade(order)
 }
 
 // applyBuy adds to or creates a position
@@ -318,4 +329,120 @@ func (e *PaperEngine) Reset() {
 	e.orders = make(map[string]*model.PaperOrder)
 	e.tradeHistory = make([]*model.PaperOrder, 0)
 	e.peakBalance = e.initialBalance
+}
+
+// persistTrade saves a filled order to the database
+func (e *PaperEngine) persistTrade(order *model.PaperOrder) {
+	if e.db == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := e.db.Exec(ctx,
+		`INSERT INTO paper_trades (id, symbol, side, type, quantity, price, limit_price, fee, status, created_at, filled_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		 ON CONFLICT (id) DO NOTHING`,
+		order.ID, order.Symbol, string(order.Side), string(order.Type),
+		order.Quantity, order.Price, order.LimitPrice, order.Fee,
+		string(order.Status), order.CreatedAt, order.FilledAt,
+	)
+	if err != nil {
+		logger.Error("Failed to persist paper trade", "id", order.ID, "error", err)
+	}
+}
+
+// loadFromDB restores trade history and portfolio state from the database
+func (e *PaperEngine) loadFromDB() {
+	if e.db == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	rows, err := e.db.Query(ctx,
+		`SELECT id, symbol, side, type, quantity, price, limit_price, fee, status, created_at, filled_at
+		 FROM paper_trades ORDER BY created_at ASC`)
+	if err != nil {
+		logger.Error("Failed to load paper trades from DB", "error", err)
+		return
+	}
+	defer rows.Close()
+
+	balance := e.initialBalance
+	positions := make(map[string]*model.PaperPosition)
+
+	for rows.Next() {
+		var order model.PaperOrder
+		var sideStr, typeStr, statusStr string
+		var filledAt *time.Time
+
+		err := rows.Scan(
+			&order.ID, &order.Symbol, &sideStr, &typeStr,
+			&order.Quantity, &order.Price, &order.LimitPrice, &order.Fee,
+			&statusStr, &order.CreatedAt, &filledAt,
+		)
+		if err != nil {
+			logger.Error("Failed to scan paper trade row", "error", err)
+			continue
+		}
+		order.Side = model.OrderSide(sideStr)
+		order.Type = model.OrderType(typeStr)
+		order.Status = model.PaperOrderStatus(statusStr)
+		order.FilledAt = filledAt
+
+		e.tradeHistory = append(e.tradeHistory, &order)
+		e.orders[order.ID] = &order
+
+		// Rebuild portfolio state
+		if order.Side == model.SideBuy {
+			balance -= order.Quantity*order.Price + order.Fee
+			pos, ok := positions[order.Symbol]
+			if !ok {
+				positions[order.Symbol] = &model.PaperPosition{
+					Symbol:        order.Symbol,
+					Quantity:      order.Quantity,
+					AvgEntryPrice: order.Price,
+					CurrentPrice:  order.Price,
+				}
+			} else {
+				totalQty := pos.Quantity + order.Quantity
+				pos.AvgEntryPrice = (pos.AvgEntryPrice*pos.Quantity + order.Price*order.Quantity) / totalQty
+				pos.Quantity = totalQty
+			}
+		} else if order.Side == model.SideSell {
+			balance += order.Quantity*order.Price - order.Fee
+			pos, ok := positions[order.Symbol]
+			if ok {
+				pnl := (order.Price - pos.AvgEntryPrice) * order.Quantity
+				pos.RealizedPnL += pnl
+				pos.Quantity -= order.Quantity
+				e.portfolio.TotalTrades++
+				if pnl > 0 {
+					e.portfolio.WinTrades++
+				} else {
+					e.portfolio.LossTrades++
+				}
+				if pos.Quantity <= 0.000001 {
+					delete(positions, order.Symbol)
+				}
+			}
+		}
+	}
+
+	e.portfolio.CurrentBalance = balance
+	e.portfolio.Positions = make([]model.PaperPosition, 0, len(positions))
+	for _, pos := range positions {
+		e.portfolio.Positions = append(e.portfolio.Positions, *pos)
+	}
+	e.recalculatePortfolio()
+
+	loaded := len(e.tradeHistory)
+	if loaded > 0 {
+		logger.Info("Loaded paper trades from DB",
+			"count", loaded,
+			"balance", balance,
+			"positions", len(e.portfolio.Positions),
+		)
+	}
 }

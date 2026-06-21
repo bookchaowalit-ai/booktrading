@@ -463,6 +463,180 @@ export const api = {
     });
     // Don't throw on error - this is a best-effort operation
   },
+
+  // ── Real Grid Trading ───────────────────────────────────────────────────────
+
+  async getRealGridStatus() {
+    try {
+      const response = await apiFetch(`${STRATEGY_API_URL}/api/real-grid/status`, {
+        headers: authHeaders(),
+      });
+      if (!response.ok) return null;
+      return response.json();
+    } catch {
+      return null;
+    }
+  },
+
+  async killRealGrid(): Promise<void> {
+    const response = await apiFetch(`${STRATEGY_API_URL}/api/real-grid/kill`, {
+      method: 'POST',
+      headers: authHeaders(),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to kill grid bot' }));
+      throw new Error(error.error || 'Failed to kill grid bot');
+    }
+  },
+
+  async enableRealGrid(): Promise<void> {
+    const response = await apiFetch(`${STRATEGY_API_URL}/api/real-grid/enable`, {
+      method: 'POST',
+      headers: authHeaders(),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to enable grid bot' }));
+      throw new Error(error.error || 'Failed to enable grid bot');
+    }
+  },
+
+  async getDailyReport(symbol: string = 'BTCTHB') {
+    try {
+      const response = await apiFetch(`${STRATEGY_API_URL}/api/report/daily?symbol=${symbol}`, {
+        headers: authHeaders(),
+      });
+      if (!response.ok) return null;
+      return response.json();
+    } catch {
+      return null;
+    }
+  },
+
+  async getTradeStatus() {
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/api/trade/status`, {
+        headers: authHeaders(),
+      });
+      if (!response.ok) return null;
+      return response.json();
+    } catch {
+      return null;
+    }
+  },
+
+  async getTradeBalances(): Promise<Array<{ asset: string; free: number; locked: number; total: number }>> {
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/api/trade/balances`, {
+        headers: authHeaders(),
+      });
+      if (!response.ok) return [];
+      const data = await response.json();
+      return data.balances || [];
+    } catch {
+      return [];
+    }
+  },
+
+  async getTradeTicker(symbol: string) {
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/api/trade/ticker?symbol=${symbol}`, {
+        headers: authHeaders(),
+      });
+      if (!response.ok) return null;
+      return response.json();
+    } catch {
+      return null;
+    }
+  },
+
+  async getTradeOpenOrders(symbol: string = 'BTCTHB') {
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/api/trade/open-orders?symbol=${symbol}`, {
+        headers: authHeaders(),
+      });
+      if (!response.ok) return { symbol, orders: [] };
+      return response.json();
+    } catch {
+      return { symbol, orders: [] };
+    }
+  },
+
+  async getRealTradeHistory(limit: number = 50) {
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/api/trade/history?limit=${limit}`, {
+        headers: authHeaders(),
+      });
+      if (!response.ok) return [];
+      return response.json();
+    } catch {
+      return [];
+    }
+  },
+
+  async cancelTradeOrder(symbol: string, orderId: number): Promise<void> {
+    const response = await apiFetch(`${API_BASE_URL}/api/trade/cancel-order`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ symbol, orderId }),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to cancel order' }));
+      throw new Error(error.error || 'Failed to cancel order');
+    }
+  },
+
+  // ── Risk Manager ────────────────────────────────────────────────────────────
+
+  async getRiskStatus() {
+    try {
+      const response = await apiFetch(`${STRATEGY_API_URL}/api/risk/status`, {
+        headers: authHeaders(),
+      });
+      if (!response.ok) return null;
+      return response.json();
+    } catch {
+      return null;
+    }
+  },
+
+  async resetRisk(): Promise<void> {
+    const response = await apiFetch(`${STRATEGY_API_URL}/api/risk/reset`, {
+      method: 'POST',
+      headers: authHeaders(),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to reset risk' }));
+      throw new Error(error.error || 'Failed to reset risk');
+    }
+  },
+
+  // ── Trade Journal ─────────────────────────────────────────────────────────
+
+  async getTradeJournalEntries(limit: number = 50, status?: string) {
+    try {
+      const params = new URLSearchParams({ limit: String(limit) });
+      if (status) params.set('status', status);
+      const response = await apiFetch(`${API_BASE_URL}/api/journal/list?${params}`, {
+        headers: authHeaders(),
+      });
+      if (!response.ok) return [];
+      return response.json();
+    } catch {
+      return [];
+    }
+  },
+
+  async getJournalStats() {
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/api/journal/stats`, {
+        headers: authHeaders(),
+      });
+      if (!response.ok) return null;
+      return response.json();
+    } catch {
+      return null;
+    }
+  },
 };
 
 export default api;

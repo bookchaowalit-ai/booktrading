@@ -348,15 +348,14 @@ func toLower(s string) string {
 	return result
 }
 
-// BinanceOrderExecutor implements OrderExecutor for Binance
+// BinanceOrderExecutor implements OrderExecutor for Binance (REAL order placement)
 type BinanceOrderExecutor struct {
 	apiKey     string
 	apiSecret  string
 	baseURL    string
-	httpClient *httpClient
+	httpClient *http.Client
+	useTestnet bool
 }
-
-type httpClient struct{}
 
 // NewBinanceOrderExecutor creates a new Binance order executor
 func NewBinanceOrderExecutor(apiKey, apiSecret string, useTestnet bool) *BinanceOrderExecutor {
@@ -369,43 +368,239 @@ func NewBinanceOrderExecutor(apiKey, apiSecret string, useTestnet bool) *Binance
 		apiKey:     apiKey,
 		apiSecret:  apiSecret,
 		baseURL:    baseURL,
-		httpClient: &httpClient{},
+		httpClient: &http.Client{Timeout: 30 * time.Second},
+		useTestnet: useTestnet,
 	}
 }
 
-// PlaceOrder places an order on Binance
-func (b *BinanceOrderExecutor) PlaceOrder(ctx context.Context, order *model.Order) (*model.Order, error) {
-	// For demo purposes, we'll simulate order execution
-	// In production, this would call Binance API
-	logger.Info("Placing order on Binance", "symbol", order.Symbol, "side", order.Side, "quantity", order.Quantity)
+// generateSignature creates HMAC SHA256 signature for Binance API
+func (b *BinanceOrderExecutor) generateSignature(queryString string) string {
+	mac := hmac.New(sha256.New, []byte(b.apiSecret))
+	mac.Write([]byte(queryString))
+	return hex.EncodeToString(mac.Sum(nil))
+}
 
-	// Simulate order execution
-	executedOrder := &model.Order{
+// BinanceOrderResponse represents the response from Binance order API
+type BinanceOrderResponse struct {
+	Symbol            string  `json:"symbol"`
+	OrderID           int64   `json:"orderId"`
+	ClientOrderID     string  `json:"clientOrderId"`
+	Price             string  `json:"price"`
+	OrigQty           string  `json:"origQty"`
+	ExecutedQty       string  `json:"executedQty"`
+	Status            string  `json:"status"`
+	TimeInForce       string  `json:"timeInForce"`
+	Type              string  `json:"type"`
+	Side              string  `json:"side"`
+	TransactTime      int64   `json:"transactTime"`
+	CumQuoteQty       string  `json:"cummulativeQuoteQty"`
+}
+
+// PlaceOrder places a REAL order on Binance via REST API
+func (b *BinanceOrderExecutor) PlaceOrder(ctx context.Context, order *model.Order) (*model.Order, error) {
+	if b.apiKey == "" || b.apiSecret == "" {
+		return nil, fmt.Errorf("Binance API credentials not configured — cannot place real order")
+	}
+
+	logger.Info("Placing REAL order on Binance",
+		"symbol", order.Symbol, "side", order.Side,
+		"quantity", order.Quantity, "price", order.Price,
+		"baseURL", b.baseURL,
+	)
+
+	// Determine order type
+	orderType := "MARKET"
+	params := fmt.Sprintf("symbol=%s&side=%s&type=%s&quantity=%s&timestamp=%d",
+		order.Symbol,
+		order.Side,
+		orderType,
+		strconv.FormatFloat(order.Quantity, 'f', -1, 64),
+		time.Now().UnixMilli(),
+	)
+
+	// For LIMIT orders, add price and timeInForce
+	if order.Type == model.OrderTypeLimit && order.Price > 0 {
+		orderType = "LIMIT"
+		params = fmt.Sprintf("symbol=%s&side=%s&type=%s&quantity=%s&price=%s&timeInForce=GTC&timestamp=%d",
+			order.Symbol,
+			order.Side,
+			orderType,
+			strconv.FormatFloat(order.Quantity, 'f', -1, 64),
+			strconv.FormatFloat(order.Price, 'f', -1, 64),
+			time.Now().UnixMilli(),
+		)
+	}
+
+	// Generate signature
+	signature := b.generateSignature(params)
+
+	// Create request
+	reqURL := fmt.Sprintf("%s/api/v3/order?%s&signature=%s", b.baseURL, params, signature)
+	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("X-MBX-APIKEY", b.apiKey)
+	req.Header.Set("Accept", "application/json")
+
+	// Execute request
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("Binance API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Check HTTP status
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Binance API returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Check for API error
+	var errResp struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	if err := json.Unmarshal(body, &errResp); err == nil && errResp.Code != 0 {
+		return nil, fmt.Errorf("Binance API error (code %d): %s", errResp.Code, errResp.Msg)
+	}
+
+	// Parse successful response
+	var binanceResp BinanceOrderResponse
+	if err := json.Unmarshal(body, &binanceResp); err != nil {
+		return nil, fmt.Errorf("failed to parse Binance order response: %w, body: %s", err, string(body))
+	}
+
+	// Map Binance status to our model status
+	status := model.OrderStatusPending
+	switch binanceResp.Status {
+	case "FILLED":
+		status = model.OrderStatusFilled
+	case "CANCELED", "EXPIRED", "REJECTED":
+		status = model.OrderStatusRejected
+	case "NEW", "PARTIALLY_FILLED":
+		status = model.OrderStatusPending
+	}
+
+	executedQty, _ := strconv.ParseFloat(binanceResp.ExecutedQty, 64)
+	price, _ := strconv.ParseFloat(binanceResp.Price, 64)
+	if price == 0 {
+		price = order.Price
+	}
+
+	result := &model.Order{
 		ID:        order.ID,
 		Symbol:    order.Symbol,
 		Side:      order.Side,
 		Type:      order.Type,
-		Quantity:  order.Quantity,
-		Price:     order.Price,
-		Status:    model.OrderStatusFilled,
+		Quantity:  executedQty,
+		Price:     price,
+		Status:    status,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
 
-	return executedOrder, nil
+	logger.Info("REAL order placed on Binance",
+		"orderId", binanceResp.OrderID,
+		"symbol", binanceResp.Symbol,
+		"status", binanceResp.Status,
+		"executedQty", binanceResp.ExecutedQty,
+		"cumQuote", binanceResp.CumQuoteQty,
+	)
+
+	return result, nil
 }
 
 // CancelOrder cancels an order on Binance
 func (b *BinanceOrderExecutor) CancelOrder(ctx context.Context, orderID string, symbol model.TradeSymbol) error {
-	logger.Info("Cancelling order on Binance", "order_id", orderID, "symbol", symbol)
+	if b.apiKey == "" || b.apiSecret == "" {
+		return fmt.Errorf("Binance API credentials not configured")
+	}
+
+	timestamp := strconv.FormatInt(time.Now().UnixMilli(), 10)
+	params := fmt.Sprintf("symbol=%s&orderId=%s&timestamp=%s", symbol, orderID, timestamp)
+	signature := b.generateSignature(params)
+
+	reqURL := fmt.Sprintf("%s/api/v3/order?%s&signature=%s", b.baseURL, params, signature)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", reqURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("X-MBX-APIKEY", b.apiKey)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("Binance cancel request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("Binance cancel returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	logger.Info("Order cancelled on Binance", "orderId", orderID, "symbol", symbol)
 	return nil
 }
 
 // GetOrderStatus gets the status of an order from Binance
 func (b *BinanceOrderExecutor) GetOrderStatus(ctx context.Context, orderID string, symbol model.TradeSymbol) (*model.Order, error) {
+	if b.apiKey == "" || b.apiSecret == "" {
+		return nil, fmt.Errorf("Binance API credentials not configured")
+	}
+
+	timestamp := strconv.FormatInt(time.Now().UnixMilli(), 10)
+	params := fmt.Sprintf("symbol=%s&orderId=%s&timestamp=%s", symbol, orderID, timestamp)
+	signature := b.generateSignature(params)
+
+	reqURL := fmt.Sprintf("%s/api/v3/order?%s&signature=%s", b.baseURL, params, signature)
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("X-MBX-APIKEY", b.apiKey)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("Binance request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Binance returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var binanceResp BinanceOrderResponse
+	if err := json.Unmarshal(body, &binanceResp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w, body: %s", err, string(body))
+	}
+
+	status := model.OrderStatusPending
+	switch binanceResp.Status {
+	case "FILLED":
+		status = model.OrderStatusFilled
+	case "CANCELED", "EXPIRED", "REJECTED":
+		status = model.OrderStatusRejected
+	}
+
 	return &model.Order{
 		ID:     orderID,
 		Symbol: symbol,
-		Status: model.OrderStatusFilled,
+		Status: status,
 	}, nil
 }

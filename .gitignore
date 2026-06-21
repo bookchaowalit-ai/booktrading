@@ -49,9 +49,9 @@ backend/coverage.html
 # ======================
 # STRATEGY (Python)
 # ======================
-strategy/__pycache__/
-strategy/*.py[cod]
-strategy/*$py.class
+**/__pycache__/
+*.py[cod]
+*$py.class
 strategy/venv/
 strategy/env/
 strategy/.venv/

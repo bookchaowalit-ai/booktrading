@@ -6,7 +6,7 @@
 |---------|-----|-------------|
 | **Backend API** | `http://localhost:8080` | Main API (auth, bot, orders, etc.) |
 | **WebSocket** | `ws://localhost:8081/ws` | Real-time updates |
-| **Strategy API** | `http://localhost:8000` | AI predictions, arbitrage |
+| **Strategy API** | `http://localhost:8000` | AI predictions, arbitrage, real grid bot |
 
 ---
 
@@ -229,6 +229,104 @@ GET /strategy-api/api/arbitrage/opportunities?limit=10
 ### Update Price (for Arbitrage Detection)
 ```http
 POST /strategy-api/api/arbitrage/update-price?exchange=binance_th&symbol=BTCTHB&price=2280000&volume=100
+```
+
+---
+
+## 🤖 Real Grid Bot Endpoints (Strategy API)
+
+These endpoints control the **real** BTCTHB grid bot trading on Binance TH.
+
+### Get Real Grid Status
+```http
+GET /api/real-grid/status
+```
+
+**Response:**
+```json
+{
+  "enabled": true,
+  "running": true,
+  "symbols": {
+    "BTCTHB": {
+      "last_price": 2097671.0,
+      "active_buys": 6,
+      "active_sells": 4,
+      "trades_executed": 0,
+      "daily_pnl": 0.0,
+      "halted": false
+    }
+  }
+}
+```
+
+### Kill Switch (Halt Bot)
+```http
+POST /api/real-grid/kill
+```
+
+**Response:**
+```json
+{
+  "enabled": false,
+  "message": "Real grid bot disabled"
+}
+```
+
+### Resume Bot
+```http
+POST /api/real-grid/enable
+```
+
+**Response:**
+```json
+{
+  "enabled": true,
+  "message": "Real grid bot enabled"
+}
+```
+
+---
+
+## 📊 Daily Report Endpoint (Strategy API)
+
+Export comprehensive daily report for audit and monitoring.
+
+### Get Daily Report
+```http
+GET /api/report/daily?symbol=BTCTHB
+```
+
+**Response:**
+```json
+{
+  "symbol": "BTCTHB",
+  "bot_enabled": true,
+  "bot_running": true,
+  "symbol_state": {
+    "last_price": 2097671.0,
+    "active_buys": 6,
+    "active_sells": 4,
+    "daily_pnl": 0.0,
+    "daily_trades": 0,
+    "halted": false
+  },
+  "open_orders": [...],
+  "filled_trades": [...],
+  "risk": {
+    "halted": false,
+    "daily_pnl": 0.0,
+    "daily_trades": 0,
+    "consecutive_losses": 0,
+    "current_drawdown_pct": 0.0
+  },
+  "journal_stats": {
+    "total_entries": 10,
+    "open_entries": 10,
+    "closed_entries": 0
+  },
+  "risk_events": []
+}
 ```
 
 ---

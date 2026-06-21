@@ -1,0 +1,16 @@
+# Backend Dev Dockerfile — Go with hot-reload
+FROM golang:1.21-alpine
+
+WORKDIR /app
+
+# Install git for go mod tidy
+RUN apk add --no-cache git
+
+# Copy go mod files
+COPY go.mod ./
+
+# Expose ports
+EXPOSE 8080 8081 9000
+
+# Command will be overridden by docker-compose
+CMD ["sh", "-c", "go mod tidy && go run ./cmd"]

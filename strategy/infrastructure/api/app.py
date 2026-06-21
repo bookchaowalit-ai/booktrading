@@ -5,6 +5,7 @@ Provides REST API for strategy control and monitoring.
 import asyncio
 import logging
 import math
+import os
 import random
 import time
 from collections import defaultdict
@@ -30,14 +31,15 @@ from infrastructure.grpc.grpc_client import GRPCClientManager
 
 logger = logging.getLogger(__name__)
 
-# ── Authentication ──────────────────────────────────────────────────────────────
+# ── Configuration ──────────────────────────────────────────────────────────────
 API_TOKEN: Optional[str] = None  # Set via AUTH_TOKEN env var
+DISABLE_PAPER_BOT = os.getenv("DISABLE_PAPER_BOT", "false").lower() in ("true", "1", "yes")
 
 
 def require_auth(request: Request):
     """Validate the Authorization header against the configured API token."""
-    if API_TOKEN is None:
-        return True  # No token configured — allow all (dev mode)
+    if not API_TOKEN:  # None or empty string = dev mode, allow all
+        return True
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         return False
@@ -196,6 +198,22 @@ async def lifespan(app: FastAPI):
     redis_adapter = RedisAdapter(host=redis_host, port=redis_port, password=redis_password)
     await redis_adapter.connect()
 
+    # Start grid trading bot as background task (PAPER trading)
+    if DISABLE_PAPER_BOT:
+        logger.info("Paper trading bot DISABLED via DISABLE_PAPER_BOT env var")
+        app.state.grid_bot_task = None
+    else:
+        from app.grid_bot import get_grid_bot
+        grid_bot = get_grid_bot()
+        app.state.grid_bot_task = asyncio.create_task(grid_bot.start())
+        logger.info("Grid trading bot started (BTC + ETH paper trading)")
+
+    # Start REAL grid trading bot as background task
+    from app.real_grid_bot import get_real_grid_bot
+    real_grid_bot = get_real_grid_bot()
+    app.state.real_grid_bot_task = asyncio.create_task(real_grid_bot.start())
+    logger.info("Real grid trading bot started (BTCTHB — real orders)")
+
     # Create order executor callback using gRPC
     def execute_order_via_grpc(signal: OrderSignal) -> bool:
         if grpc_client_manager:
@@ -261,6 +279,13 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
+    if hasattr(app.state, "real_grid_bot_task"):
+        app.state.real_grid_bot_task.cancel()
+        try:
+            await app.state.real_grid_bot_task
+        except asyncio.CancelledError:
+            pass
+
     if hasattr(app.state, "market_data_task"):
         app.state.market_data_task.cancel()
         try:
@@ -845,6 +870,138 @@ def register_routes(app: FastAPI):
                     for a in anomaly_report.anomalies[:5]
                 ],
             },
+        }
+
+    # ── Real Grid Bot Endpoints ──
+
+    @app.get("/api/real-grid/status")
+    async def real_grid_status():
+        """Get real grid bot status."""
+        from app.real_grid_bot import get_real_grid_bot
+        bot = get_real_grid_bot()
+        return bot.get_status()
+
+    @app.post("/api/real-grid/kill")
+    @auth_required
+    async def real_grid_kill(request: Request):
+        """Kill switch — halt all real trading."""
+        from app.real_grid_bot import get_real_grid_bot
+        bot = get_real_grid_bot()
+        bot.disable()
+        return {"status": "killed", "message": "All real trading halted"}
+
+    @app.post("/api/real-grid/enable")
+    @auth_required
+    async def real_grid_enable(request: Request):
+        """Re-enable real grid bot after kill switch."""
+        from app.real_grid_bot import get_real_grid_bot
+        bot = get_real_grid_bot()
+        bot.enable()
+        return {"status": "enabled", "message": "Real trading resumed"}
+
+    # ── Risk Manager Endpoints ──
+
+    @app.get("/api/risk/status")
+    async def risk_status():
+        """Get risk manager status and metrics."""
+        from app.risk_manager import get_risk_manager
+        rm = get_risk_manager()
+        return rm.get_status()
+
+    @app.post("/api/risk/reset")
+    @auth_required
+    async def risk_reset(request: Request):
+        """Reset risk manager kill switch."""
+        from app.risk_manager import get_risk_manager
+        rm = get_risk_manager()
+        rm.reset_kill_switch()
+        return {"status": "reset", "message": "Risk manager kill switch reset"}
+
+    # ── Trade Journal Endpoints (from strategy side) ──
+
+    @app.get("/api/journal/entries")
+    async def journal_entries(limit: int = 50, status: str = None):
+        """Get trade journal entries (from in-memory cache + backend DB)."""
+        from app.trade_journal import get_trade_journal
+        journal = get_trade_journal()
+        return {
+            "in_memory": journal.get_recent_entries(limit),
+            "stats": journal.get_stats(),
+        }
+
+    # ── Daily Report ──
+
+    @app.get("/api/report/daily")
+    async def daily_report(symbol: str = "BTCTHB"):
+        """Export daily report: open orders, filled trades, PnL, fees, risk events."""
+        from app.real_grid_bot import get_real_grid_bot, BACKEND_API_BASE
+        from app.risk_manager import get_risk_manager
+        from app.trade_journal import get_trade_journal
+        import httpx as _httpx
+
+        bot = get_real_grid_bot()
+        risk = get_risk_manager()
+        journal = get_trade_journal()
+
+        # Fetch open orders from backend
+        open_orders = []
+        try:
+            async with _httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    f"{BACKEND_API_BASE}/api/trade/open-orders",
+                    params={"symbol": symbol},
+                )
+                if resp.status_code == 200:
+                    open_orders = resp.json().get("orders", [])
+        except Exception:
+            pass
+
+        # Fetch filled trades from backend
+        filled_trades = []
+        try:
+            async with _httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    f"{BACKEND_API_BASE}/api/trade/history",
+                    params={"limit": "100"},
+                )
+                if resp.status_code == 200:
+                    all_trades = resp.json()
+                    filled_trades = [t for t in all_trades if t.get("symbol") == symbol and t.get("status") == "FILLED"]
+        except Exception:
+            pass
+
+        # Symbol state
+        sym_state = bot.states.get(symbol)
+        symbol_info = {}
+        if sym_state:
+            symbol_info = {
+                "last_price": sym_state.last_price,
+                "active_buys": len(sym_state.active_buys),
+                "active_sells": len(sym_state.active_sells),
+                "daily_pnl": round(sym_state.daily_pnl, 2),
+                "daily_trades": sym_state.daily_trades,
+                "halted": sym_state.halted,
+            }
+
+        return {
+            "symbol": symbol,
+            "bot_enabled": bot._enabled,
+            "bot_running": bot._running,
+            "symbol_state": symbol_info,
+            "open_orders": open_orders,
+            "filled_trades": filled_trades,
+            "risk": {
+                "halted": risk.state.halted,
+                "halt_reason": risk.state.halt_reason,
+                "daily_pnl": round(risk.state.daily_pnl, 2),
+                "daily_trades": risk.state.daily_trades,
+                "daily_wins": risk.state.daily_wins,
+                "daily_losses": risk.state.daily_losses,
+                "consecutive_losses": risk.state.consecutive_losses,
+                "current_drawdown_pct": round(risk.state.current_drawdown_pct, 2),
+            },
+            "journal_stats": journal.get_stats(),
+            "risk_events": risk.state.risk_events[-20:],  # last 20 events
         }
 
 

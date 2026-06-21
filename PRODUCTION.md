@@ -85,6 +85,11 @@ BINANCE_USE_TESTNET=false
 BITKUB_API_KEY=
 BITKUB_API_SECRET=
 BITKUB_USE_TESTNET=false
+
+# Real Trading Configuration
+REAL_SYMBOLS=BTCTHB               # Symbol for real trading (Binance TH)
+DISABLE_PAPER_BOT=true            # Disable paper bot to reduce log noise
+AUTH_TOKEN=                       # Leave empty for dev, set for production auth
 ```
 
 ---
@@ -190,6 +195,37 @@ free -h
 
 # Monitor Docker containers
 docker stats
+```
+
+### Daily Report & Snapshots
+
+The strategy API provides a daily report endpoint for audit:
+
+```bash
+# Get daily report (inside container)
+curl http://localhost:8000/api/report/daily?symbol=BTCTHB
+```
+
+To automate snapshot cadence (every 5 hours):
+
+```bash
+# Add to crontab
+crontab -e
+# Add: 0 */5 * * * cd /opt/bookfinance && docker compose exec -T strategy python3 /app/scripts/snapshot_report.py >> /var/log/bookfinance-snapshot.log 2>&1
+```
+
+Snapshots are saved to `strategy/reports/grid-bot/` inside the container.
+
+### Backfill Trade Journal
+
+If trade_journal entries are missing (e.g., orders created before journal system):
+
+```bash
+# Copy script to container
+docker compose cp strategy/scripts/backfill_journal.py strategy:/app/scripts/
+
+# Run backfill
+docker compose exec strategy python3 /app/scripts/backfill_journal.py
 ```
 
 ---

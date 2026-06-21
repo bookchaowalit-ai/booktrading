@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 	"trading-bot-system/backend/internal/adapter/database"
 	"trading-bot-system/backend/internal/adapter/exchange/bitkub"
 	"trading-bot-system/backend/internal/config"
+	"trading-bot-system/backend/internal/domain/model"
 	"trading-bot-system/backend/internal/logger"
 )
 
@@ -15,6 +17,7 @@ type ExchangeManager struct {
 	mu               sync.RWMutex
 	currentProvider  config.ExchangeProvider
 	binanceAdapter   *BinanceAdapter
+	binanceExecutor  *BinanceOrderExecutor
 	binanceTHAdapter *BinanceTHAdapter
 	bitkubClient     *bitkub.Client
 	apiKeys          map[string]*config.ExchangeAPIKey
@@ -56,6 +59,21 @@ func NewExchangeManager(cfg *config.ExchangeConfig, dbRepo *database.APIKeyRepos
 		dbRepo:          dbRepo,
 	}
 
+	// Initialize adapters from env config keys first
+	for provider, key := range cfg.APIKeys {
+		if key.Enabled && key.APIKey != "" {
+			switch provider {
+			case string(config.ExchangeBinance):
+				manager.binanceAdapter = NewBinanceAdapter(key.APIKey, key.APISecret, key.UseTestnet)
+				manager.binanceExecutor = NewBinanceOrderExecutor(key.APIKey, key.APISecret, key.UseTestnet)
+			case string(config.ExchangeBinanceTH):
+				manager.binanceTHAdapter = NewBinanceTHAdapter(key.APIKey, key.APISecret)
+			case string(config.ExchangeBitkub):
+				manager.bitkubClient = bitkub.NewClient(key.APIKey, key.APISecret, key.UseTestnet)
+			}
+		}
+	}
+
 	// Load API keys from database and override config
 	ctx := context.Background()
 	dbKeys, err := dbRepo.GetAllAPIKeys(ctx)
@@ -68,10 +86,11 @@ func NewExchangeManager(cfg *config.ExchangeConfig, dbRepo *database.APIKeyRepos
 				Enabled:    true,
 			}
 
-			// Initialize adapters based on loaded keys
+			// Initialize adapters based on loaded keys (override env config)
 			switch key.Provider {
 			case string(config.ExchangeBinance):
 				manager.binanceAdapter = NewBinanceAdapter(key.APIKey, key.APISecret, key.UseTestnet)
+				manager.binanceExecutor = NewBinanceOrderExecutor(key.APIKey, key.APISecret, key.UseTestnet)
 			case string(config.ExchangeBinanceTH):
 				manager.binanceTHAdapter = NewBinanceTHAdapter(key.APIKey, key.APISecret)
 			case string(config.ExchangeBitkub):
@@ -128,6 +147,7 @@ func (m *ExchangeManager) ConfigureExchange(provider, apiKey, apiSecret string, 
 	switch config.ExchangeProvider(provider) {
 	case config.ExchangeBinance:
 		m.binanceAdapter = NewBinanceAdapter(apiKey, apiSecret, useTestnet)
+		m.binanceExecutor = NewBinanceOrderExecutor(apiKey, apiSecret, useTestnet)
 	case config.ExchangeBinanceTH:
 		m.binanceTHAdapter = NewBinanceTHAdapter(apiKey, apiSecret)
 	case config.ExchangeBitkub:
@@ -392,13 +412,33 @@ func (m *ExchangeManager) getBitkubTicker(symbol string) (*TickerInfo, error) {
 	}, nil
 }
 
-// placeBinanceOrder places an order on Binance Global
+// placeBinanceOrder places a REAL order on Binance Global via the order executor
 func (m *ExchangeManager) placeBinanceOrder(ctx context.Context, symbol string, side string, quantity float64, price float64) (interface{}, error) {
-	if m.binanceAdapter == nil {
-		return nil, fmt.Errorf("Binance adapter not initialized")
+	if m.binanceExecutor == nil {
+		return nil, fmt.Errorf("Binance order executor not initialized — configure API keys first")
 	}
-	// TODO: Implement actual order placement on Binance
-	return nil, fmt.Errorf("Binance order placement not yet implemented")
+
+	// Determine order type
+	orderType := model.OrderTypeMarket
+	if price > 0 {
+		orderType = model.OrderTypeLimit
+	}
+
+	order := &model.Order{
+		ID:       fmt.Sprintf("real_%d", time.Now().UnixNano()),
+		Symbol:   model.TradeSymbol(symbol),
+		Side:     model.OrderSide(side),
+		Type:     orderType,
+		Quantity: quantity,
+		Price:    price,
+	}
+
+	result, err := m.binanceExecutor.PlaceOrder(ctx, order)
+	if err != nil {
+		return nil, fmt.Errorf("Binance order failed: %w", err)
+	}
+
+	return result, nil
 }
 
 // placeBinanceTHOrder places an order on Binance Thailand
@@ -437,6 +477,23 @@ func (m *ExchangeManager) GetOpenOrders(ctx context.Context, symbol string) (int
 		return nil, fmt.Errorf("Bitkub open orders not yet implemented")
 	default:
 		return nil, fmt.Errorf("unsupported exchange: %s", provider)
+	}
+}
+
+// CancelOrder cancels an order on the current exchange
+func (m *ExchangeManager) CancelOrder(ctx context.Context, symbol string, orderID int64) error {
+	m.mu.RLock()
+	provider := m.currentProvider
+	m.mu.RUnlock()
+
+	switch provider {
+	case config.ExchangeBinanceTH:
+		if m.binanceTHAdapter == nil {
+			return fmt.Errorf("Binance TH adapter not initialized")
+		}
+		return m.binanceTHAdapter.CancelOrder(ctx, symbol, orderID)
+	default:
+		return fmt.Errorf("cancel order not supported for exchange: %s", provider)
 	}
 }
 
