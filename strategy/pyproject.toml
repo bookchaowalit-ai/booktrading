@@ -22,3 +22,8 @@ known-first-party = ["core", "config", "infrastructure"]
 
 [tool.ruff.format]
 quote-style = "double"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"

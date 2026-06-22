@@ -75,6 +75,25 @@ TAKE_PROFIT_PCT = 0.20  # 20% gain → close
 STOP_LOSS_PCT = -0.15  # 15% loss → close
 MAX_HOLD_DAYS = 14  # force close after 14 days if no edge
 
+# ── Real Trading Readiness Layer ──────────────────────────────────────────────
+# Kill switch thresholds (env-overridable)
+DAILY_LOSS_LIMIT_USDC = float(os.getenv("POLY_DAILY_LOSS_LIMIT", "5.0"))  # -$5/day = ~5% of bankroll
+MAX_DRAWDOWN_PCT = float(os.getenv("POLY_MAX_DRAWDOWN", "0.05"))  # 5% from peak
+MAX_CONSECUTIVE_LOSSES = int(os.getenv("POLY_MAX_CONSEC_LOSSES", "3"))  # stop after 3 losses in a row
+API_FAILURE_HALT_THRESHOLD = 3  # halt after 3 consecutive API failures
+
+# Dry-run mode: log trades without executing
+DRY_RUN_MODE = os.getenv("POLY_DRY_RUN", "false").lower() == "true"
+
+# Market allowlist: only trade events matching these categories/keywords
+# Empty = allow all (set via POLY_MARKET_ALLOWLIST env as comma-separated keywords)
+_MARKET_ALLOWLIST_RAW = os.getenv("POLY_MARKET_ALLOWLIST", "")
+MARKET_ALLOWLIST: List[str] = [kw.strip().lower() for kw in _MARKET_ALLOWLIST_RAW.split(",") if kw.strip()] if _MARKET_ALLOWLIST_RAW else []
+
+# Blocked categories: never trade these even if they pass other filters
+_MARKET_BLOCKLIST_RAW = os.getenv("POLY_MARKET_BLOCKLIST", "politics,sports,entertainment,celebrities")
+MARKET_BLOCKLIST: List[str] = [kw.strip().lower() for kw in _MARKET_BLOCKLIST_RAW.split(",") if kw.strip()]
+
 # News RSS feeds for sentiment signal
 NEWS_FEEDS = [
     "https://feeds.bbci.co.uk/news/world/rss.xml",
@@ -255,6 +274,21 @@ class PolymarketPaperBot:
         self._news_last_fetch: float = 0.0
         self._news_fetch_interval: float = 600  # fetch news every 10 min
 
+        # ── Kill switch state ──
+        self._kill_switch_active: bool = False
+        self._kill_reason: str = ""
+        self._daily_pnl: float = 0.0
+        self._daily_pnl_date: str = ""  # YYYY-MM-DD
+        self._consecutive_losses: int = 0
+        self._api_failure_count: int = 0
+
+        # ── Dry-run tracking ──
+        self.dry_run_trades: List[Dict] = []  # logged "would-trade" entries
+
+        # ── Market allowlist/blocklist ──
+        self._market_allowlist: List[str] = MARKET_ALLOWLIST
+        self._market_blocklist: List[str] = MARKET_BLOCKLIST
+
     def set_redis(self, redis):
         """Set Redis connection for state persistence."""
         self._redis = redis
@@ -271,6 +305,15 @@ class PolymarketPaperBot:
             "Starting Polymarket Alpha Engine: interval=%ds max_pos=%d size=$%.2f signals=7",
             self.scan_interval, self.max_positions, self.position_size,
         )
+        logger.info(
+            "Kill switch: daily_loss=$%.2f max_dd=%.0f%% max_consec_losses=%d dry_run=%s",
+            DAILY_LOSS_LIMIT_USDC, MAX_DRAWDOWN_PCT * 100, MAX_CONSECUTIVE_LOSSES,
+            DRY_RUN_MODE,
+        )
+        if self._market_allowlist:
+            logger.info("Market allowlist: %s", self._market_allowlist)
+        if self._market_blocklist:
+            logger.info("Market blocklist: %s", self._market_blocklist)
 
         await self._restore_state()
         self._task = asyncio.create_task(self._scan_loop())
@@ -303,13 +346,34 @@ class PolymarketPaperBot:
 
     async def _scan_and_trade(self):
         """Single scan cycle: multi-signal alpha detection."""
+        # ── Kill switch check ──
+        if self._kill_switch_active:
+            logger.warning("KILL SWITCH ACTIVE: %s — not trading", self._kill_reason)
+            return
+
+        # ── Daily PnL reset ──
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if today != self._daily_pnl_date:
+            if self._daily_pnl < 0:
+                logger.info("Daily PnL reset: yesterday=$%.2f", self._daily_pnl)
+            self._daily_pnl = 0.0
+            self._daily_pnl_date = today
+
         logger.info("Alpha scan #%d started", self.scan_count + 1)
 
         # Fetch active events
         events = await self._fetch_events()
         if not events:
-            logger.info("No events fetched, skipping scan")
+            self._api_failure_count += 1
+            if self._api_failure_count >= API_FAILURE_HALT_THRESHOLD:
+                self._trigger_kill_switch(f"API failures: {self._api_failure_count} consecutive")
+            logger.info("No events fetched (api_failures=%d), skipping scan", self._api_failure_count)
             return
+        self._api_failure_count = 0  # reset on success
+
+        # ── Market filtering: blocklist + allowlist ──
+        events = self._filter_events(events)
 
         # Fetch cross-market data (crypto moves)
         await self._fetch_crypto_snapshot()
@@ -860,6 +924,20 @@ class PolymarketPaperBot:
         if active_positions >= self.max_positions:
             return False
 
+        # ── Dry-run mode: log but don't execute ──
+        if DRY_RUN_MODE:
+            signal = AlphaSignal(
+                market_id=opp["market_id"],
+                question=opp["question"],
+                side=opp["side"],
+                price=opp["price"],
+                signal_type="+".join(opp["signals"]),
+                confidence=opp["confidence"],
+                timestamp=time.time(),
+            )
+            self._log_dry_run_trade(signal, opp["confidence"])
+            return False
+
         # Create paper position — Kelly criterion sizing
         position_id = f"poly_{uuid.uuid4().hex[:12]}"
         entry_price = opp["price"]
@@ -1048,6 +1126,9 @@ class PolymarketPaperBot:
         if total_resolved % 10 == 0:
             self._log_signal_pnl_summary()
 
+        # Kill switch tracking
+        self._on_position_closed(position)
+
     async def _resolve_position(self, position: PaperPosition, market: Dict):
         """Resolve a position when market ends."""
         outcome_prices = market.get("outcomePrices", "[]")
@@ -1120,6 +1201,9 @@ class PolymarketPaperBot:
         if total_resolved % 10 == 0:
             self._log_signal_pnl_summary()
 
+        # Kill switch tracking
+        self._on_position_closed(position)
+
     def _log_signal_pnl_summary(self):
         """Log per-signal-type PnL breakdown for tuning analysis."""
         logger.info("=== Per-Signal PnL Summary ===")
@@ -1133,6 +1217,105 @@ class PolymarketPaperBot:
                 sig_type, pnl, trades, win_rate,
             )
         logger.info("==============================")
+
+    # ── Kill Switch Methods ────────────────────────────────────────────────────
+
+    def _on_position_closed(self, position: PaperPosition):
+        """Track kill switch metrics after every position close/resolve."""
+        # Daily PnL tracking
+        self._daily_pnl += position.pnl
+
+        # Consecutive loss tracking
+        if position.pnl < 0:
+            self._consecutive_losses += 1
+        else:
+            self._consecutive_losses = 0
+
+        # Check kill switch conditions
+        if self._daily_pnl <= -DAILY_LOSS_LIMIT_USDC:
+            self._trigger_kill_switch(
+                f"Daily loss limit hit: ${self._daily_pnl:.2f} (limit: -${DAILY_LOSS_LIMIT_USDC:.2f})"
+            )
+        elif self._consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
+            self._trigger_kill_switch(
+                f"Consecutive losses: {self._consecutive_losses} (max: {MAX_CONSECUTIVE_LOSSES})"
+            )
+        elif self.peak_bankroll > 0:
+            drawdown = (self.peak_bankroll - self.bankroll) / self.peak_bankroll
+            if drawdown >= MAX_DRAWDOWN_PCT:
+                self._trigger_kill_switch(
+                    f"Max drawdown hit: {drawdown*100:.1f}% (limit: {MAX_DRAWDOWN_PCT*100:.0f}%)"
+                )
+
+    def _trigger_kill_switch(self, reason: str):
+        """Activate kill switch — stop all trading."""
+        if not self._kill_switch_active:
+            self._kill_switch_active = True
+            self._kill_reason = reason
+            logger.error("KILL SWITCH ACTIVATED: %s", reason)
+            self._notify(f"KILL SWITCH: {reason}", level="critical")
+
+    def reset_kill_switch(self):
+        """Manual reset of kill switch (via API)."""
+        self._kill_switch_active = False
+        self._kill_reason = ""
+        self._consecutive_losses = 0
+        self._daily_pnl = 0.0
+        logger.info("Kill switch manually reset")
+
+    # ── Market Filtering ───────────────────────────────────────────────────────
+
+    def _filter_events(self, events: List[Dict]) -> List[Dict]:
+        """Filter events by allowlist/blocklist."""
+        if not self._market_allowlist and not self._market_blocklist:
+            return events
+
+        filtered = []
+        for event in events:
+            title = event.get("title", "").lower()
+            slug = event.get("slug", "").lower()
+            text = f"{title} {slug}"
+
+            # Blocklist check: skip if any blocked keyword matches
+            if self._market_blocklist:
+                if any(kw in text for kw in self._market_blocklist):
+                    continue
+
+            # Allowlist check: skip if allowlist is set and no keyword matches
+            if self._market_allowlist:
+                if not any(kw in text for kw in self._market_allowlist):
+                    continue
+
+            filtered.append(event)
+
+        if len(filtered) < len(events):
+            logger.info("Market filter: %d -> %d events (blocklist+allowlist)", len(events), len(filtered))
+        return filtered
+
+    # ── Dry-Run Mode ───────────────────────────────────────────────────────────
+
+    def _log_dry_run_trade(self, signal: AlphaSignal, confidence: float):
+        """Log a 'would-trade' entry in dry-run mode without executing."""
+        entry = {
+            "timestamp": time.time(),
+            "market_id": signal.market_id,
+            "question": signal.question[:80],
+            "side": signal.side,
+            "price": signal.price,
+            "confidence": round(confidence, 3),
+            "signals": signal.signal_type,
+            "size": self.position_size,
+            "expected_max_loss": round(self.position_size * abs(STOP_LOSS_PCT), 2),
+        }
+        self.dry_run_trades.append(entry)
+        # Keep only last 200
+        if len(self.dry_run_trades) > 200:
+            self.dry_run_trades = self.dry_run_trades[-200:]
+        logger.info(
+            "DRY-RUN WOULD-TRADE: %s %s @ $%.4f conf=%.3f signals=%s | %s",
+            signal.side, signal.market_id[:12], signal.price, confidence,
+            signal.signal_type, signal.question[:50],
+        )
 
     def _update_history(self, events: List[Dict]):
         """Update price and volume history for momentum/volume detection."""
@@ -1289,6 +1472,12 @@ class PolymarketPaperBot:
                 "signal_pnl": self.signal_pnl,
                 "signal_trade_count": self.signal_trade_count,
                 "signal_win_count": self.signal_win_count,
+                # Kill switch state
+                "kill_switch_active": self._kill_switch_active,
+                "kill_reason": self._kill_reason,
+                "daily_pnl": self._daily_pnl,
+                "daily_pnl_date": self._daily_pnl_date,
+                "consecutive_losses": self._consecutive_losses,
             }
             await self._redis.set("poly_paper:state", json.dumps(data))
         except Exception as e:
@@ -1325,6 +1514,15 @@ class PolymarketPaperBot:
             self.signal_pnl = data.get("signal_pnl", {sig: 0.0 for sig in SIGNAL_WEIGHTS})
             self.signal_trade_count = data.get("signal_trade_count", {sig: 0 for sig in SIGNAL_WEIGHTS})
             self.signal_win_count = data.get("signal_win_count", {sig: 0 for sig in SIGNAL_WEIGHTS})
+
+            # Restore kill switch state (backward compatible)
+            self._kill_switch_active = data.get("kill_switch_active", False)
+            self._kill_reason = data.get("kill_reason", "")
+            self._daily_pnl = data.get("daily_pnl", 0.0)
+            self._daily_pnl_date = data.get("daily_pnl_date", "")
+            self._consecutive_losses = data.get("consecutive_losses", 0)
+            if self._kill_switch_active:
+                logger.warning("Restored with KILL SWITCH ACTIVE: %s", self._kill_reason)
 
             logger.info(
                 "Restored alpha state: positions=%d trades=%d pnl=$%.4f",
@@ -1474,6 +1672,18 @@ class PolymarketPaperBot:
                 }
                 for sig in SIGNAL_WEIGHTS.keys()
             },
+            # ── Readiness layer metrics ──
+            "kill_switch": {
+                "active": self._kill_switch_active,
+                "reason": self._kill_reason,
+                "daily_pnl": round(self._daily_pnl, 4),
+                "consecutive_losses": self._consecutive_losses,
+                "api_failures": self._api_failure_count,
+            },
+            "dry_run_mode": DRY_RUN_MODE,
+            "dry_run_trades_count": len(self.dry_run_trades),
+            "market_allowlist": self._market_allowlist,
+            "market_blocklist": self._market_blocklist,
         }
 
     def get_signals(self, limit: int = 30) -> List[Dict]:
