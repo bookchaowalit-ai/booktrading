@@ -933,7 +933,7 @@ class PolymarketPaperBot:
                 price=opp["price"],
                 signal_type="+".join(opp["signals"]),
                 confidence=opp["confidence"],
-                timestamp=time.time(),
+                reason="dry_run",
             )
             self._log_dry_run_trade(signal, opp["confidence"])
             return False
