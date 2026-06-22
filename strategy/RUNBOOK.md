@@ -199,3 +199,4 @@ Full test suite: **53/53 passing** (33 kill-switch + 20 safety filters)
 3. **No architecture changes** while in capital protection mode
 4. **Monitor daily** — even if nothing changed, log the state
 5. **Small changes only** — tests, docs, config. No big refactors.
+6. **Never set `POLY_DRY_RUN=false`** for real money until RUNBOOK micro-live prerequisites are met. See `.env.example` for safe-by-default config.
