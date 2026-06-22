@@ -37,7 +37,7 @@ CLOB_API = "https://clob.polymarket.com"
 
 # Paper trading defaults — tuned for alpha
 DEFAULT_SCAN_INTERVAL = 120  # 2 minutes (faster = catch moves quicker)
-DEFAULT_MAX_POSITIONS = 15  # more positions for diversification
+DEFAULT_MAX_POSITIONS = 8  # reduced from 15 — lower exposure while tuning
 DEFAULT_POSITION_SIZE_USDC = 5.0  # $5 per position (paper)
 DEFAULT_MIN_DEVIATION = 0.002  # 0.2% mispricing threshold (Polymarket is efficient)
 DEFAULT_MIN_LIQUIDITY = 200  # min $200 liquidity (was $500)
@@ -64,7 +64,11 @@ SIGNAL_WEIGHTS = {
 MAX_POSITIONS_PER_SIGNAL = 4
 
 # Minimum confidence to enter a position
-MIN_ENTRY_CONFIDENCE = 0.40
+MIN_ENTRY_CONFIDENCE = 0.55  # raised from 0.40 — stricter entry while tuning
+
+# Low-liquidity threshold for signal filtering
+# liquidity_alpha and extreme_value signals are disabled for markets below this liquidity
+LOW_LIQUIDITY_THRESHOLD = 500  # $500 — below this, those signals are suppressed
 
 # Exit logic
 TAKE_PROFIT_PCT = 0.20  # 20% gain → close
@@ -224,6 +228,11 @@ class PolymarketPaperBot:
         # Alpha signals feed (recent signals for dashboard)
         self.recent_signals: List[AlphaSignal] = []
         self.max_signals = 500  # increased to capture all signal types
+
+        # Per-signal-type PnL tracking (for tuning analysis)
+        self.signal_pnl: Dict[str, float] = {sig: 0.0 for sig in SIGNAL_WEIGHTS}
+        self.signal_trade_count: Dict[str, int] = {sig: 0 for sig in SIGNAL_WEIGHTS}
+        self.signal_win_count: Dict[str, int] = {sig: 0 for sig in SIGNAL_WEIGHTS}
 
         # Price history for momentum detection (market_id -> [(timestamp, yes_price)])
         self.price_history: Dict[str, List[Tuple[float, float]]] = {}
@@ -561,36 +570,38 @@ class PolymarketPaperBot:
                 pass
 
         # Signal 4: Extreme value (cheap side with REAL probability — not lottery tickets)
-        if 0.03 < yes_price < 0.20 and volume > self.min_volume * 2:
-            # YES is cheap but has significant volume = market sees real chance
-            # Quality filter: higher volume = more confident signal
-            vol_quality = min(volume / 10000, 1.0)  # $10k+ vol = full quality
-            conf = min((0.20 - yes_price) * 3 * vol_quality, 0.65)
-            if conf > 0.20:
-                signals.append(AlphaSignal(
-                    signal_type="extreme_value",
-                    market_id=market_id,
-                    question=question,
-                    side="YES",
-                    confidence=conf,
-                    price=yes_price,
-                    reason=f"Value: YES @ {yes_price:.3f} (potential {1/yes_price:.1f}x). Vol=${volume:.0f} quality={vol_quality:.0%}",
-                    metadata={"upside": 1 / yes_price if yes_price > 0 else 0, "vol_quality": vol_quality},
-                ))
-        if 0.03 < no_price < 0.20 and volume > self.min_volume * 2:
-            vol_quality = min(volume / 10000, 1.0)
-            conf = min((0.20 - no_price) * 3 * vol_quality, 0.65)
-            if conf > 0.20:
-                signals.append(AlphaSignal(
-                    signal_type="extreme_value",
-                    market_id=market_id,
-                    question=question,
-                    side="NO",
-                    confidence=conf,
-                    price=no_price,
-                    reason=f"Value: NO @ {no_price:.3f} (potential {1/no_price:.1f}x). Vol=${volume:.0f} quality={vol_quality:.0%}",
-                    metadata={"upside": 1 / no_price if no_price > 0 else 0, "vol_quality": vol_quality},
-                ))
+        # FILTER: Skip for low-liquidity markets (poor price discovery)
+        if liquidity >= LOW_LIQUIDITY_THRESHOLD:
+            if 0.03 < yes_price < 0.20 and volume > self.min_volume * 2:
+                # YES is cheap but has significant volume = market sees real chance
+                # Quality filter: higher volume = more confident signal
+                vol_quality = min(volume / 10000, 1.0)  # $10k+ vol = full quality
+                conf = min((0.20 - yes_price) * 3 * vol_quality, 0.65)
+                if conf > 0.20:
+                    signals.append(AlphaSignal(
+                        signal_type="extreme_value",
+                        market_id=market_id,
+                        question=question,
+                        side="YES",
+                        confidence=conf,
+                        price=yes_price,
+                        reason=f"Value: YES @ {yes_price:.3f} (potential {1/yes_price:.1f}x). Vol=${volume:.0f} quality={vol_quality:.0%}",
+                        metadata={"upside": 1 / yes_price if yes_price > 0 else 0, "vol_quality": vol_quality},
+                    ))
+            if 0.03 < no_price < 0.20 and volume > self.min_volume * 2:
+                vol_quality = min(volume / 10000, 1.0)
+                conf = min((0.20 - no_price) * 3 * vol_quality, 0.65)
+                if conf > 0.20:
+                    signals.append(AlphaSignal(
+                        signal_type="extreme_value",
+                        market_id=market_id,
+                        question=question,
+                        side="NO",
+                        confidence=conf,
+                        price=no_price,
+                        reason=f"Value: NO @ {no_price:.3f} (potential {1/no_price:.1f}x). Vol=${volume:.0f} quality={vol_quality:.0%}",
+                        metadata={"upside": 1 / no_price if no_price > 0 else 0, "vol_quality": vol_quality},
+                    ))
 
         # Signal 5: Volume spike (sudden increase in volume rate = smart money)
         # Use volume deltas (rate of change) instead of cumulative volume
@@ -723,7 +734,8 @@ class PolymarketPaperBot:
 
         # Signal 8: Liquidity alpha (illiquid market + high price = stale odds, edge)
         # If liquidity is low but volume is decent, market may be mispriced
-        if liquidity > 0 and volume > self.min_volume * 3:
+        # FILTER: Skip for low-liquidity markets (unreliable signal)
+        if liquidity >= LOW_LIQUIDITY_THRESHOLD and liquidity > 0 and volume > self.min_volume * 3:
             liq_ratio = liquidity / volume
             if liq_ratio < 0.05:  # very low liquidity relative to volume = stale market
                 # Price is likely stale — bet toward 0.50 (mean reversion)
@@ -992,6 +1004,13 @@ class PolymarketPaperBot:
         if position.pnl > 0:
             self.winning_trades += 1
 
+        # Per-signal PnL tracking
+        for sig in position.signals:
+            self.signal_pnl[sig] = self.signal_pnl.get(sig, 0.0) + position.pnl
+            self.signal_trade_count[sig] = self.signal_trade_count.get(sig, 0) + 1
+            if position.pnl > 0:
+                self.signal_win_count[sig] = self.signal_win_count.get(sig, 0) + 1
+
         # Return capital + P&L to bankroll
         self.bankroll += position.size_usdc + position.pnl
         self.peak_bankroll = max(self.peak_bankroll, self.bankroll)
@@ -1024,6 +1043,10 @@ class PolymarketPaperBot:
             result, reason[:20], position.side, position.pnl, position.pnl_pct,
             "+".join(position.signals), position.question[:50],
         )
+        # Log per-signal PnL summary every 10 closes
+        total_resolved = sum(self.signal_trade_count.values())
+        if total_resolved % 10 == 0:
+            self._log_signal_pnl_summary()
 
     async def _resolve_position(self, position: PaperPosition, market: Dict):
         """Resolve a position when market ends."""
@@ -1052,6 +1075,13 @@ class PolymarketPaperBot:
 
         if position.pnl > 0:
             self.winning_trades += 1
+
+        # Per-signal PnL tracking
+        for sig in position.signals:
+            self.signal_pnl[sig] = self.signal_pnl.get(sig, 0.0) + position.pnl
+            self.signal_trade_count[sig] = self.signal_trade_count.get(sig, 0) + 1
+            if position.pnl > 0:
+                self.signal_win_count[sig] = self.signal_win_count.get(sig, 0) + 1
 
         # Return capital + P&L to bankroll
         self.bankroll += position.size_usdc + position.pnl
@@ -1085,6 +1115,24 @@ class PolymarketPaperBot:
             result, position.side, position.pnl, position.pnl_pct,
             "+".join(position.signals), position.question[:50],
         )
+        # Log per-signal PnL summary every 10 closes
+        total_resolved = sum(self.signal_trade_count.values())
+        if total_resolved % 10 == 0:
+            self._log_signal_pnl_summary()
+
+    def _log_signal_pnl_summary(self):
+        """Log per-signal-type PnL breakdown for tuning analysis."""
+        logger.info("=== Per-Signal PnL Summary ===")
+        for sig_type in SIGNAL_WEIGHTS:
+            pnl = self.signal_pnl.get(sig_type, 0.0)
+            trades = self.signal_trade_count.get(sig_type, 0)
+            wins = self.signal_win_count.get(sig_type, 0)
+            win_rate = (wins / trades * 100) if trades > 0 else 0
+            logger.info(
+                "  %-18s: PnL=$%+8.4f  trades=%3d  win_rate=%5.1f%%",
+                sig_type, pnl, trades, win_rate,
+            )
+        logger.info("==============================")
 
     def _update_history(self, events: List[Dict]):
         """Update price and volume history for momentum/volume detection."""
@@ -1238,6 +1286,9 @@ class PolymarketPaperBot:
                 "opportunities_found": self.opportunities_found,
                 "bankroll": self.bankroll,
                 "peak_bankroll": self.peak_bankroll,
+                "signal_pnl": self.signal_pnl,
+                "signal_trade_count": self.signal_trade_count,
+                "signal_win_count": self.signal_win_count,
             }
             await self._redis.set("poly_paper:state", json.dumps(data))
         except Exception as e:
@@ -1270,6 +1321,10 @@ class PolymarketPaperBot:
             self.opportunities_found = data.get("opportunities_found", 0)
             self.bankroll = data.get("bankroll", self.bankroll)
             self.peak_bankroll = data.get("peak_bankroll", self.bankroll)
+            # Restore signal PnL tracking (backward compatible)
+            self.signal_pnl = data.get("signal_pnl", {sig: 0.0 for sig in SIGNAL_WEIGHTS})
+            self.signal_trade_count = data.get("signal_trade_count", {sig: 0 for sig in SIGNAL_WEIGHTS})
+            self.signal_win_count = data.get("signal_win_count", {sig: 0 for sig in SIGNAL_WEIGHTS})
 
             logger.info(
                 "Restored alpha state: positions=%d trades=%d pnl=$%.4f",
@@ -1408,6 +1463,14 @@ class PolymarketPaperBot:
                     "wins": signal_wins.get(sig, 0),
                     "losses": signal_losses.get(sig, 0),
                     "total": signal_wins.get(sig, 0) + signal_losses.get(sig, 0),
+                }
+                for sig in SIGNAL_WEIGHTS.keys()
+            },
+            "signal_pnl": {
+                sig: {
+                    "pnl": round(self.signal_pnl.get(sig, 0.0), 4),
+                    "trades": self.signal_trade_count.get(sig, 0),
+                    "wins": self.signal_win_count.get(sig, 0),
                 }
                 for sig in SIGNAL_WEIGHTS.keys()
             },
