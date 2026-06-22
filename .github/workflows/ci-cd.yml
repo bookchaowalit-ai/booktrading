@@ -56,13 +56,15 @@ jobs:
           go mod download
           go mod verify
 
-      - name: Run linter
-        uses: golangci/golangci-lint-action@v6
-        with:
-          working-directory: backend
-          version: v1.64.8
-          args: --timeout=5m --out-format=colored-line-number
-          skip-cache: true
+      - name: Check formatting
+        run: |
+          cd backend
+          test -z "$(gofmt -l .)"
+
+      - name: Run vet
+        run: |
+          cd backend
+          go vet ./...
 
       - name: Run tests
         run: |

@@ -3,11 +3,11 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { ErrorBoundary } from '@/components/ErrorBoundary';
+import ErrorBoundary from '@/components/ErrorBoundary';
 import React from 'react';
 
 // Component that throws an error
-function BrokenComponent() {
+function BrokenComponent(): React.ReactElement {
   throw new Error('Test error');
 }
 
@@ -39,24 +39,22 @@ describe('ErrorBoundary', () => {
     );
 
     expect(screen.getByText('Something went wrong')).toBeInTheDocument();
-    expect(screen.getByText('Test error')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument();
+    expect(screen.getByText(/unexpected error occurred/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /refresh/i })).toBeInTheDocument();
 
     consoleError.mockRestore();
   });
 
-  it('calls onError callback when error is caught', () => {
-    const onError = vi.fn();
+  it('renders go home action when child component throws', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     render(
-      <ErrorBoundary onError={onError}>
+      <ErrorBoundary>
         <BrokenComponent />
       </ErrorBoundary>
     );
 
-    expect(onError).toHaveBeenCalledTimes(1);
-    expect(onError.mock.calls[0][0].message).toBe('Test error');
+    expect(screen.getByRole('button', { name: /go home/i })).toBeInTheDocument();
 
     consoleError.mockRestore();
   });
@@ -76,8 +74,13 @@ describe('ErrorBoundary', () => {
     consoleError.mockRestore();
   });
 
-  it('resets error state when "Try again" is clicked', () => {
+  it('reloads the page when "Refresh" is clicked', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const reload = vi.fn();
+    Object.defineProperty(window, 'location', {
+      writable: true,
+      value: { ...window.location, reload },
+    });
 
     // We can't easily test re-rendering after error reset with a broken component,
     // but we can verify the button exists and is clickable
@@ -87,10 +90,11 @@ describe('ErrorBoundary', () => {
       </ErrorBoundary>
     );
 
-    const button = screen.getByRole('button', { name: /try again/i });
+    const button = screen.getByRole('button', { name: /refresh/i });
     expect(button).toBeInTheDocument();
 
     fireEvent.click(button);
+    expect(reload).toHaveBeenCalled();
 
     consoleError.mockRestore();
   });

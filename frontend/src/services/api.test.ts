@@ -4,13 +4,14 @@
  */
 
 import { api } from './api';
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 // Mock fetch
-global.fetch = jest.fn();
+global.fetch = vi.fn();
 
 describe('API Service', () => {
   beforeEach(() => {
-    (fetch as jest.Mock).mockClear();
+    (fetch as Mock).mockClear();
   });
 
   describe('getBotStatus', () => {
@@ -22,7 +23,7 @@ describe('API Service', () => {
         total_profit: 150.50,
       };
 
-      (fetch as jest.Mock).mockResolvedValueOnce({
+      (fetch as Mock).mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve(mockStatus),
       });
@@ -32,7 +33,7 @@ describe('API Service', () => {
     });
 
     it('should return null when API fails', async () => {
-      (fetch as jest.Mock).mockResolvedValueOnce({
+      (fetch as Mock).mockResolvedValueOnce({
         ok: false,
       });
 
@@ -60,7 +61,7 @@ describe('API Service', () => {
         timestamp: new Date().toISOString(),
       };
 
-      (fetch as jest.Mock).mockResolvedValueOnce({
+      (fetch as Mock).mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve(mockBalances),
       });
@@ -71,7 +72,7 @@ describe('API Service', () => {
     });
 
     it('should return empty balances when API fails', async () => {
-      (fetch as jest.Mock).mockResolvedValueOnce({
+      (fetch as Mock).mockResolvedValueOnce({
         ok: false,
       });
 
@@ -93,7 +94,7 @@ describe('API Service', () => {
         },
       };
 
-      (fetch as jest.Mock).mockResolvedValueOnce({
+      (fetch as Mock).mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve(mockConfig),
       });
