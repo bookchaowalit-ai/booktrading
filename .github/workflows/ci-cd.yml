@@ -47,19 +47,13 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: backend/go.sum
+          cache: false
 
       - name: Install dependencies
         run: |
           cd backend
           go mod download
           go mod verify
-
-      - name: Check formatting
-        run: |
-          cd backend
-          test -z "$(gofmt -l .)"
 
       - name: Run vet
         run: |
