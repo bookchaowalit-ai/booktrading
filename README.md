@@ -1,10 +1,39 @@
-# 📘 BookFinance - Complete Crypto Trading Bot
+# 📘 BookFinance - Crypto Trading Bot
 
-[![CI/CD Pipeline](https://github.com/your-username/bookfinance/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/your-username/bookfinance/actions)
+[![CI/CD Pipeline](https://github.com/bookchaowalit/booktrading/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/bookchaowalit/booktrading/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://www.docker.com/)
 
-**BookFinance** is a complete, production-ready crypto trading bot with AI predictions, arbitrage detection, multi-exchange support, and real-time monitoring.
+**BookFinance** is a crypto trading bot with AI predictions, arbitrage detection, multi-exchange support, and real-time monitoring.
+
+---
+
+## ⚠️ Current Operating Mode: Capital Protection
+
+> **The trading bot is halted by design. No real money is at risk.**
+
+| Status | Detail |
+|--------|--------|
+| Kill switch | **ACTIVE** — triggered at 15.8% drawdown |
+| Bot state | Halted — no new trades |
+| Real money | **Blocked** — `POLY_DRY_RUN=true` enforced |
+| Deploy | Manual only — gated behind `workflow_dispatch` |
+| Legacy positions | 20 open, waiting for resolution |
+| Bankroll | $84.54 |
+
+**What this means:**
+- The bot will NOT enter new positions until the kill switch is manually reset
+- Paper trading runs in dry-run mode (simulates but never executes)
+- Production deploy requires explicit `workflow_dispatch` with `deploy_production=true`
+- See [strategy/RUNBOOK.md](strategy/RUNBOOK.md) for the full decision tree
+
+### Daily Monitor
+
+```bash
+docker compose exec strategy python /app/scripts/monitor.py
+```
+
+This outputs a structured decision block: current state, reason, and what trigger would advance to the next stage.
 
 ---
 
@@ -37,13 +66,13 @@
 - **Empty States** - Clear messaging when no data
 - **Error Boundaries** - Graceful error handling
 
-### 🔐 Production Ready
-- **CI/CD Pipeline** - Automated testing and deployment
-- **Docker Compose** - One-command deployment
-- **Caddy Reverse Proxy** - Automatic HTTPS
-- **Prometheus Monitoring** - System metrics collection
-- **Automated Backups** - Daily database backups
-- **Export/Import** - Backup and restore configuration
+### 🔐 Safety & CI
+- **CI/CD Pipeline** — automated testing, deploy gated (manual only)
+- **Kill Switch** — auto-halt on drawdown threshold breach
+- **Dry-Run Mode** — `POLY_DRY_RUN=true` prevents real execution
+- **Safety Tests** — 53 passing (kill-switch + safety filters)
+- **Docker Compose** — one-command local deployment
+- **Automated Backups** — daily database backups
 
 ### 🌐 Internationalization
 - **Thai (TH)** - Full Thai language support
@@ -97,10 +126,11 @@ See **[PRODUCTION.md](PRODUCTION.md)** for full deployment guide.
 
 | Document | Description |
 |----------|-------------|
-| **[USER_GUIDE.md](USER_GUIDE.md)** | Complete user guide with screenshots |
-| **[API.md](API.md)** | Full API documentation with examples |
+| **[strategy/RUNBOOK.md](strategy/RUNBOOK.md)** | Operational playbook — decision tree, safety rules |
+| **[USER_GUIDE.md](USER_GUIDE.md)** | Complete user guide |
+| **[API.md](API.md)** | Full API documentation |
 | **[PRODUCTION.md](PRODUCTION.md)** | Production deployment guide |
-| **[README.md](README.md)** | This file - overview and quick start |
+| **[.env.example](.env.example)** | Safe-by-default environment config |
 
 ---
 
@@ -168,21 +198,27 @@ bookfinance/
 
 ## 🧪 Testing
 
+### Python Safety Tests (53 passing)
+
+```bash
+docker compose exec strategy pytest /app/tests/ -v
+```
+
+Covers kill-switch logic, safety filters, dry-run enforcement, blocklist/allowlist.
+
 ### Backend Tests
 
 ```bash
-cd backend
-go test -v ./...
+docker compose exec backend go test -v ./...
 ```
 
 ### Frontend Tests
 
 ```bash
-cd frontend
-npm test
+docker compose exec frontend npm test
 ```
 
-### Run All Tests
+### Run All Tests (CI)
 
 ```bash
 ./scripts/test.sh
