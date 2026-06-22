@@ -2,13 +2,14 @@
 """
 Polymarket Read-Only Market Scanner
 Run: docker compose exec strategy python /app/scripts/market_research.py
+      or with options: python scripts/market_research.py --limit 10 --min-liquidity 1000
 
 Scans active markets for research/watchlist purposes.
 Does NOT place orders, reset kill switch, or modify any state.
 
 Filters:
   - Active/open markets only
-  - Liquidity > $500
+  - Liquidity > $500 (override with --min-liquidity)
   - Real volume (total traded > $1,000)
   - Clear resolution rules (description quality check)
   - Category blocklist: politics, sports, entertainment, celebrities
@@ -18,11 +19,13 @@ Filters:
 Note: CLOB spread endpoint requires outcome token_ids (not condition_ids
 from Gamma). Spread data is omitted; manual review recommended.
 
-Output: Top 20 candidates → stdout + docs/MARKET_WATCHLIST.md
+Output: Top N candidates → stdout + docs/MARKET_WATCHLIST.md
 """
+import argparse
 import asyncio
 import sys
 import os
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -46,6 +49,12 @@ BLOCKED_QUESTION_KEYWORDS = [
     'cabinet', 'secretary of', 'impeach', 'legislation', 'ballot',
     'political party', 'control the', 'balance of power', 'primary',
     'nominee', 'vice president', 'mayor', 'trump', 'biden',
+    # Heads of state / geopolitical (catch indirect politics)
+    'netanyahu', 'xi jinping', 'putin', 'zelensky', 'erdogan',
+    'erdogan', 'macron', 'sunak', 'modi', 'khamenei',
+    'kim jong', 'castro', 'lukashenko', 'assad',
+    'invade', 'invasion', 'annex', 'sanctions', 'nato ',
+    'military strike', 'civil war', 'coup ', 'regime',
     # Sports
     'win the world cup', 'nba ', 'nfl ', 'mlb ', 'nhl ',
     'super bowl', 'world series', 'championship', 'match ',
@@ -56,18 +65,27 @@ BLOCKED_QUESTION_KEYWORDS = [
     'celebrity', 'net worth', 'dating', 'married to',
     'gta vi', 'rihanna', 'taylor swift', 'kanye', 'drake',
     'movie ', 'tv show', 'video game',
+    # Legal / celebrity (non-political courts are still celebrity-adjacent)
+    'sentenced', 'prison time', 'verdict', 'indictment', 'acquitted',
+    'parole', 'probation', 'manslaughter', 'felony',
 ]
 
-MIN_LIQUIDITY = 500       # USDC
+MIN_LIQUIDITY = 500       # USDC (override via --min-liquidity)
 MIN_VOLUME = 1_000        # USDC total traded
 MAX_SPREAD = 0.05         # 5¢
 PRICE_FLOOR = 0.05        # avoid extreme long-shots
 PRICE_CEIL = 0.95         # avoid near-certain outcomes
-TOP_N = 20
+TOP_N = 20                # override via --limit
 SCAN_PAGES = 4            # pages of 50 markets = ~200 raw candidates
 
 
 # ── Filter functions ──────────────────────────────────────────────────────────
+
+def _normalize(text):
+    """NFKD-normalize and strip diacritics for keyword matching."""
+    nfkd = unicodedata.normalize('NFKD', text)
+    return ''.join(c for c in nfkd if not unicodedata.category(c).startswith('M')).lower()
+
 
 def is_blocked(tags, question=''):
     """Check if market is blocked by tags OR question keywords."""
@@ -76,9 +94,10 @@ def is_blocked(tags, question=''):
         if t.lower().replace(' ', '-') in BLOCKED_TAGS:
             return True
     # Keyword-based check on question text (catches empty-tag markets)
-    q_lower = question.lower()
+    # Normalize to strip diacritics (e.g. Erdoğan → erdogan)
+    q_norm = _normalize(question)
     for kw in BLOCKED_QUESTION_KEYWORDS:
-        if kw in q_lower:
+        if kw in q_norm:
             return True
     return False
 
@@ -160,7 +179,7 @@ def compute_score(m, spread_val, res_score):
 
 # ── Main scan ─────────────────────────────────────────────────────────────────
 
-async def scan():
+async def scan(limit=TOP_N, min_liquidity=MIN_LIQUIDITY):
     """Scan Polymarket for candidate markets. Read-only."""
     client = PolymarketClient()
 
@@ -184,7 +203,7 @@ async def scan():
         if price_extreme(m.yes_price):
             rejected['extreme_price'] += 1
             continue
-        if (m.liquidity or 0) < MIN_LIQUIDITY:
+        if (m.liquidity or 0) < min_liquidity:
             rejected['low_liquidity'] += 1
             continue
         if (m.volume or 0) < MIN_VOLUME:
@@ -207,7 +226,7 @@ async def scan():
         })
 
     results.sort(key=lambda x: x['score'], reverse=True)
-    top = results[:TOP_N]
+    top = results[:limit]
 
     await client.close()
     return top, all_markets, rejected
@@ -278,8 +297,8 @@ def _resolve_watchlist_path():
 WATCHLIST_PATH = _resolve_watchlist_path()
 
 
-def write_watchlist(results):
-    """Write/update docs/MARKET_WATCHLIST.md with scan results."""
+def write_watchlist(results, min_liquidity=MIN_LIQUIDITY):
+    """Write/update docs/MARKET_WATCHLIST.md with scan results + manual review fields."""
     now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
 
     lines = [
@@ -293,7 +312,7 @@ def write_watchlist(results):
         '',
         '## Filters',
         '',
-        f'- Min liquidity: ${MIN_LIQUIDITY:,}',
+        f'- Min liquidity: ${min_liquidity:,}',
         f'- Min volume: ${MIN_VOLUME:,}',
         f'- Max spread: {MAX_SPREAD:.0%}',
         f'- Price range: {PRICE_FLOOR:.0%}–{PRICE_CEIL:.0%}',
@@ -318,6 +337,27 @@ def write_watchlist(results):
             )
 
     lines += [
+        '',
+        '## Manual Review',
+        '',
+        '> Fill in each row after checking the live market page.',
+        '',
+        '| # | Market | Resolution clear? | Order book checked? | Data source? | Signal reason? | Decision |',
+        '|---|--------|-------------------|--------------------|--------------|----------------|----------|',
+    ]
+    for i, r in enumerate(results, 1):
+        q = r['market'].question[:40]
+        lines.append(f'| {i} | {q} | ☐ | ☐ | ☐ | ☐ | ☐ |')
+
+    lines += [
+        '',
+        '### Review criteria',
+        '',
+        '1. **Resolution clear?** — No ambiguous wording, objective outcome',
+        '2. **Order book checked?** — Real bid/ask on Polymarket page, not just Gamma liquidity',
+        '3. **Data source?** — Official data/API/report, not speculation or rumors',
+        '4. **Signal reason?** — Predictive edge exists beyond liquidity/volume',
+        '5. **Decision** — PASS (proceed to alpha check) / WATCH ONLY / REJECT',
         '',
         '## Alpha Criteria',
         '',
@@ -357,14 +397,25 @@ def write_watchlist(results):
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
+    parser = argparse.ArgumentParser(description='Polymarket read-only market scanner')
+    parser.add_argument('--limit', type=int, default=TOP_N,
+                        help=f'Max candidates to return (default: {TOP_N})')
+    parser.add_argument('--min-liquidity', type=int, default=MIN_LIQUIDITY,
+                        help=f'Minimum liquidity in USDC (default: {MIN_LIQUIDITY})')
+    args = parser.parse_args()
+
     print()
     print('  Scanning Polymarket (read-only)...')
+    if args.limit != TOP_N or args.min_liquidity != MIN_LIQUIDITY:
+        print(f'  Options: --limit={args.limit} --min-liquidity={args.min_liquidity}')
     print()
 
-    results, total, rejected = asyncio.run(scan())
+    results, total, rejected = asyncio.run(
+        scan(limit=args.limit, min_liquidity=args.min_liquidity)
+    )
 
     print_results(results, total, rejected)
-    path = write_watchlist(results)
+    path = write_watchlist(results, min_liquidity=args.min_liquidity)
     print(f'  Watchlist written to: {path}')
     print()
 
