@@ -158,7 +158,7 @@ func TestBotServiceCannotStartTwice(t *testing.T) {
 	}
 }
 
-// TestBotServiceCanStopWhenNotRunning tests that stopping a stopped bot is safe
+// TestBotServiceCanStopWhenNotRunning tests that stopping a stopped bot fails clearly
 func TestBotServiceCanStopWhenNotRunning(t *testing.T) {
 	repo := &MockBotStatusRepository{active: false}
 	broadcaster := &MockWebSocketBroadcaster{}
@@ -167,10 +167,10 @@ func TestBotServiceCanStopWhenNotRunning(t *testing.T) {
 	svc := NewBotService(repo, redisPub, broadcaster)
 	ctx := context.Background()
 
-	// Stop when not running - should not error
+	// Stop when not running should return a clear error
 	err := svc.Stop(ctx)
-	if err != nil {
-		t.Errorf("Expected no error when stopping already stopped bot, got: %v", err)
+	if err == nil {
+		t.Error("Expected error when stopping already stopped bot")
 	}
 }
 
@@ -220,7 +220,7 @@ func TestGridTradingLogic(t *testing.T) {
 	gridSize := (upperPrice - lowerPrice) / float64(gridLevels)
 
 	// Verify grid levels
-	expectedLevels := []float64{2000000, 2250000, 2500000, 2750000, 3000000}
+	expectedLevels := []float64{2000000, 2200000, 2400000, 2600000, 2800000}
 	for i := 0; i < gridLevels; i++ {
 		level := lowerPrice + gridSize*float64(i)
 		if level != expectedLevels[i] {

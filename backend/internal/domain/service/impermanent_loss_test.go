@@ -18,8 +18,8 @@ func TestImpermanentLossCalculation(t *testing.T) {
 		{"no_change", 1.0, 0.0},
 		{"2x_price_increase", 2.0, -5.72},
 		{"0.5x_price_decrease", 0.5, -5.72},
-		{"10x_price_increase", 10.0, -26.8},
-		{"0.1x_price_decrease", 0.1, -26.8},
+		{"10x_price_increase", 10.0, -42.5},
+		{"0.1x_price_decrease", 0.1, -42.5},
 	}
 
 	for _, tt := range tests {
