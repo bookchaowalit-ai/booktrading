@@ -14,6 +14,72 @@ from datetime import datetime, timezone
 MAX_POSITIONS = 8
 MIN_RESOLVED_FOR_REVIEW = 10
 
+
+def compute_signal_pnl(resolved):
+    """Compute per-signal PnL from resolved positions. Pure function."""
+    signal_pnl = {}
+    signal_count = {}
+    signal_wins = {}
+    for p in resolved:
+        sig = p.get('signal_type', p.get('signals', ['unknown'])[0] if p.get('signals') else 'unknown')
+        size = p.get('size_usdc', p.get('size', 5.0))
+        outcome = p.get('outcome', '')
+        if outcome == 'win':
+            entry = p.get('entry_price', 0.5)
+            profit = size * (1 - entry) / entry if entry > 0 else 0
+            signal_wins[sig] = signal_wins.get(sig, 0) + 1
+        else:
+            profit = -size
+        signal_pnl[sig] = signal_pnl.get(sig, 0) + profit
+        signal_count[sig] = signal_count.get(sig, 0) + 1
+    return signal_pnl, signal_count, signal_wins
+
+
+def compute_decision(state):
+    """
+    Compute the daily monitor decision from Redis state.
+    Pure function — no I/O, no Redis, no print.
+
+    Returns: (decision, reason, next_trigger)
+    """
+    positions = state.get('positions', {})
+    active = [p for p in positions.values() if p.get('status') not in ('resolved', 'closed')]
+    resolved = [p for p in positions.values() if p.get('status') in ('resolved', 'closed')]
+
+    ks_active = state.get('kill_switch_active', False)
+    ks_reason = state.get('kill_reason', '')
+
+    signal_pnl, _, _ = compute_signal_pnl(resolved)
+
+    if ks_active:
+        return ('WAIT',
+                f'kill switch active — {ks_reason}',
+                'Reset kill switch only after: positions ≤ 8 + per-signal PnL reviewed')
+    elif len(active) > MAX_POSITIONS:
+        return ('WAIT',
+                f'active positions {len(active)} > {MAX_POSITIONS} limit',
+                f'Active positions drop below {MAX_POSITIONS}')
+    elif len(resolved) < MIN_RESOLVED_FOR_REVIEW:
+        return ('WAIT',
+                f'only {len(resolved)} resolved trades (need {MIN_RESOLVED_FOR_REVIEW}+ for signal review)',
+                f'{MIN_RESOLVED_FOR_REVIEW - len(resolved)} more resolutions needed')
+    elif signal_pnl:
+        worst_sig = min(signal_pnl, key=signal_pnl.get)
+        worst_pnl = signal_pnl[worst_sig]
+        if worst_pnl < -5:
+            return ('REVIEW_SIGNALS',
+                    f'worst signal "{worst_sig}" at ${worst_pnl:+.2f} — consider disabling',
+                    'Disable losing signal, then re-evaluate')
+        else:
+            return ('ENABLE_DRY_RUN',
+                    'signal PnL acceptable — ready for dry-run validation',
+                    'Set POLY_DRY_RUN=true, run 2-4 weeks')
+    else:
+        return ('EVALUATE',
+                'resolved trades available but no PnL data — inspect manually',
+                'Review resolved positions in Redis')
+
+
 def main():
     r = redis.Redis(
         host='redis', port=6379,
@@ -50,51 +116,9 @@ def main():
                 oldest_age_days = age
                 oldest_question = p.get('question', '?')[:50]
 
-    # Per-signal PnL from resolved positions
-    signal_pnl = {}
-    signal_count = {}
-    signal_wins = {}
-    for p in resolved:
-        sig = p.get('signal_type', p.get('signals', ['unknown'])[0] if p.get('signals') else 'unknown')
-        size = p.get('size_usdc', p.get('size', 5.0))
-        outcome = p.get('outcome', '')
-        if outcome == 'win':
-            entry = p.get('entry_price', 0.5)
-            profit = size * (1 - entry) / entry if entry > 0 else 0
-            signal_wins[sig] = signal_wins.get(sig, 0) + 1
-        else:
-            profit = -size
-        signal_pnl[sig] = signal_pnl.get(sig, 0) + profit
-        signal_count[sig] = signal_count.get(sig, 0) + 1
+    signal_pnl, signal_count, signal_wins = compute_signal_pnl(resolved)
 
-    # ── Decision logic ──────────────────────────────────────────────────────────
-    if ks_active:
-        decision = 'WAIT'
-        reason = f'kill switch active — {ks_reason}'
-        next_trigger = 'Reset kill switch only after: positions ≤ 8 + per-signal PnL reviewed'
-    elif len(active) > MAX_POSITIONS:
-        decision = 'WAIT'
-        reason = f'active positions {len(active)} > {MAX_POSITIONS} limit'
-        next_trigger = f'Active positions drop below {MAX_POSITIONS}'
-    elif len(resolved) < MIN_RESOLVED_FOR_REVIEW:
-        decision = 'WAIT'
-        reason = f'only {len(resolved)} resolved trades (need {MIN_RESOLVED_FOR_REVIEW}+ for signal review)'
-        next_trigger = f'{MIN_RESOLVED_FOR_REVIEW - len(resolved)} more resolutions needed'
-    elif signal_pnl:
-        worst_sig = min(signal_pnl, key=signal_pnl.get)
-        worst_pnl = signal_pnl[worst_sig]
-        if worst_pnl < -5:
-            decision = 'REVIEW_SIGNALS'
-            reason = f'worst signal "{worst_sig}" at ${worst_pnl:+.2f} — consider disabling'
-            next_trigger = 'Disable losing signal, then re-evaluate'
-        else:
-            decision = 'ENABLE_DRY_RUN'
-            reason = 'signal PnL acceptable — ready for dry-run validation'
-            next_trigger = 'Set POLY_DRY_RUN=true, run 2-4 weeks'
-    else:
-        decision = 'EVALUATE'
-        reason = 'resolved trades available but no PnL data — inspect manually'
-        next_trigger = 'Review resolved positions in Redis'
+    decision, reason, next_trigger = compute_decision(state)
 
     # ── Report ──────────────────────────────────────────────────────────────────
     print()
