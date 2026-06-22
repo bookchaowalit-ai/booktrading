@@ -16,6 +16,7 @@ Usage:
 
 import asyncio
 import logging
+import math
 import os
 import time
 from dataclasses import dataclass, field
@@ -30,15 +31,65 @@ logger = logging.getLogger("paper_grid_bot")
 BINANCE_TESTNET_REST = "https://testnet.binance.vision"
 PAPER_API_BASE = os.getenv("PAPER_API_BASE", "http://backend:8080")
 
+# Safety cap: max notional exposure per symbol (paper mode), in quote currency
+# For THB pairs: ฿3,000 ≈ $85. For USD pairs: $100.
+# Aligned with real_grid_bot.py BTCTHB config (max_position=0.001 BTC ≈ ฿2,120).
+DEFAULT_MAX_NOTIONAL = float(os.getenv("GRID_MAX_NOTIONAL", "3000.0"))
+
 # Grid parameters per symbol
 @dataclass
 class GridConfig:
     symbol: str
     grid_spacing_pct: float = 2.0      # % between grid levels
-    grid_levels: int = 5               # number of levels above/below
-    order_size: float = 0.001          # base quantity per grid order
-    max_position: float = 0.05         # max position size
-    poll_interval_sec: int = 30        # how often to check prices
+    grid_levels: int = 2               # number of levels above/below (conservative)
+    order_size: float = 0.00005        # base quantity per grid order
+    max_position: float = 0.001        # max position size in base asset
+    poll_interval_sec: int = 60        # how often to check prices
+    max_notional: float = DEFAULT_MAX_NOTIONAL  # safety cap in quote currency (THB or USD)
+
+
+def validate_grid_config(cfg: GridConfig, ref_price: float = 0.0) -> List[str]:
+    """Validate grid config safety constraints. Returns list of violations (empty = safe)."""
+    violations = []
+    if cfg.grid_levels < 1:
+        violations.append(f"grid_levels must be >= 1, got {cfg.grid_levels}")
+    if cfg.grid_levels > 5:
+        violations.append(f"grid_levels={cfg.grid_levels} exceeds safety cap of 5")
+    if cfg.order_size <= 0:
+        violations.append(f"order_size must be > 0, got {cfg.order_size}")
+    if cfg.max_position <= 0:
+        violations.append(f"max_position must be > 0, got {cfg.max_position}")
+    if cfg.grid_spacing_pct < 0.5:
+        violations.append(f"grid_spacing_pct={cfg.grid_spacing_pct} below minimum 0.5%")
+    if cfg.max_notional <= 0:
+        violations.append(f"max_notional must be > 0, got {cfg.max_notional}")
+    # Check max exposure if we have a reference price
+    if ref_price > 0:
+        max_exposure = cfg.max_position * ref_price
+        if max_exposure > cfg.max_notional:
+            violations.append(
+                f"max exposure {max_exposure:,.2f} exceeds cap {cfg.max_notional:,.2f} "
+                f"(max_position={cfg.max_position} × price={ref_price:,.2f})"
+            )
+    return violations
+
+
+def safe_paper_defaults() -> List[GridConfig]:
+    """Conservative paper defaults — aligned with real_grid_bot.py BTCTHB config.
+
+    Exposure per symbol: ~฿2,120 max (0.001 BTC × ฿2.1M).
+    Total max exposure across all symbols: ~฿2,120.
+    """
+    return [
+        GridConfig(
+            symbol="BTCTHB",
+            grid_spacing_pct=2.0,
+            grid_levels=2,
+            order_size=0.00005,    # ~฿106 per order
+            max_position=0.001,    # ~฿2,120 max exposure
+            max_notional=3000.0,   # ฿3,000 cap (≈$85)
+        ),
+    ]
 
 
 @dataclass
@@ -63,10 +114,14 @@ class GridBot:
     """
 
     def __init__(self, configs: Optional[List[GridConfig]] = None):
-        self.configs = configs or [
-            GridConfig(symbol="BTCUSDT", grid_spacing_pct=1.5, grid_levels=5, order_size=0.001, max_position=0.05),
-            GridConfig(symbol="ETHUSDT", grid_spacing_pct=2.0, grid_levels=5, order_size=0.01, max_position=0.5),
-        ]
+        self.configs = configs if configs is not None else safe_paper_defaults()
+        # Validate all configs at startup
+        for cfg in self.configs:
+            violations = validate_grid_config(cfg)
+            if violations:
+                raise ValueError(
+                    f"Unsafe grid config for {cfg.symbol}: {'; '.join(violations)}"
+                )
         self.states: Dict[str, GridState] = {}
         self._running = False
         self._http: Optional[httpx.AsyncClient] = None
@@ -106,6 +161,15 @@ class GridBot:
         """One tick: fetch price, evaluate grid, place orders."""
         price = await self._fetch_price(cfg.symbol)
         if price <= 0:
+            return
+
+        # Runtime safety check: validate exposure against live price
+        violations = validate_grid_config(cfg, ref_price=price)
+        if violations:
+            logger.error(
+                "[Grid %s] SAFETY VIOLATION at price %.2f: %s — skipping tick",
+                cfg.symbol, price, "; ".join(violations),
+            )
             return
 
         state = self.states[cfg.symbol]

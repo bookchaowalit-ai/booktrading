@@ -3,9 +3,9 @@
 > Read-only research for paper/grid validation on Binance Thailand.
 > **This is NOT trading advice.** Bot must NOT trade until all gates pass.
 
-**Last updated:** 2026-06-22 17:25 UTC
+**Last updated:** 2026-06-22 17:25 UTC (paper config aligned 2026-06-22)
 **Pair:** BTCTHB (Binance Thailand)
-**Status:** PAPER/RESEARCH ONLY
+**Status:** PAPER/RESEARCH ONLY — `grid_bot.py` defaults now safe-aligned
 
 ---
 
@@ -70,6 +70,25 @@ Current config for BTCTHB:
 | `max_daily_loss_usd` | $50 | Stop trading if exceeded |
 | `volatility_mode` | ATR | Dynamic spacing based on ATR(14) |
 | `poll_interval_sec` | 60 | Check every 60s |
+
+### Paper Config Alignment (grid_bot.py)
+
+`grid_bot.py` defaults are now aligned with `real_grid_bot.py` BTCTHB config:
+
+| Parameter | Before (unsafe) | After (safe) |
+|-----------|-----------------|--------------|
+| `symbol` | BTCUSDT, ETHUSDT | **BTCTHB** |
+| `grid_levels` | 5 | **2** |
+| `order_size` | 0.001 BTC | **0.00005 BTC** |
+| `max_position` | 0.05 BTC | **0.001 BTC** |
+| `max_exposure` | ~$3,000+ | **~฿2,120 (~$60)** |
+| `max_notional` | none | **฿3,000 cap** |
+
+**Safety guards added:**
+- `validate_grid_config()` — rejects unsafe params at startup
+- `max_notional` — hard cap on exposure in quote currency (฿3,000 for THB pairs)
+- Runtime check in `_tick()` — validates exposure against live price each cycle
+- 25 unit tests in `test_grid_safety.py` — all passing
 
 ### Grid layout at current price (฿2,120,337)
 
