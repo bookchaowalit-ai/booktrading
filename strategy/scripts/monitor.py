@@ -2,84 +2,153 @@
 """
 Polymarket Paper Bot — Daily Monitoring Report
 Run: docker compose exec strategy python /app/scripts/monitor.py
+
+Output matches strategy/RUNBOOK.md decision tree.
 """
 import json
 import redis
 import os
+import time
 from datetime import datetime, timezone
 
+MAX_POSITIONS = 8
+MIN_RESOLVED_FOR_REVIEW = 10
+
 def main():
-    r = redis.Redis(host='redis', port=6379, password=os.getenv('REDIS_PASSWORD',''), decode_responses=True)
+    r = redis.Redis(
+        host='redis', port=6379,
+        password=os.getenv('REDIS_PASSWORD', ''),
+        decode_responses=True,
+    )
     state = json.loads(r.get('poly_paper:state') or '{}')
 
     positions = state.get('positions', {})
-    resolved = [p for p in positions.values() if p.get('status') in ('resolved', 'closed')]
-    # Legacy positions have no status field — treat as active if not resolved
+    # Legacy positions have no status field — treat as active if not resolved/closed
     active = [p for p in positions.values() if p.get('status') not in ('resolved', 'closed')]
+    resolved = [p for p in positions.values() if p.get('status') in ('resolved', 'closed')]
 
     bankroll = state.get('bankroll', 100.0)
+    peak = state.get('peak_bankroll', 100.0)
     initial = 100.0
     pnl = bankroll - initial
-    dd_pct = ((initial - bankroll) / initial) * 100 if bankroll < initial else 0
+    dd_pct = ((peak - bankroll) / peak) * 100 if peak > 0 else 0
 
-    ks = state.get('kill_switch_active', False)
-    reason = state.get('kill_reason', '')
-    consec = state.get('consecutive_losses', 0)
-    daily_pnl = state.get('daily_pnl', 0.0)
+    ks_active = state.get('kill_switch_active', False)
+    ks_reason = state.get('kill_reason', '')
+    consec = state.get('_consecutive_losses', state.get('consecutive_losses', 0))
+    daily_pnl = state.get('_daily_pnl', state.get('daily_pnl', 0.0))
 
-    # Per-signal PnL from resolved
+    # Oldest active position age
+    now = time.time()
+    oldest_age_days = 0
+    oldest_question = ''
+    for p in active:
+        entry = p.get('entry_time', 0)
+        if entry:
+            age = (now - entry) / 86400
+            if age > oldest_age_days:
+                oldest_age_days = age
+                oldest_question = p.get('question', '?')[:50]
+
+    # Per-signal PnL from resolved positions
     signal_pnl = {}
     signal_count = {}
+    signal_wins = {}
     for p in resolved:
-        sig = p.get('signal_type', 'unknown')
-        size = p.get('size', 5.0)
+        sig = p.get('signal_type', p.get('signals', ['unknown'])[0] if p.get('signals') else 'unknown')
+        size = p.get('size_usdc', p.get('size', 5.0))
         outcome = p.get('outcome', '')
         if outcome == 'win':
             entry = p.get('entry_price', 0.5)
             profit = size * (1 - entry) / entry if entry > 0 else 0
+            signal_wins[sig] = signal_wins.get(sig, 0) + 1
         else:
             profit = -size
         signal_pnl[sig] = signal_pnl.get(sig, 0) + profit
         signal_count[sig] = signal_count.get(sig, 0) + 1
 
-    # Report
-    print("=" * 55)
-    print("  Polymarket Paper Bot — Daily Monitor")
-    print("=" * 55)
-    print(f"Date:              {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
-    print(f"Active positions:  {len(active)}")
-    print(f"Resolved trades:   {len(resolved)}")
-    print(f"Bankroll:          ${bankroll:.2f}")
-    print(f"Total PnL:         ${pnl:+.2f}")
-    print(f"Drawdown:          {dd_pct:.1f}%")
-    print(f"Kill switch:       {'ACTIVE — ' + reason if ks else 'OFF (normal)'}")
-    print(f"Consec losses:     {consec}")
-    print(f"Daily PnL:         ${daily_pnl:+.2f}")
+    # ── Decision logic ──────────────────────────────────────────────────────────
+    if ks_active:
+        decision = 'WAIT'
+        reason = f'kill switch active — {ks_reason}'
+        next_trigger = 'Reset kill switch only after: positions ≤ 8 + per-signal PnL reviewed'
+    elif len(active) > MAX_POSITIONS:
+        decision = 'WAIT'
+        reason = f'active positions {len(active)} > {MAX_POSITIONS} limit'
+        next_trigger = f'Active positions drop below {MAX_POSITIONS}'
+    elif len(resolved) < MIN_RESOLVED_FOR_REVIEW:
+        decision = 'WAIT'
+        reason = f'only {len(resolved)} resolved trades (need {MIN_RESOLVED_FOR_REVIEW}+ for signal review)'
+        next_trigger = f'{MIN_RESOLVED_FOR_REVIEW - len(resolved)} more resolutions needed'
+    elif signal_pnl:
+        worst_sig = min(signal_pnl, key=signal_pnl.get)
+        worst_pnl = signal_pnl[worst_sig]
+        if worst_pnl < -5:
+            decision = 'REVIEW_SIGNALS'
+            reason = f'worst signal "{worst_sig}" at ${worst_pnl:+.2f} — consider disabling'
+            next_trigger = 'Disable losing signal, then re-evaluate'
+        else:
+            decision = 'ENABLE_DRY_RUN'
+            reason = 'signal PnL acceptable — ready for dry-run validation'
+            next_trigger = 'Set POLY_DRY_RUN=true, run 2-4 weeks'
+    else:
+        decision = 'EVALUATE'
+        reason = 'resolved trades available but no PnL data — inspect manually'
+        next_trigger = 'Review resolved positions in Redis'
+
+    # ── Report ──────────────────────────────────────────────────────────────────
+    print()
+    print('┌─────────────────────────────────────────────────────────────┐')
+    print('│   Polymarket Paper Bot — Daily Monitor                      │')
+    print('└─────────────────────────────────────────────────────────────┘')
+    print(f'  Date:              {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}')
     print()
 
+    # Decision block
+    print(f'  Decision:          {decision}')
+    print(f'  Reason:            {reason}')
+    print(f'  Next trigger:      {next_trigger}')
+    print()
+    print('  ── Portfolio ──────────────────────────────────────────────')
+    print(f'  Active positions:  {len(active)}')
+    print(f'  Resolved trades:   {len(resolved)}')
+    print(f'  Bankroll:          ${bankroll:.2f}')
+    print(f'  Total PnL:         ${pnl:+.2f}  (from $100 initial)')
+    print(f'  Drawdown:          {dd_pct:.1f}%')
+    print()
+
+    # Kill switch
+    ks_display = f'ACTIVE — {ks_reason}' if ks_active else 'OFF'
+    print('  ── Safety ────────────────────────────────────────────────')
+    print(f'  Kill switch:       {ks_display}')
+    print(f'  Consec losses:     {consec}')
+    print(f'  Daily PnL:         ${daily_pnl:+.2f}')
+    print()
+
+    # Oldest position
+    if active:
+        print('  ── Oldest Open Position ─────────────────────────────────')
+        print(f'  Age:               {oldest_age_days:.1f} days')
+        print(f'  Question:          {oldest_question}')
+        print()
+
+    # Per-signal PnL
+    print('  ── Per-Signal PnL (resolved) ─────────────────────────────')
     if signal_pnl:
-        print("Per-signal PnL (resolved):")
         for sig, pnl_s in sorted(signal_pnl.items(), key=lambda x: x[1]):
             cnt = signal_count.get(sig, 0)
-            flag = "  ⚠ DISABLE" if pnl_s < -5 else ""
-            print(f"  {sig:25s}  ${pnl_s:+6.2f}  ({cnt} trades){flag}")
+            wins = signal_wins.get(sig, 0)
+            wr = (wins / cnt * 100) if cnt > 0 else 0
+            flag = '  ← DISABLE' if pnl_s < -5 else ''
+            print(f'    {sig:22s}  ${pnl_s:+7.2f}  ({cnt} trades, {wr:.0f}% WR){flag}')
     else:
-        print("Per-signal PnL:    (no resolved trades yet)")
-
+        print('    (no resolved trades yet)')
     print()
-    print("-" * 55)
+    print('  ───────────────────────────────────────────────────────────')
+    print(f'  See strategy/RUNBOOK.md for full decision tree')
+    print('  ───────────────────────────────────────────────────────────')
+    print()
 
-    # Decision logic
-    if ks:
-        print("Decision: WAIT — kill switch active, legacy exposure resolving")
-    elif len(active) > 8:
-        print(f"Decision: WAIT — {len(active)} active positions still above limit (8)")
-    elif len(resolved) < 50:
-        print(f"Decision: WAIT — only {len(resolved)} resolved trades (need 50-100 for review)")
-    else:
-        print("Decision: EVALUATE — review per-signal PnL, consider disabling losers")
-
-    print("=" * 55)
 
 if __name__ == '__main__':
     main()
