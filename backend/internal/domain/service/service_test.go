@@ -3,9 +3,9 @@ package service
 import (
 	"context"
 	"testing"
-	"time"
 
 	"trading-bot-system/backend/internal/domain/model"
+	"trading-bot-system/backend/internal/port/output"
 )
 
 // MockBotStatusRepository implements repository.BotStatusRepository for testing
@@ -23,6 +23,14 @@ func (m *MockBotStatusRepository) Get(ctx context.Context) (*model.BotStatus, er
 
 func (m *MockBotStatusRepository) SetActive(ctx context.Context, active bool) error {
 	m.active = active
+	return nil
+}
+
+func (m *MockBotStatusRepository) IncrementTrades(ctx context.Context) error {
+	return nil
+}
+
+func (m *MockBotStatusRepository) UpdateProfit(ctx context.Context, profit float64) error {
 	return nil
 }
 
@@ -64,11 +72,11 @@ func (m *MockRedisPublisher) PublishMarketData(ctx context.Context, data *model.
 	return nil
 }
 
-func (m *MockRedisPublisher) PublishOrderSignal(ctx context.Context, signal *OrderSignal) error {
+func (m *MockRedisPublisher) PublishOrderSignal(ctx context.Context, signal *output.OrderSignal) error {
 	return nil
 }
 
-func (m *MockRedisPublisher) SubscribeOrderSignals(ctx context.Context) (<-chan *OrderSignal, error) {
+func (m *MockRedisPublisher) SubscribeOrderSignals(ctx context.Context) (<-chan *output.OrderSignal, error) {
 	return nil, nil
 }
 
