@@ -211,8 +211,25 @@ async def lifespan(app: FastAPI):
     # Start REAL grid trading bot as background task
     from app.real_grid_bot import get_real_grid_bot
     real_grid_bot = get_real_grid_bot()
+    # Inject Redis client for state persistence
+    if redis_adapter and redis_adapter.redis:
+        real_grid_bot.set_redis(redis_adapter.redis)
     app.state.real_grid_bot_task = asyncio.create_task(real_grid_bot.start())
     logger.info("Real grid trading bot started (BTCTHB — real orders)")
+
+    # Start Polymarket Paper Trading Bot
+    from app.polymarket.paper_bot import get_poly_paper_bot
+    poly_paper_bot = get_poly_paper_bot()
+    if redis_adapter and redis_adapter.redis:
+        poly_paper_bot.set_redis(redis_adapter.redis)
+    await poly_paper_bot.start()
+    logger.info("Polymarket paper trading bot started (prediction market simulation)")
+
+    # Start webhook notifier for Telegram/Discord alerts
+    from app.webhook_notifier import get_webhook_notifier
+    webhook_notifier = get_webhook_notifier()
+    await webhook_notifier.start()
+    logger.info("Webhook notifier started (Telegram/Discord alerts)")
 
     # Create order executor callback using gRPC
     def execute_order_via_grpc(signal: OrderSignal) -> bool:
@@ -276,13 +293,39 @@ async def lifespan(app: FastAPI):
         consume_market_data_safe()
     )
 
+    # Start background market intelligence scanner
+    if app.state.config.get("market_intel_enabled", True):
+        app.state.market_intel_task = asyncio.create_task(
+            _background_market_scan(app)
+        )
+        logger.info("Background market intelligence scanner started (5min interval)")
+    else:
+        app.state.market_intel_task = None
+
     yield
 
     # Shutdown
+    # Stop webhook notifier
+    from app.webhook_notifier import get_webhook_notifier
+    webhook_notifier = get_webhook_notifier()
+    await webhook_notifier.stop()
+
+    # Stop Polymarket paper bot
+    from app.polymarket.paper_bot import get_poly_paper_bot
+    poly_paper_bot = get_poly_paper_bot()
+    await poly_paper_bot.stop()
+
     if hasattr(app.state, "real_grid_bot_task"):
         app.state.real_grid_bot_task.cancel()
         try:
             await app.state.real_grid_bot_task
+        except asyncio.CancelledError:
+            pass
+
+    if hasattr(app.state, "market_intel_task") and app.state.market_intel_task:
+        app.state.market_intel_task.cancel()
+        try:
+            await app.state.market_intel_task
         except asyncio.CancelledError:
             pass
 
@@ -329,6 +372,79 @@ async def consume_market_data_safe():
                 except Exception:
                     logger.exception("Failed to reconnect to market data, retrying in 5s")
                     await asyncio.sleep(5)
+
+
+# ── Background Market Intelligence Scanner ─────────────────────────────────────
+# In-memory alert storage (capped at 100 entries)
+_market_alerts: list = []
+_MAX_ALERTS = 100
+_last_scan_result: dict = {}
+
+
+async def _background_market_scan(app_instance):
+    """
+    Periodically scan markets for opportunities and store high-severity alerts.
+    Runs every 5 minutes.
+    """
+    global _market_alerts, _last_scan_result
+    await asyncio.sleep(30)  # Wait for startup to complete
+
+    while True:
+        try:
+            cfg = app_instance.state.config
+            if not cfg.get("market_intel_enabled", True):
+                await asyncio.sleep(300)
+                continue
+
+            from app.market_intel import get_scanner
+            crypto_syms = [s.strip() for s in cfg.get("market_intel_crypto_symbols", "BTCTHB,ETHTHB,BTCUSDT,ETHUSDT").split(",") if s.strip()]
+            stock_syms = [s.strip() for s in cfg.get("market_intel_stock_symbols", "SPY,QQQ,AAPL,MSFT,GOOGL").split(",") if s.strip()]
+            sources = [s.strip() for s in cfg.get("market_intel_sources", "crypto,prediction,stocks,macro").split(",") if s.strip()]
+
+            scanner = get_scanner(
+                crypto_symbols=crypto_syms,
+                stock_symbols=stock_syms,
+                polymarket_gamma_api=cfg.get("polymarket_gamma_api", "https://gamma-api.polymarket.com"),
+                polymarket_clob_api=cfg.get("polymarket_clob_api", "https://clob.polymarket.com"),
+                enabled_sources=sources,
+            )
+
+            result = await scanner.scan_all(min_confidence=0.4)
+            _last_scan_result = result.model_dump()
+
+            # Extract high/critical severity alerts
+            from app.market_intel.models import Severity
+            new_alerts = [
+                {
+                    "id": opp.opportunity_id,
+                    "symbol": opp.symbol,
+                    "market": opp.market_type.value,
+                    "source": opp.source,
+                    "type": opp.opportunity_type.value,
+                    "severity": opp.severity.value,
+                    "title": opp.title,
+                    "description": opp.description,
+                    "price": opp.current_price,
+                    "confidence": opp.confidence,
+                    "timestamp": opp.timestamp.isoformat() if opp.timestamp else None,
+                }
+                for opp in result.opportunities
+                if opp.severity in (Severity.HIGH, Severity.CRITICAL)
+            ]
+
+            if new_alerts:
+                _market_alerts.extend(new_alerts)
+                # Cap the list
+                if len(_market_alerts) > _MAX_ALERTS:
+                    _market_alerts = _market_alerts[-_MAX_ALERTS:]
+                logger.info(f"Market scan: {result.total_opportunities} opps, {len(new_alerts)} high-severity alerts")
+            else:
+                logger.debug(f"Market scan: {result.total_opportunities} opps, no high-severity alerts")
+
+        except Exception as e:
+            logger.error(f"Background market scan failed: {e}")
+
+        await asyncio.sleep(300)  # 5 minutes
 
 
 def create_app(config: Optional[dict] = None) -> FastAPI:
@@ -899,6 +1015,64 @@ def register_routes(app: FastAPI):
         bot.enable()
         return {"status": "enabled", "message": "Real trading resumed"}
 
+    @app.get("/api/real-grid/notifications")
+    async def real_grid_notifications(limit: int = 20):
+        """Get recent fill notifications from the real grid bot."""
+        from app.real_grid_bot import get_real_grid_bot
+        bot = get_real_grid_bot()
+        return bot.get_notifications(limit=limit)
+
+    @app.get("/api/real-grid/health")
+    async def real_grid_health():
+        """Get health status with stuck detection."""
+        from app.real_grid_bot import get_real_grid_bot
+        bot = get_real_grid_bot()
+        return bot.get_health()
+
+    @app.post("/api/real-grid/restart")
+    @auth_required
+    async def real_grid_restart(request: Request):
+        """Force restart the bot (re-sync open orders, clear stuck state)."""
+        from app.real_grid_bot import get_real_grid_bot
+        bot = get_real_grid_bot()
+        success = await bot.force_restart()
+        if success:
+            return {"status": "restarted", "message": "Bot re-synced successfully"}
+        raise HTTPException(status_code=500, detail="Restart failed")
+
+    @app.get("/api/real-grid/config/{symbol}")
+    async def real_grid_config_get(symbol: str):
+        """Get current grid config for a symbol."""
+        from app.real_grid_bot import get_real_grid_bot
+        bot = get_real_grid_bot()
+        config = bot.get_config(symbol.upper())
+        if config:
+            return config
+        raise HTTPException(status_code=404, detail=f"Symbol {symbol} not found")
+
+    @app.put("/api/real-grid/config/{symbol}")
+    @auth_required
+    async def real_grid_config_update(symbol: str, request: dict):
+        """Update grid config for a symbol.
+        
+        Body: {"grid_spacing_pct": 2.0, "grid_levels": 3, "order_size": 0.00005, ...}
+        """
+        from app.real_grid_bot import get_real_grid_bot
+        bot = get_real_grid_bot()
+        success = bot.update_config(symbol.upper(), **request)
+        if success:
+            return {"status": "updated", "symbol": symbol.upper(), "config": request}
+        raise HTTPException(status_code=404, detail=f"Symbol {symbol} not found")
+
+    # ── Performance Metrics Endpoint ──
+
+    @app.get("/api/real-grid/performance")
+    async def real_grid_performance():
+        """Get performance metrics for all symbols: fill rates, ATR spacing, profit velocity, compound recommendations."""
+        from app.real_grid_bot import get_real_grid_bot
+        bot = get_real_grid_bot()
+        return bot.get_performance()
+
     # ── Risk Manager Endpoints ──
 
     @app.get("/api/risk/status")
@@ -921,13 +1095,58 @@ def register_routes(app: FastAPI):
 
     @app.get("/api/journal/entries")
     async def journal_entries(limit: int = 50, status: str = None):
-        """Get trade journal entries (from in-memory cache + backend DB)."""
+        """Get trade journal entries (in-memory cache + backend DB)."""
         from app.trade_journal import get_trade_journal
+        from app.real_grid_bot import BACKEND_API_BASE
+        import httpx as _httpx
+
         journal = get_trade_journal()
+        in_memory = journal.get_recent_entries(limit)
+        in_stats = journal.get_stats()
+
+        # Fetch DB-persisted entries from backend
+        db_entries = []
+        db_stats = {}
+        try:
+            async with _httpx.AsyncClient(timeout=10.0) as client:
+                # List entries
+                params = {"limit": str(limit)}
+                if status:
+                    params["status"] = status
+                resp = await client.get(
+                    f"{BACKEND_API_BASE}/api/journal/list", params=params
+                )
+                if resp.status_code == 200:
+                    db_entries = resp.json()
+
+                # Stats
+                resp2 = await client.get(f"{BACKEND_API_BASE}/api/journal/stats")
+                if resp2.status_code == 200:
+                    db_stats = resp2.json()
+        except Exception as e:
+            logger.warning("Failed to fetch journal from backend: %s", e)
+
         return {
-            "in_memory": journal.get_recent_entries(limit),
-            "stats": journal.get_stats(),
+            "in_memory": in_memory,
+            "db_entries": db_entries,
+            "in_memory_stats": in_stats,
+            "db_stats": db_stats,
         }
+
+    @app.get("/api/journal/stats")
+    async def journal_stats():
+        """Get trade journal stats from DB."""
+        from app.real_grid_bot import BACKEND_API_BASE
+        import httpx as _httpx
+        try:
+            async with _httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(f"{BACKEND_API_BASE}/api/journal/stats")
+                if resp.status_code == 200:
+                    return resp.json()
+        except Exception:
+            pass
+        from app.trade_journal import get_trade_journal
+        return get_trade_journal().get_stats()
 
     # ── Daily Report ──
 
@@ -1003,6 +1222,382 @@ def register_routes(app: FastAPI):
             "journal_stats": journal.get_stats(),
             "risk_events": risk.state.risk_events[-20:],  # last 20 events
         }
+
+    # ── Backtester Endpoints ──
+
+    @app.post("/api/backtest/run")
+    async def run_backtest(request: dict):
+        """
+        Run grid trading backtest with given parameters.
+        
+        Body:
+            symbol: str = "BTCTHB"
+            days: int = 30
+            interval: str = "1h"  # 1m, 5m, 15m, 1h, 4h, 1d
+            grid_spacing_pct: float = 1.5
+            grid_levels: int = 2
+            order_size: float = 0.00005
+            max_position: float = 0.001
+            max_open_orders: int = 10
+            initial_capital_thb: float = 10000.0
+            volatility_mode: str = "fixed"  # "fixed" or "atr"
+            atr_period: int = 14
+            atr_multiplier: float = 1.5
+            min_spacing_pct: float = 0.5
+            max_spacing_pct: float = 5.0
+        """
+        from app.backtester import GridBacktester, BacktestConfig
+
+        config = BacktestConfig(
+            symbol=request.get("symbol", "BTCTHB"),
+            grid_spacing_pct=request.get("grid_spacing_pct", 1.5),
+            grid_levels=request.get("grid_levels", 2),
+            order_size=request.get("order_size", 0.00005),
+            max_position=request.get("max_position", 0.001),
+            max_open_orders=request.get("max_open_orders", 10),
+            initial_capital_thb=request.get("initial_capital_thb", 10000.0),
+            volatility_mode=request.get("volatility_mode", "fixed"),
+            atr_period=request.get("atr_period", 14),
+            atr_multiplier=request.get("atr_multiplier", 1.5),
+            min_spacing_pct=request.get("min_spacing_pct", 0.5),
+            max_spacing_pct=request.get("max_spacing_pct", 5.0),
+        )
+        days = request.get("days", 30)
+        interval = request.get("interval", "1h")
+
+        backtester = GridBacktester(config)
+        try:
+            result = await backtester.run(days=days, interval=interval)
+            return {
+                "symbol": result.symbol,
+                "start_time": result.start_time,
+                "end_time": result.end_time,
+                "duration_days": round(result.duration_days, 1),
+                "total_trades": result.total_trades,
+                "winning_trades": result.winning_trades,
+                "losing_trades": result.losing_trades,
+                "win_rate": result.win_rate,
+                "total_pnl": result.total_pnl,
+                "total_fees": result.total_fees,
+                "net_pnl": result.net_pnl,
+                "max_drawdown": result.max_drawdown,
+                "max_drawdown_pct": result.max_drawdown_pct,
+                "avg_win": result.avg_win,
+                "avg_loss": result.avg_loss,
+                "profit_factor": result.profit_factor,
+                "avg_grid_spacing_pct": result.avg_grid_spacing_pct,
+                "trades_per_day": result.trades_per_day,
+                "config": result.config,
+                "volatility_mode": result.volatility_mode,
+                "atr_spacing_avg": result.atr_spacing_avg,
+                "atr_spacing_min": result.atr_spacing_min,
+                "atr_spacing_max": result.atr_spacing_max,
+                "trades": [
+                    {
+                        "timestamp": t.timestamp,
+                        "side": t.side,
+                        "price": t.price,
+                        "quantity": t.quantity,
+                        "pnl": t.pnl,
+                        "fee": t.fee,
+                    }
+                    for t in result.trades
+                ],
+            }
+        finally:
+            await backtester.close()
+
+    @app.post("/api/backtest/sweep")
+    async def run_parameter_sweep_endpoint(request: dict):
+        """
+        Run parameter sweep: test multiple grid_spacing_pct x grid_levels combos.
+        
+        Body:
+            symbol: str = "BTCTHB"
+            days: int = 30
+            interval: str = "1h"
+            volatility_mode: str = "fixed"  # "fixed" or "atr"
+            spacing_range: [0.5, 1.0, 1.5, 2.0, 3.0]  # optional
+            levels_range: [1, 2, 3, 4]  # optional
+            atr_period: int = 14
+            atr_multiplier: float = 1.5
+            order_size: float = 0.00005
+            initial_capital_thb: float = 10000.0
+        """
+        from app.backtester import run_parameter_sweep
+
+        result = await run_parameter_sweep(
+            symbol=request.get("symbol", "BTCTHB"),
+            days=request.get("days", 30),
+            interval=request.get("interval", "1h"),
+            volatility_mode=request.get("volatility_mode", "fixed"),
+            spacing_range=request.get("spacing_range"),
+            levels_range=request.get("levels_range"),
+            atr_period=request.get("atr_period", 14),
+            atr_multiplier=request.get("atr_multiplier", 1.5),
+            min_spacing_pct=request.get("min_spacing_pct", 0.5),
+            max_spacing_pct=request.get("max_spacing_pct", 5.0),
+            order_size=request.get("order_size", 0.00005),
+            initial_capital_thb=request.get("initial_capital_thb", 10000.0),
+        )
+        return {
+            "symbol": result.symbol,
+            "days": result.days,
+            "interval": result.interval,
+            "volatility_mode": result.volatility_mode,
+            "total_combinations": len(result.results),
+            "best_config": result.best_config,
+            "worst_config": result.worst_config,
+            "results": [
+                {
+                    "grid_spacing_pct": r.grid_spacing_pct,
+                    "grid_levels": r.grid_levels,
+                    "net_pnl": r.net_pnl,
+                    "win_rate": r.win_rate,
+                    "trades_per_day": r.trades_per_day,
+                    "max_drawdown_pct": r.max_drawdown_pct,
+                    "profit_factor": r.profit_factor,
+                    "total_trades": r.total_trades,
+                    "atr_spacing_avg": r.atr_spacing_avg,
+                }
+                for r in sorted(result.results, key=lambda x: x.net_pnl, reverse=True)
+            ],
+        }
+
+    # ── Polymarket Endpoints ──
+
+    @app.get("/api/polymarket/events")
+    async def polymarket_events(limit: int = 20, active: bool = True, tag: str = None):
+        """Fetch active Polymarket events with markets."""
+        from app.polymarket import get_polymarket_client
+        client = get_polymarket_client()
+        events = await client.get_events(limit=limit, active=active, tag=tag)
+        return {
+            "events": [
+                {
+                    "id": e.event_id,
+                    "title": e.title,
+                    "slug": e.slug,
+                    "markets_count": len(e.markets),
+                    "tags": e.tags,
+                    "closed": e.closed,
+                }
+                for e in events
+            ],
+            "total": len(events),
+        }
+
+    @app.get("/api/polymarket/markets")
+    async def polymarket_markets(limit: int = 50, active: bool = True):
+        """Fetch active Polymarket markets with current prices."""
+        from app.polymarket import get_polymarket_client
+        client = get_polymarket_client()
+        markets = await client.get_markets(limit=limit, active=active)
+        return {
+            "markets": [
+                {
+                    "condition_id": m.condition_id,
+                    "question": m.question,
+                    "yes_price": m.yes_price,
+                    "no_price": m.no_price,
+                    "volume": m.volume,
+                    "liquidity": m.liquidity,
+                    "resolved": m.resolved,
+                }
+                for m in markets
+            ],
+            "total": len(markets),
+        }
+
+    @app.get("/api/polymarket/search")
+    async def polymarket_search(q: str, limit: int = 20):
+        """Search Polymarket markets by keyword."""
+        from app.polymarket import get_analyzer
+        analyzer = get_analyzer()
+        result = await analyzer.search_and_analyze(q)
+        return result
+
+    @app.get("/api/polymarket/opportunities")
+    async def polymarket_opportunities(min_confidence: float = 0.3, limit: int = 30):
+        """Scan all markets for trading opportunities and inefficiencies."""
+        from app.polymarket import get_analyzer
+        analyzer = get_analyzer()
+        events = await analyzer.refresh_markets(limit=limit)
+        opportunities = await analyzer.scan_opportunities(events, min_confidence=min_confidence)
+        summary = await analyzer.get_market_summary(events)
+        return {
+            "opportunities": [opp.model_dump() for opp in opportunities],
+            "summary": summary,
+        }
+
+    # ── Polymarket Paper Trading Bot Endpoints ──
+
+    @app.get("/api/poly-paper/status")
+    async def poly_paper_status():
+        """Get Polymarket paper trading bot status."""
+        from app.polymarket.paper_bot import get_poly_paper_bot
+        bot = get_poly_paper_bot()
+        return bot.get_status()
+
+    @app.get("/api/poly-paper/positions")
+    async def poly_paper_positions(active_only: bool = False):
+        """Get paper trading positions."""
+        from app.polymarket.paper_bot import get_poly_paper_bot
+        bot = get_poly_paper_bot()
+        return bot.get_positions(active_only=active_only)
+
+    @app.get("/api/poly-paper/trades")
+    async def poly_paper_trades(limit: int = 50):
+        """Get recent paper trades."""
+        from app.polymarket.paper_bot import get_poly_paper_bot
+        bot = get_poly_paper_bot()
+        return bot.get_trades(limit=limit)
+
+    @app.get("/api/poly-paper/performance")
+    async def poly_paper_performance():
+        """Get detailed paper trading performance metrics."""
+        from app.polymarket.paper_bot import get_poly_paper_bot
+        bot = get_poly_paper_bot()
+        return bot.get_performance()
+
+    @app.get("/api/poly-paper/notifications")
+    async def poly_paper_notifications(limit: int = 20):
+        """Get recent paper trading notifications."""
+        from app.polymarket.paper_bot import get_poly_paper_bot
+        bot = get_poly_paper_bot()
+        return bot.get_notifications(limit=limit)
+
+    @app.get("/api/poly-paper/signals")
+    async def poly_paper_signals(limit: int = 30):
+        """Get recent alpha signals from multi-signal engine."""
+        from app.polymarket.paper_bot import get_poly_paper_bot
+        bot = get_poly_paper_bot()
+        return bot.get_signals(limit=limit)
+
+    @app.get("/api/polymarket/summary")
+    async def polymarket_summary(limit: int = 50):
+        """Get summary statistics across all Polymarket markets."""
+        from app.polymarket import get_analyzer
+        analyzer = get_analyzer()
+        events = await analyzer.refresh_markets(limit=limit)
+        summary = await analyzer.get_market_summary(events)
+        return summary
+
+    @app.get("/api/polymarket/tags")
+    async def polymarket_tags():
+        """Get available Polymarket market tags/categories."""
+        from app.polymarket import get_polymarket_client
+        client = get_polymarket_client()
+        tags = await client.get_tags()
+        return {"tags": tags}
+
+    @app.get("/api/polymarket/orderbook/{token_id}")
+    async def polymarket_orderbook(token_id: str):
+        """Get orderbook for a specific Polymarket outcome token."""
+        from app.polymarket import get_polymarket_client
+        client = get_polymarket_client()
+        orderbook = await client.get_orderbook(token_id)
+        if not orderbook:
+            raise HTTPException(status_code=404, detail="Orderbook not found")
+        return orderbook.model_dump()
+
+    @app.get("/api/polymarket/price-history/{token_id}")
+    async def polymarket_price_history(token_id: str, interval: str = "1h"):
+        """Get price history for a Polymarket token."""
+        from app.polymarket import get_polymarket_client
+        client = get_polymarket_client()
+        history = await client.get_price_history(token_id, interval=interval)
+        if not history:
+            raise HTTPException(status_code=404, detail="Price history not found")
+        return history.model_dump()
+
+
+    # ── Market Intelligence Endpoints ──
+
+    def _get_market_scanner():
+        """Get or create the market scanner singleton."""
+        from app.market_intel import get_scanner
+        cfg = app.state.config
+        crypto_syms = [s.strip() for s in cfg.get("market_intel_crypto_symbols", "BTCTHB,ETHTHB,BTCUSDT,ETHUSDT").split(",") if s.strip()]
+        stock_syms = [s.strip() for s in cfg.get("market_intel_stock_symbols", "SPY,QQQ,AAPL,MSFT,GOOGL").split(",") if s.strip()]
+        sources = [s.strip() for s in cfg.get("market_intel_sources", "crypto,prediction,stocks,macro").split(",") if s.strip()]
+        return get_scanner(
+            crypto_symbols=crypto_syms,
+            stock_symbols=stock_syms,
+            polymarket_gamma_api=cfg.get("polymarket_gamma_api", "https://gamma-api.polymarket.com"),
+            polymarket_clob_api=cfg.get("polymarket_clob_api", "https://clob.polymarket.com"),
+            enabled_sources=sources,
+        )
+
+    @app.get("/api/market-intel/scan")
+    async def market_intel_scan(min_confidence: float = 0.3, markets: str = None):
+        """Cross-market opportunity scan across all enabled sources."""
+        scanner = _get_market_scanner()
+        market_filter = None
+        if markets:
+            from app.market_intel.models import MarketType
+            market_filter = [MarketType(m.strip()) for m in markets.split(",") if m.strip()]
+        result = await scanner.scan_all(min_confidence=min_confidence, markets=market_filter)
+        return result.model_dump()
+
+    @app.get("/api/market-intel/quotes")
+    async def market_intel_quotes(markets: str = None):
+        """Fetch live quotes from all enabled market sources."""
+        scanner = _get_market_scanner()
+        market_filter = None
+        if markets:
+            from app.market_intel.models import MarketType
+            market_filter = [MarketType(m.strip()) for m in markets.split(",") if m.strip()]
+        quotes = await scanner.get_all_quotes(markets=market_filter)
+        return {
+            "quotes": [q.model_dump() for q in quotes],
+            "total": len(quotes),
+        }
+
+    @app.get("/api/market-intel/overview")
+    async def market_intel_overview():
+        """High-level overview of all markets with top opportunities."""
+        scanner = _get_market_scanner()
+        overview = await scanner.get_market_overview()
+        return overview
+
+    @app.get("/api/market-intel/sources")
+    async def market_intel_sources():
+        """List available market data sources and their status."""
+        scanner = _get_market_scanner()
+        return {
+            "sources": [
+                {
+                    "name": src.source_name,
+                    "market_type": src.market_type.value,
+                    "enabled": True,
+                }
+                for src in scanner.sources.values()
+            ],
+            "total": len(scanner.sources),
+        }
+
+    @app.get("/api/market-intel/alerts")
+    async def market_intel_alerts(limit: int = 50, severity: str = None):
+        """
+        Get high-severity market alerts from background scanning.
+        Returns alerts sorted by most recent first.
+        """
+        alerts = list(reversed(_market_alerts))  # Most recent first
+        if severity:
+            alerts = [a for a in alerts if a.get("severity") == severity.lower()]
+        return {
+            "alerts": alerts[:limit],
+            "total": len(alerts),
+            "max_stored": _MAX_ALERTS,
+        }
+
+    @app.get("/api/market-intel/last-scan")
+    async def market_intel_last_scan():
+        """Get the most recent background scan result."""
+        if not _last_scan_result:
+            return {"status": "no_scan_yet", "message": "Background scan has not completed yet"}
+        return _last_scan_result
 
 
 # Create default app instance

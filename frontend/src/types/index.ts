@@ -138,6 +138,24 @@ export interface TradeHistory {
   executedAt: string;
 }
 
+/** Real trade from /api/trade/history (Binance TH via Go backend). */
+export interface RealTrade {
+  id: string;
+  symbol: string;
+  side: 'BUY' | 'SELL';
+  type: string;
+  quantity: number;
+  price: number;
+  executed_qty: number;
+  executed_price: number;
+  status: string;
+  fee: number;
+  exchange: string;
+  testnet: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface BotStatus {
   isActive: boolean;
   startedAt?: string;

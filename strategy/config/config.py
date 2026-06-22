@@ -64,6 +64,21 @@ class ServiceConfig(BaseModel):
     # Signal gate
     min_composite_score: float = Field(default=0.5, env="MIN_COMPOSITE_SCORE", gt=0, le=1.0)
 
+    # Polymarket Configuration
+    polymarket_gamma_api: str = Field(default="https://gamma-api.polymarket.com", env="POLYMARKET_GAMMA_API")
+    polymarket_clob_api: str = Field(default="https://clob.polymarket.com", env="POLYMARKET_CLOB_API")
+    polymarket_data_api: str = Field(default="https://data-api.polymarket.com", env="POLYMARKET_DATA_API")
+    polymarket_enabled: bool = Field(default=True, env="POLYMARKET_ENABLED")
+
+    # Market Intelligence Configuration
+    market_intel_enabled: bool = Field(default=True, env="MARKET_INTEL_ENABLED")
+    market_intel_sources: str = Field(default="crypto,prediction,stocks,macro", env="MARKET_INTEL_SOURCES")
+    market_intel_crypto_symbols: str = Field(default="BTCTHB,ETHTHB,BTCUSDT,ETHUSDT", env="MARKET_INTEL_CRYPTO_SYMBOLS")
+    market_intel_stock_symbols: str = Field(
+        default="SPY,QQQ,AAPL,MSFT,GOOGL,AMZN,NVDA,TSLA,META,PTT.BK,AOT.BK,SCB.BK",
+        env="MARKET_INTEL_STOCK_SYMBOLS",
+    )
+
     @validator("rsi_oversold")
     def validate_rsi_oversold(cls, v, values):
         if "rsi_overbought" in values and v >= values["rsi_overbought"]:

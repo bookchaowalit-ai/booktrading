@@ -2,7 +2,7 @@
  * Zustand store for application state management.
  */
 import { create } from 'zustand';
-import { BotStatus, MarketData, Order, Portfolio, TechnicalIndicators, TradeHistory } from '@/types';
+import { BotStatus, MarketData, Order, Portfolio, TechnicalIndicators, TradeHistory, RealTrade } from '@/types';
 import { api } from '@/services/api';
 import { wsService } from '@/services/websocket';
 
@@ -33,6 +33,9 @@ interface AppState {
   // Trade History
   tradeHistory: TradeHistory[];
 
+  // Real Trade History (Binance TH)
+  realTrades: RealTrade[];
+
   // Technical Indicators
   indicators: Record<string, TechnicalIndicators>;
 
@@ -59,6 +62,7 @@ interface AppState {
   refreshPortfolio: () => Promise<void>;
   refreshOrders: () => Promise<void>;
   refreshTradeHistory: () => Promise<void>;
+  refreshRealTrades: () => Promise<void>;
   refreshIndicators: () => Promise<void>;
 
   // WebSocket
@@ -74,6 +78,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   portfolio: [],
   orders: [],
   tradeHistory: [],
+  realTrades: [],
   indicators: {},
   error: { message: null, timestamp: null, source: null },
 
@@ -164,6 +169,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ tradeHistory: trades });
     } catch (err) {
       console.warn('[Store] Failed to refresh trade history:', (err as Error).message);
+    }
+  },
+
+  refreshRealTrades: async () => {
+    try {
+      const trades = await api.getRealTradeHistory(100);
+      set({ realTrades: trades });
+    } catch (err) {
+      console.warn('[Store] Failed to refresh real trades:', (err as Error).message);
     }
   },
 

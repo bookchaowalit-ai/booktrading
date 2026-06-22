@@ -500,6 +500,65 @@ export const api = {
     }
   },
 
+  async getRealGridConfig(symbol: string) {
+    try {
+      const response = await apiFetch(`${STRATEGY_API_URL}/api/real-grid/config/${symbol}`, {
+        headers: authHeaders(),
+      });
+      if (!response.ok) return null;
+      return response.json();
+    } catch {
+      return null;
+    }
+  },
+
+  async updateRealGridConfig(symbol: string, config: Record<string, unknown>): Promise<void> {
+    const response = await apiFetch(`${STRATEGY_API_URL}/api/real-grid/config/${symbol}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(config),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to update config' }));
+      throw new Error(error.error || 'Failed to update config');
+    }
+  },
+
+  async getRealGridHealth() {
+    try {
+      const response = await apiFetch(`${STRATEGY_API_URL}/api/real-grid/health`, {
+        headers: authHeaders(),
+      });
+      if (!response.ok) return null;
+      return response.json();
+    } catch {
+      return null;
+    }
+  },
+
+  async restartRealGrid(): Promise<void> {
+    const response = await apiFetch(`${STRATEGY_API_URL}/api/real-grid/restart`, {
+      method: 'POST',
+      headers: authHeaders(),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to restart bot' }));
+      throw new Error(error.error || 'Failed to restart bot');
+    }
+  },
+
+  async getRealGridPerformance() {
+    try {
+      const response = await apiFetch(`${STRATEGY_API_URL}/api/real-grid/performance`, {
+        headers: authHeaders(),
+      });
+      if (!response.ok) return null;
+      return response.json();
+    } catch {
+      return null;
+    }
+  },
+
   async getDailyReport(symbol: string = 'BTCTHB') {
     try {
       const response = await apiFetch(`${STRATEGY_API_URL}/api/report/daily?symbol=${symbol}`, {
@@ -509,6 +568,80 @@ export const api = {
       return response.json();
     } catch {
       return null;
+    }
+  },
+
+  // ── Polymarket Paper Trading ──────────────────────────────────────────────────
+
+  async getPolyPaperStatus() {
+    try {
+      const response = await apiFetch(`${STRATEGY_API_URL}/api/poly-paper/status`, {
+        headers: authHeaders(),
+      });
+      if (!response.ok) return null;
+      return response.json();
+    } catch {
+      return null;
+    }
+  },
+
+  async getPolyPaperPositions(activeOnly: boolean = false) {
+    try {
+      const response = await apiFetch(`${STRATEGY_API_URL}/api/poly-paper/positions?active_only=${activeOnly}`, {
+        headers: authHeaders(),
+      });
+      if (!response.ok) return [];
+      return response.json();
+    } catch {
+      return [];
+    }
+  },
+
+  async getPolyPaperTrades(limit: number = 50) {
+    try {
+      const response = await apiFetch(`${STRATEGY_API_URL}/api/poly-paper/trades?limit=${limit}`, {
+        headers: authHeaders(),
+      });
+      if (!response.ok) return [];
+      return response.json();
+    } catch {
+      return [];
+    }
+  },
+
+  async getPolyPaperPerformance() {
+    try {
+      const response = await apiFetch(`${STRATEGY_API_URL}/api/poly-paper/performance`, {
+        headers: authHeaders(),
+      });
+      if (!response.ok) return null;
+      return response.json();
+    } catch {
+      return null;
+    }
+  },
+
+  async getPolyPaperNotifications(limit: number = 20) {
+    try {
+      const response = await apiFetch(`${STRATEGY_API_URL}/api/poly-paper/notifications?limit=${limit}`, {
+        headers: authHeaders(),
+      });
+      if (!response.ok) return [];
+      return response.json();
+    } catch {
+      return [];
+    }
+  },
+
+  async getPolyPaperSignals(limit: number = 30) {
+    try {
+      const response = await apiFetch(`${STRATEGY_API_URL}/api/poly-paper/signals?limit=${limit}`, {
+        headers: authHeaders(),
+      });
+      if (!response.ok) return [];
+      return response.json();
+    } catch {
+      return [];
     }
   },
 

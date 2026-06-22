@@ -39,6 +39,9 @@ import {
   Building2,
   Flag,
   ArrowLeftRight,
+  Crosshair,
+  FileText,
+  Monitor,
 } from 'lucide-react';
 import { useTranslation, TranslationKey } from '@/i18n/translations';
 
@@ -76,6 +79,7 @@ const menuGroups: MenuGroup[] = [
       { nameKey: 'nav.dca', href: '/dashboard/dca', icon: <Repeat className="w-5 h-5" /> },
       { nameKey: 'nav.copyTrading', href: '/dashboard/copy-trading', icon: <Users className="w-5 h-5" /> },
       { nameKey: 'nav.rebalancing', href: '/dashboard/rebalancing', icon: <Landmark className="w-5 h-5" /> },
+      { nameKey: 'nav.polyPaper', href: '/dashboard/polymarket', icon: <Target className="w-5 h-5" /> },
     ],
   },
   {
@@ -85,7 +89,11 @@ const menuGroups: MenuGroup[] = [
       { nameKey: 'nav.ai-insights', href: '/dashboard/ai-insights', icon: <Sparkles className="w-5 h-5" /> },
       { nameKey: 'nav.analytics', href: '/dashboard/analytics', icon: <BarChart3 className="w-5 h-5" /> },
       { nameKey: 'nav.sentiment', href: '/dashboard/sentiment', icon: <Eye className="w-5 h-5" /> },
+      { nameKey: 'nav.marketIntel', href: '/dashboard/market-intel', icon: <Crosshair className="w-5 h-5" /> },
+      { nameKey: 'nav.tradeJournal', href: '/dashboard/trade-journal', icon: <BookOpen className="w-5 h-5" /> },
+      { nameKey: 'nav.dailyReport', href: '/dashboard/daily-report', icon: <FileText className="w-5 h-5" /> },
       { nameKey: 'nav.backtest', href: '/dashboard/backtest', icon: <TestTube className="w-5 h-5" /> },
+      { nameKey: 'nav.monitoring', href: '/dashboard/monitoring', icon: <Monitor className="w-5 h-5" /> },
       { nameKey: 'nav.riskManagement', href: '/dashboard/risk-management', icon: <Shield className="w-5 h-5" /> },
     ],
   },

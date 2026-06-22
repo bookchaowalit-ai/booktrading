@@ -55,6 +55,9 @@ services:
       - DATABASE_SSLMODE=disable
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-change_me_in_production_32chars}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+      - EXCHANGE_PROVIDER=${EXCHANGE_PROVIDER:-binance_th}
+      - BINANCE_TH_API_KEY=${BINANCE_TH_API_KEY:-}
+      - BINANCE_TH_API_SECRET=${BINANCE_TH_API_SECRET:-}
       - EXCHANGE_USE_TESTNET=true
     volumes:
       - ./backend:/app
@@ -82,6 +85,11 @@ services:
       - REDIS_DB=0
       - API_HOST=0.0.0.0
       - API_PORT=8000
+      - REAL_SYMBOLS=${REAL_SYMBOLS:-BTCTHB,ETHTHB,BNBTHB,SOLTHB,XRPTHB}
+      - BACKEND_API_BASE=http://backend:8080
+      - BINANCE_PRICE_API=https://api.binance.th
+      - EXCHANGE_PROVIDER=${EXCHANGE_PROVIDER:-binance_th}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       - ./strategy:/app
     depends_on:

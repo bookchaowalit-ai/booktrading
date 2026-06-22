@@ -39,6 +39,7 @@ export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<'overview' | 'portfolio' | 'trades'>('overview');
   const [isLoading, setIsLoading] = useState(true);
   const [walletBalances, setWalletBalances] = useState<{ totalTHB: number; totalUSDT: number; exchangeCount: number } | null>(null);
+  const [realPnl, setRealPnl] = useState<{ totalPnl: number; totalTrades: number; symbols: Record<string, { daily_pnl: number; daily_trades: number; active_buys: number; active_sells: number }> } | null>(null);
 
   // Initialize WebSocket connection for real-time updates
   useWebSocket();
@@ -71,6 +72,28 @@ export default function Dashboard() {
         .then((p) => setWinRate(p.winRate || 0))
         .catch(() => setWinRate(0));
     });
+  }, []);
+
+  // Fetch real grid bot P&L
+  useEffect(() => {
+    const fetchPnl = async () => {
+      try {
+        const res = await fetch('/strategy-api/api/real-grid/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        const symbols = data.symbols || {};
+        let totalPnl = 0;
+        let totalTrades = 0;
+        for (const s of Object.values(symbols) as any[]) {
+          totalPnl += s.daily_pnl || 0;
+          totalTrades += s.daily_trades || 0;
+        }
+        setRealPnl({ totalPnl, totalTrades, symbols });
+      } catch { /* ignore */ }
+    };
+    fetchPnl();
+    const interval = setInterval(fetchPnl, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   // Fetch wallet balances (lightweight, cached)
@@ -242,6 +265,22 @@ export default function Dashboard() {
             View All <ArrowRight className="w-3 h-3" />
           </div>
         </button>
+
+        {/* Real Grid P&L */}
+        {realPnl && (
+          <div className="p-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+            <div className="flex items-center gap-2 mb-1">
+              <Zap className="w-4 h-4 text-yellow-500" />
+              <span className="text-xs text-gray-600 dark:text-gray-400">Real P&L</span>
+            </div>
+            <div className={`text-lg font-bold ${realPnl.totalPnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              ฿{realPnl.totalPnl.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            </div>
+            <div className="text-xs text-gray-500 mt-1">
+              {realPnl.totalTrades} fills today
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Category Summary Cards */}

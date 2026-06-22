@@ -18,6 +18,7 @@ import { WSStatusIndicator } from '@/components/WSStatusIndicator';
 import ThemeToggle from '@/components/ThemeToggle';
 import { Dropdown } from '@/components/ui';
 import NotificationCenter from '@/components/NotificationCenter';
+import FillNotificationToast from '@/components/FillNotificationToast';
 import MobileBottomNav from '@/components/MobileBottomNav';
 import KeyboardShortcutsHelp from '@/components/KeyboardShortcutsHelp';
 import { api } from '@/services/api';
@@ -147,6 +148,7 @@ export default function DashboardLayout({
     { id: 'history', label: 'Go to History', action: () => router.push(`/${locale}/dashboard/history`) },
     { id: 'alerts', label: 'Go to Alerts', action: () => router.push(`/${locale}/dashboard/alerts`) },
     { id: 'paper-trading', label: 'Go to Paper Trading', action: () => router.push(`/${locale}/dashboard/paper-trading`) },
+    { id: 'polymarket', label: 'Go to Polymarket', action: () => router.push(`/${locale}/dashboard/polymarket`) },
     { id: 'news', label: 'Go to News', action: () => router.push(`/${locale}/dashboard/news`) },
     { id: 'settings', label: 'Go to Settings', action: () => router.push(`/${locale}/dashboard/settings`), shortcut: 'G S' },
     { id: 'toggle-theme', label: 'Toggle Dark Mode', action: () => document.documentElement.classList.toggle('dark'), shortcut: 'D' },
@@ -277,6 +279,9 @@ export default function DashboardLayout({
             onClose={() => setIsCommandPaletteOpen(false)}
             commands={commands}
           />
+
+          {/* Real Grid Fill Notifications */}
+          <FillNotificationToast />
         </div>
       </ToastProvider>
     </ThemeProvider>

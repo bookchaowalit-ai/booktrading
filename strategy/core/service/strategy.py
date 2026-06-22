@@ -243,7 +243,7 @@ class MultiSymbolStrategy:
     def process_market_data(self, data: MarketData) -> Optional[OrderSignal]:
         """Process market data for the corresponding symbol."""
         if data.symbol not in self.strategies:
-            logger.warning("No strategy for symbol: %s", data.symbol)
+            logger.debug("No paper strategy for symbol: %s (may be handled by real grid bot)", data.symbol)
             return None
 
         return self.strategies[data.symbol].process_market_data(data)

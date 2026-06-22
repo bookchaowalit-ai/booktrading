@@ -138,7 +138,7 @@ services:
       dockerfile: Dockerfile
     container_name: bookfinance-strategy
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8001:8000"
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -157,6 +157,8 @@ services:
       - RSI_OVERBOUGHT=70.0
       - MIN_SIGNAL_STRENGTH=0.5
       - SYMBOLS=BTCUSDT,ETHUSDT
+      - REAL_SYMBOLS=${REAL_SYMBOLS:-BTCTHB,ETHTHB}
+      - DISABLE_PAPER_BOT=${DISABLE_PAPER_BOT:-true}
     depends_on:
       redis:
         condition: service_healthy
