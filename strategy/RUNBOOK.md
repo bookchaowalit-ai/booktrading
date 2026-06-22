@@ -176,7 +176,7 @@ docker compose exec redis redis-cli DEL poly_paper:state
 | `b3e0907` | Monitor tooling: daily monitoring script |
 | `fcd4cf5` | Safety filter tests: 20 tests + dry-run AlphaSignal bug fix |
 
-Full test suite: **53/53 passing** (33 kill-switch + 20 safety filters)
+Full test suite: **80/80 passing** (33 kill-switch + 20 safety filters + 27 monitor decision)
 
 ---
 
@@ -187,8 +187,10 @@ Full test suite: **53/53 passing** (33 kill-switch + 20 safety filters)
 | `strategy/app/polymarket/paper_bot.py` | Core bot logic |
 | `strategy/scripts/monitor.py` | Daily monitoring script |
 | `strategy/tests/test_kill_switch.py` | 13 kill switch tests |
+| `strategy/tests/test_monitor_decision.py` | 27 monitor decision tree tests |
 | `strategy/tests/test_safety_filters.py` | 20 safety filter tests |
 | `strategy/RUNBOOK.md` | This file |
+| `docs/READINESS_CHECKLIST.md` | Versioned gate criteria for each stage |
 
 ---
 
