@@ -787,6 +787,18 @@ export const api = {
       return null;
     }
   },
+
+  async getResearch() {
+    try {
+      const response = await apiFetch(`${STRATEGY_API_URL}/api/research`, {
+        headers: authHeaders(),
+      });
+      if (!response.ok) return null;
+      return response.json();
+    } catch {
+      return null;
+    }
+  },
 };
 
 export default api;

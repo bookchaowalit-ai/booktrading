@@ -1721,6 +1721,105 @@ def register_routes(app: FastAPI):
             },
         }
 
+    # ── /api/research — crypto watchlist + polymarket scanner ────────────────
+    @app.get("/api/research")
+    async def research_watchlists():
+        import re
+        from pathlib import Path
+
+        base_dir = Path(__file__).resolve().parent.parent.parent  # /app
+        docs_dir = base_dir / "docs"
+
+        # ── 1. Parse CRYPTO_WATCHLIST.md ──
+        crypto = {'pairs': [], 'meta': {}, 'files_found': False}
+        crypto_file = docs_dir / "CRYPTO_WATCHLIST.md"
+        if crypto_file.exists():
+            crypto['files_found'] = True
+            try:
+                content = crypto_file.read_text(encoding="utf-8")
+                # Meta: Last scan, pairs scanned, min volume
+                scan_match = re.search(r'\*\*Last scan:\*\*\s*(.+)', content)
+                pairs_match = re.search(r'\*\*Pairs scanned:\*\*\s*(\d+)', content)
+                vol_match = re.search(r'\*\*Min volume filter:\*\*\s*(.+)', content)
+                crypto['meta'] = {
+                    'last_scan': scan_match.group(1).strip() if scan_match else None,
+                    'pairs_scanned': int(pairs_match.group(1)) if pairs_match else 0,
+                    'min_volume': vol_match.group(1).strip() if vol_match else None,
+                }
+                # Ranked pairs table
+                table_match = re.search(
+                    r'\| # \| Score \| Exchange \| Symbol \| Price \| Vol.*\n'
+                    r'\|[-|]+\n'
+                    r'((?:\|.*\n)*)',
+                    content
+                )
+                if table_match:
+                    rows = table_match.group(1).strip().split('\n')
+                    for row in rows:
+                        cells = [c.strip() for c in row.split('|') if c.strip()]
+                        if len(cells) >= 9:
+                            crypto['pairs'].append({
+                                'rank': int(cells[0]) if cells[0].isdigit() else 0,
+                                'score': float(cells[1]) if cells[1].replace('.', '').isdigit() else 0,
+                                'exchange': cells[2],
+                                'symbol': cells[3],
+                                'price': cells[4],
+                                'volume': cells[5],
+                                'vol_pct': cells[6],
+                                'spread': cells[7],
+                                'depth': cells[8],
+                            })
+            except Exception as e:
+                logger.warning(f"Failed to parse CRYPTO_WATCHLIST.md: {e}")
+
+        # ── 2. Parse MARKET_WATCHLIST.md (Polymarket) ──
+        poly = {'candidates': [], 'reviewed': [], 'meta': {}, 'files_found': False}
+        poly_file = docs_dir / "MARKET_WATCHLIST.md"
+        if poly_file.exists():
+            poly['files_found'] = True
+            try:
+                content = poly_file.read_text(encoding="utf-8")
+                # Meta
+                scan_match = re.search(r'\*\*Last scan:\*\*\s*(.+)', content)
+                cand_match = re.search(r'\*\*Candidates:\*\*\s*(.+)', content)
+                poly['meta'] = {
+                    'last_scan': scan_match.group(1).strip() if scan_match else None,
+                    'candidates_summary': cand_match.group(1).strip() if cand_match else None,
+                }
+                # Filters
+                filters = []
+                for fm in re.finditer(r'- (Min liquidity|Min volume|Max spread|Price range|Blocked categories):\s*(.+)', content):
+                    filters.append({'key': fm.group(1), 'value': fm.group(2).strip()})
+                poly['meta']['filters'] = filters
+                # Manual review table
+                review_match = re.search(
+                    r'\| # \| Market \| Resolution \| Category Leak\?.*\n'
+                    r'\|[-|]+\n'
+                    r'((?:\|.*\n)*)',
+                    content
+                )
+                if review_match:
+                    rows = review_match.group(1).strip().split('\n')
+                    for row in rows:
+                        cells = [c.strip() for c in row.split('|') if c.strip()]
+                        if len(cells) >= 6:
+                            poly['reviewed'].append({
+                                'rank': int(cells[0]) if cells[0].isdigit() else 0,
+                                'market': cells[1],
+                                'resolution': cells[2],
+                                'category_leak': cells[3],
+                                'data_source': cells[4],
+                                'signal': cells[5],
+                                'decision': cells[6] if len(cells) > 6 else '',
+                            })
+            except Exception as e:
+                logger.warning(f"Failed to parse MARKET_WATCHLIST.md: {e}")
+
+        return {
+            'crypto': crypto,
+            'polymarket': poly,
+        }
+
 
 # Create default app instance
 app = create_app()
