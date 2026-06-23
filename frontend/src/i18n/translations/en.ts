@@ -9,6 +9,15 @@ export const en = {
   'menu.finance': 'Finance',
   'menu.activity': 'Activity',
   'menu.system': 'System',
+  'menu.trading': 'Trading',
+  'menu.settings': 'Settings',
+  'menu.advanced': 'Advanced',
+
+  // Navigation — Command Center
+  'nav.commandCenter': 'Command Center',
+  'nav.evidence': 'Evidence & Gates',
+  'nav.research': 'Market Research',
+  'nav.system': 'System & Health',
 
   // Navigation
   'nav.dashboard': 'Dashboard',

@@ -9,6 +9,15 @@ export const th = {
   'menu.finance': 'การเงิน',
   'menu.activity': 'กิจกรรม',
   'menu.system': 'ระบบ',
+  'menu.trading': 'เทรด',
+  'menu.settings': 'ตั้งค่า',
+  'menu.advanced': 'ขั้นสูง',
+
+  // Navigation — Command Center
+  'nav.commandCenter': 'ศูนย์บัญชาการ',
+  'nav.evidence': 'หลักฐาน & Gate',
+  'nav.research': 'วิจัยตลาด',
+  'nav.system': 'ระบบ & สุขภาพ',
 
   // Navigation
   'nav.dashboard': 'แดชบอร์ด',

@@ -1,6 +1,7 @@
 /**
- * Dashboard Page - Enhanced UI/UX
- * Main trading bot dashboard with real-time monitoring
+ * Command Center - AI Trading Dashboard
+ * Capital Protection & Evidence Collection view
+ * Observe-only: AI operates, user monitors
  */
 'use client';
 
@@ -8,73 +9,66 @@ import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAppStore } from '@/store/store';
 import { useWebSocket, useAutoRefresh } from '@/hooks';
-import PriceChart from '@/components/PriceChart';
-import TechnicalIndicatorsPanel from '@/components/TechnicalIndicatorsPanel';
-import PortfolioPanel from '@/components/PortfolioPanel';
-import TradeHistoryPanel from '@/components/TradeHistoryPanel';
-import CategorySummaryCards from '@/components/CategorySummaryCards';
-import StatCard from '@/components/StatCard';
-import EmptyState from '@/components/EmptyState';
-import { AssetCategory } from '@/types';
 import { useTranslation } from '@/i18n/translations';
-import { useToast } from '@/components/ui/Toast';
 import { api } from '@/services/api';
-import { Tabs } from '@/components/ui';
-import { DollarSign, TrendingUp, Activity, Wallet, BarChart3, Zap, ArrowRight, Settings, LayoutDashboard, RefreshCw, Bitcoin } from 'lucide-react';
 import Card from '@/components/ui/Card';
-import Button from '@/components/ui/Button';
-import { CompactStatsGridSkeleton, ChartSkeleton, PortfolioItemSkeleton } from '@/components/ui/Skeleton';
+import {
+  Shield, ShieldAlert, ShieldCheck, Activity, Zap, Eye,
+  FileText, FlaskConical, Cpu, ArrowRight, Clock,
+  AlertTriangle, CheckCircle2, XCircle, Loader2, Bitcoin
+} from 'lucide-react';
 
-const SYMBOLS = ['BTCUSDT', 'ETHUSDT'];
+// --- Static config (will be replaced by API) ---
+const PAPER_GRID_STATUS = {
+  pair: 'BTCTHB',
+  status: 'OBSERVING' as const, // RUNNING | PASSED | FAILED | OBSERVING
+  duration: '1D+ live observation',
+  gridLevels: { buy: [2023578, 2065736], sell: [2150052, 2192210] },
+  baseline: { price: 2107894, at: '2026-06-23T00:50:23Z' },
+  fills: 0,
+  pnl: 0,
+};
 
-export default function Dashboard() {
+const RECOVERY_GATES = [
+  { id: 'kill_switch', label: 'Kill Switch Reset', status: 'PENDING' as const, detail: 'Manual reset required after 15.8% drawdown' },
+  { id: 'paper_trial', label: 'Paper Grid Trial', status: 'PASS' as const, detail: '30min + 1D observation completed, 0 errors' },
+  { id: 'recovery_gate', label: 'Recovery Gate', status: 'PENDING' as const, detail: 'Need 3 consecutive profitable days on paper' },
+  { id: 'capital_preserve', label: 'Capital Preservation', status: 'ACTIVE' as const, detail: 'Bot halted — no new orders' },
+];
+
+export default function CommandCenter() {
   const { t } = useTranslation();
-  const { success, error } = useToast();
   const router = useRouter();
   const pathname = usePathname();
   const locale = pathname.split('/')[1] || 'th';
   const portfolio = useAppStore((state) => state.portfolio);
   const botStatus = useAppStore((state) => state.botStatus);
-  const [activeCategory, setActiveCategory] = useState<AssetCategory | null>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'portfolio' | 'trades'>('overview');
   const [isLoading, setIsLoading] = useState(true);
-  const [walletBalances, setWalletBalances] = useState<{ totalTHB: number; totalUSDT: number; exchangeCount: number } | null>(null);
-  const [realPnl, setRealPnl] = useState<{ totalPnl: number; totalTrades: number; symbols: Record<string, { daily_pnl: number; daily_trades: number; active_buys: number; active_sells: number }> } | null>(null);
+  const [walletBalances, setWalletBalances] = useState<{ totalTHB: number; totalUSDT: number } | null>(null);
+  const [realPnl, setRealPnl] = useState<{ totalPnl: number; totalTrades: number } | null>(null);
 
-  // Initialize WebSocket connection for real-time updates
   useWebSocket();
-
-  // Auto-refresh data every 5 seconds
   useAutoRefresh(5000);
 
   const refreshBotStatus = useAppStore((state) => state.refreshBotStatus);
-  const refreshIndicators = useAppStore((state) => state.refreshIndicators);
-  const [winRate, setWinRate] = useState(0);
 
   useEffect(() => {
     const init = async () => {
       try {
-        await Promise.allSettled([refreshBotStatus(), refreshIndicators()]);
-      } catch (err) {
-        error('Failed to load bot status');
-      } finally {
-        setIsLoading(false);
-      }
+        await Promise.allSettled([refreshBotStatus()]);
+      } catch { /* ignore */ }
+      finally { setIsLoading(false); }
     };
     init();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Fetch win rate from performance API
   useEffect(() => {
-    import('@/services/api').then(({ api }) => {
-      api.getPerformance()
-        .then((p) => setWinRate(p.winRate || 0))
-        .catch(() => setWinRate(0));
-    });
+    api.getAllBalances()
+      .then((data) => setWalletBalances({ totalTHB: data.totalTHB, totalUSDT: data.totalUSDT }))
+      .catch(() => {});
   }, []);
 
-  // Fetch real grid bot P&L
   useEffect(() => {
     const fetchPnl = async () => {
       try {
@@ -82,13 +76,12 @@ export default function Dashboard() {
         if (!res.ok) return;
         const data = await res.json();
         const symbols = data.symbols || {};
-        let totalPnl = 0;
-        let totalTrades = 0;
+        let totalPnl = 0, totalTrades = 0;
         for (const s of Object.values(symbols) as any[]) {
           totalPnl += s.daily_pnl || 0;
           totalTrades += s.daily_trades || 0;
         }
-        setRealPnl({ totalPnl, totalTrades, symbols });
+        setRealPnl({ totalPnl, totalTrades });
       } catch { /* ignore */ }
     };
     fetchPnl();
@@ -96,248 +89,227 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, []);
 
-  // Fetch wallet balances (lightweight, cached)
-  useEffect(() => {
-    api.getAllBalances()
-      .then((data) => {
-        console.log('[Dashboard] Wallet balances:', data);
-        setWalletBalances({
-          totalTHB: data.totalTHB,
-          totalUSDT: data.totalUSDT,
-          exchangeCount: data.exchangeCount,
-        });
-      })
-      .catch((err) => {
-        console.warn('[Dashboard] Wallet fetch failed:', err);
-        error('Failed to load wallet balances');
-      });
-  }, []);
-
-  // Calculate portfolio metrics
-  const totalValue = portfolio?.reduce((sum, item) => {
-    return sum + (item.balance * item.avgBuyPrice);
-  }, 0) || 0;
-
+  const totalValue = portfolio?.reduce((sum, item) => sum + (item.balance * item.avgBuyPrice), 0) || 0;
   const totalProfit = botStatus?.totalProfit || 0;
-  const totalTrades = botStatus?.totalTrades || 0;
 
   if (isLoading) {
     return (
       <div className="space-y-4">
-        {/* Trading Control Banner Skeleton */}
-        <div className="p-4 bg-gray-100 dark:bg-gray-800 rounded-xl">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gray-200 dark:bg-gray-700 rounded-md animate-pulse" />
-            <div className="flex-1 space-y-2">
-              <div className="h-4 w-32 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
-              <div className="h-3 w-48 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
-            </div>
-          </div>
+        <div className="p-6 bg-gray-100 dark:bg-gray-800 rounded-xl animate-pulse">
+          <div className="h-6 w-48 bg-gray-200 dark:bg-gray-700 rounded mb-2" />
+          <div className="h-4 w-72 bg-gray-200 dark:bg-gray-700 rounded" />
         </div>
-
-        {/* Stats Grid Skeleton */}
-        <CompactStatsGridSkeleton />
-
-        {/* Category Summary Skeleton */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="p-4 space-y-3 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
-              <div className="h-4 w-20 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
-              <div className="h-6 w-24 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
-            </div>
-          ))}
-        </div>
-
-        {/* Main Grid Skeleton */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2">
-            <ChartSkeleton height={300} />
-          </div>
-          <div>
-            <PortfolioItemSkeleton count={4} />
-          </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {[1,2,3,4].map(i => <div key={i} className="h-20 bg-gray-200 dark:bg-gray-700 rounded-xl animate-pulse" />)}
         </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-4">
-      {/* Compact Trading Control Banner */}
-      <Card variant="elevated" className="p-4 bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-900/20 dark:to-blue-900/20">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-purple-100 dark:bg-purple-900/30 rounded-md">
-              <Settings className="w-5 h-5 text-purple-600" />
+    <div className="space-y-6">
+      {/* === CAPITAL PROTECTION BANNER === */}
+      <Card variant="elevated" className="p-5 bg-gradient-to-r from-red-50 to-orange-50 dark:from-red-900/20 dark:to-orange-900/20 border-l-4 border-l-red-500">
+        <div className="flex items-start justify-between">
+          <div className="flex items-start gap-4">
+            <div className="p-3 bg-red-100 dark:bg-red-900/40 rounded-xl">
+              <ShieldAlert className="w-7 h-7 text-red-600 dark:text-red-400" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-gray-900 dark:text-white">
-                Trading Controls
-              </h2>
-              <p className="text-xs text-gray-600 dark:text-gray-400">
-                Start/stop trading and configure strategy
+              <h1 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                Capital Protection Mode
+                <span className="px-2 py-0.5 text-xs font-bold bg-red-100 dark:bg-red-900/50 text-red-700 dark:text-red-300 rounded-full">
+                  ACTIVE
+                </span>
+              </h1>
+              <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                Kill switch engaged — Bot halted at 15.8% drawdown. No new orders. Collecting evidence for recovery.
               </p>
+              <div className="flex items-center gap-4 mt-3 text-xs text-gray-500 dark:text-gray-500">
+                <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> Since 2026-06-23</span>
+                <span className="flex items-center gap-1"><Eye className="w-3 h-3" /> Observe-only mode</span>
+              </div>
             </div>
           </div>
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => router.push(`/${locale}/dashboard/trading`)}
-            gradient
-          >
-            Configure
-          </Button>
         </div>
       </Card>
 
-      {/* Compact Stats Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        <div className="p-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
-          <div className="flex items-center gap-2 mb-1">
-            <DollarSign className="w-4 h-4 text-gray-500" />
-            <span className="text-xs text-gray-600 dark:text-gray-400">Total Value</span>
+      {/* === KEY METRICS === */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
+          <div className="flex items-center gap-2 mb-2">
+            <Bitcoin className="w-4 h-4 text-gray-500" />
+            <span className="text-xs text-gray-500 dark:text-gray-400">Portfolio Value</span>
           </div>
-          <div className="text-lg font-bold text-gray-900 dark:text-white">
-            ${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+          <div className="text-xl font-bold text-gray-900 dark:text-white">
+            ฿{totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
           </div>
+          {walletBalances?.totalTHB ? (
+            <div className="text-xs text-gray-500 mt-1">
+              Cash: ฿{walletBalances.totalTHB.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+            </div>
+          ) : null}
         </div>
 
-        <div className="p-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
-          <div className="flex items-center gap-2 mb-1">
-            <TrendingUp className="w-4 h-4 text-gray-500" />
-            <span className="text-xs text-gray-600 dark:text-gray-400">Profit</span>
+        <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
+          <div className="flex items-center gap-2 mb-2">
+            <Activity className="w-4 h-4 text-gray-500" />
+            <span className="text-xs text-gray-500 dark:text-gray-400">Total P&L</span>
           </div>
-          <div className={`text-lg font-bold ${totalProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+          <div className={`text-xl font-bold ${totalProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
             ${totalProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
           </div>
           <div className="text-xs text-gray-500 mt-1">all time</div>
         </div>
 
-        <div className="p-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
-          <div className="flex items-center gap-2 mb-1">
-            <Activity className="w-4 h-4 text-gray-500" />
-            <span className="text-xs text-gray-600 dark:text-gray-400">Trades</span>
+        <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
+          <div className="flex items-center gap-2 mb-2">
+            <Zap className="w-4 h-4 text-yellow-500" />
+            <span className="text-xs text-gray-500 dark:text-gray-400">Real Grid P&L</span>
           </div>
-          <div className="text-lg font-bold text-gray-900 dark:text-white">{totalTrades}</div>
-          <div className="text-xs text-blue-600 mt-1">{winRate}% win rate</div>
+          <div className={`text-xl font-bold ${realPnl && realPnl.totalPnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+            {realPnl ? `฿${realPnl.totalPnl.toLocaleString()}` : '—'}
+          </div>
+          <div className="text-xs text-gray-500 mt-1">
+            {realPnl ? `${realPnl.totalTrades} fills today` : 'no data'}
+          </div>
         </div>
 
-        <div className="p-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
-          <div className="flex items-center gap-2 mb-1">
-            <Wallet className="w-4 h-4 text-gray-500" />
-            <span className="text-xs text-gray-600 dark:text-gray-400">Portfolio</span>
+        <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
+          <div className="flex items-center gap-2 mb-2">
+            <Shield className="w-4 h-4 text-gray-500" />
+            <span className="text-xs text-gray-500 dark:text-gray-400">Drawdown</span>
           </div>
-          <div className="text-lg font-bold text-gray-900 dark:text-white">{portfolio?.length || 0}</div>
-          <div className="text-xs text-gray-500 mt-1">items</div>
+          <div className="text-xl font-bold text-red-600">-15.8%</div>
+          <div className="text-xs text-red-500 mt-1">triggered kill switch</div>
         </div>
-
-        {/* Wallet Balances */}
-        <button
-          onClick={() => router.push(`/${locale}/dashboard/wallet`)}
-          className="p-3 bg-gradient-to-br from-purple-50 to-blue-50 dark:from-purple-900/20 dark:to-blue-900/20 rounded-lg border border-purple-200 dark:border-purple-800 hover:border-purple-300 dark:hover:border-purple-700 transition-colors cursor-pointer group"
-        >
-          <div className="flex items-center gap-2 mb-1">
-            <Bitcoin className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-            <span className="text-xs text-gray-600 dark:text-gray-400">Wallet</span>
-            {walletBalances?.exchangeCount !== undefined && (
-              <span className="ml-auto text-[10px] text-gray-400">{walletBalances.exchangeCount} exh</span>
-            )}
-          </div>
-          {!walletBalances ? (
-            <div className="text-sm font-bold text-gray-400">Loading...</div>
-          ) : walletBalances.totalTHB > 0 || walletBalances.totalUSDT > 0 ? (
-            <div className="space-y-1">
-              {walletBalances.totalTHB > 0 && (
-                <div className="text-sm font-bold text-green-600 dark:text-green-400">
-                  ฿{walletBalances.totalTHB.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                </div>
-              )}
-              {walletBalances.totalUSDT > 0 && (
-                <div className="text-sm font-bold text-blue-600 dark:text-blue-400">
-                  ${walletBalances.totalUSDT.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="text-sm font-bold text-gray-400">No balance</div>
-          )}
-          <div className="text-[10px] text-purple-400 mt-1 group-hover:text-purple-600 dark:group-hover:text-purple-300 flex items-center gap-1">
-            View All <ArrowRight className="w-3 h-3" />
-          </div>
-        </button>
-
-        {/* Real Grid P&L */}
-        {realPnl && (
-          <div className="p-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
-            <div className="flex items-center gap-2 mb-1">
-              <Zap className="w-4 h-4 text-yellow-500" />
-              <span className="text-xs text-gray-600 dark:text-gray-400">Real P&L</span>
-            </div>
-            <div className={`text-lg font-bold ${realPnl.totalPnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-              ฿{realPnl.totalPnl.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-            </div>
-            <div className="text-xs text-gray-500 mt-1">
-              {realPnl.totalTrades} fills today
-            </div>
-          </div>
-        )}
       </div>
 
-      {/* Category Summary Cards */}
-      {portfolio && portfolio.length > 0 && (
-        <div>
-          <div className="flex items-center gap-3 mb-4">
-            <BarChart3 className="w-5 h-5 text-purple-600" />
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-              Allocation by Category
-            </h2>
-          </div>
-          <CategorySummaryCards
-            portfolio={portfolio}
-            onCategoryClick={setActiveCategory}
-          />
-        </div>
-      )}
-
-      {/* Main Grid Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column - Portfolio */}
-        <div className="space-y-6">
-          <PortfolioPanel />
-        </div>
-
-        {/* Middle Column - Charts */}
-        <div className="lg:col-span-2 space-y-6">
-          {SYMBOLS.map((symbol) => (
-            <PriceChart key={symbol} symbol={symbol} />
+      {/* === READINESS GATES === */}
+      <div>
+        <h2 className="text-sm font-bold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
+          <ShieldCheck className="w-4 h-4" /> Recovery Readiness Gates
+        </h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {RECOVERY_GATES.map((gate) => (
+            <div key={gate.id} className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 flex items-start gap-3">
+              {gate.status === 'PASS' ? (
+                <CheckCircle2 className="w-5 h-5 text-green-500 mt-0.5 shrink-0" />
+              ) : gate.status === 'ACTIVE' ? (
+                <XCircle className="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
+              ) : (
+                <Loader2 className="w-5 h-5 text-yellow-500 mt-0.5 shrink-0" />
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-gray-900 dark:text-white">{gate.label}</span>
+                  <span className={`px-1.5 py-0.5 text-[10px] font-bold rounded-full ${
+                    gate.status === 'PASS' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
+                    gate.status === 'ACTIVE' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
+                    'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
+                  }`}>
+                    {gate.status}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{gate.detail}</p>
+              </div>
+            </div>
           ))}
         </div>
       </div>
 
-      {/* Technical Indicators */}
+      {/* === PAPER GRID TRIAL === */}
       <div>
-        <div className="flex items-center gap-3 mb-4">
-          <BarChart3 className="w-5 h-5 text-purple-600" />
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-            Technical Analysis
-          </h2>
-        </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {SYMBOLS.map((symbol) => (
-            <TechnicalIndicatorsPanel key={symbol} symbol={symbol} />
-          ))}
-        </div>
+        <h2 className="text-sm font-bold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
+          <FlaskConical className="w-4 h-4" /> Paper Grid Trial — {PAPER_GRID_STATUS.pair}
+        </h2>
+        <Card className="p-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">Status</div>
+              <div className="text-sm font-bold text-blue-600 flex items-center gap-1 mt-1">
+                <Eye className="w-3 h-3" /> {PAPER_GRID_STATUS.status}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">Duration</div>
+              <div className="text-sm font-semibold text-gray-900 dark:text-white mt-1">{PAPER_GRID_STATUS.duration}</div>
+            </div>
+            <div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">Fills</div>
+              <div className="text-sm font-semibold text-gray-900 dark:text-white mt-1">{PAPER_GRID_STATUS.fills}</div>
+            </div>
+            <div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">Paper P&L</div>
+              <div className="text-sm font-semibold text-gray-900 dark:text-white mt-1">฿{PAPER_GRID_STATUS.pnl.toLocaleString()}</div>
+            </div>
+          </div>
+          <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-700">
+            <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Grid Levels</div>
+            <div className="flex flex-wrap gap-2 text-xs">
+              <span className="px-2 py-1 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 rounded">
+                BUY ฿{PAPER_GRID_STATUS.gridLevels.buy[0].toLocaleString()} / ฿{PAPER_GRID_STATUS.gridLevels.buy[1].toLocaleString()}
+              </span>
+              <span className="px-2 py-1 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 rounded">
+                SELL ฿{PAPER_GRID_STATUS.gridLevels.sell[0].toLocaleString()} / ฿{PAPER_GRID_STATUS.gridLevels.sell[1].toLocaleString()}
+              </span>
+            </div>
+          </div>
+        </Card>
       </div>
 
-      {/* Trade History */}
+      {/* === QUICK NAVIGATION === */}
       <div>
-        <div className="flex items-center gap-3 mb-4">
-          <Activity className="w-5 h-5 text-purple-600" />
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-            Recent Trades
-          </h2>
+        <h2 className="text-sm font-bold text-gray-700 dark:text-gray-300 mb-3">Quick Navigation</h2>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <button
+            onClick={() => router.push(`/${locale}/dashboard/evidence`)}
+            className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-purple-300 dark:hover:border-purple-700 transition-colors text-left group"
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-purple-100 dark:bg-purple-900/30 rounded-lg">
+                <FileText className="w-5 h-5 text-purple-600 dark:text-purple-400" />
+              </div>
+              <div className="flex-1">
+                <div className="text-sm font-semibold text-gray-900 dark:text-white">{t('nav.evidence')}</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">Kill switch log, trial results, gates</div>
+              </div>
+              <ArrowRight className="w-4 h-4 text-gray-400 group-hover:text-purple-500 transition-colors" />
+            </div>
+          </button>
+
+          <button
+            onClick={() => router.push(`/${locale}/dashboard/research`)}
+            className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-700 transition-colors text-left group"
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
+                <FlaskConical className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+              </div>
+              <div className="flex-1">
+                <div className="text-sm font-semibold text-gray-900 dark:text-white">{t('nav.research')}</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">Polymarket scanner, crypto watchlist</div>
+              </div>
+              <ArrowRight className="w-4 h-4 text-gray-400 group-hover:text-blue-500 transition-colors" />
+            </div>
+          </button>
+
+          <button
+            onClick={() => router.push(`/${locale}/dashboard/system`)}
+            className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-green-300 dark:hover:border-green-700 transition-colors text-left group"
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-lg">
+                <Cpu className="w-5 h-5 text-green-600 dark:text-green-400" />
+              </div>
+              <div className="flex-1">
+                <div className="text-sm font-semibold text-gray-900 dark:text-white">{t('nav.system')}</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">Health, deploy status, settings</div>
+              </div>
+              <ArrowRight className="w-4 h-4 text-gray-400 group-hover:text-green-500 transition-colors" />
+            </div>
+          </button>
         </div>
-        <TradeHistoryPanel />
       </div>
     </div>
   );
