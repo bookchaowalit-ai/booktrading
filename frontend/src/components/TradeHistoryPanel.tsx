@@ -61,7 +61,7 @@ export default function TradeHistoryPanel() {
                   : 'bg-transparent text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
               }`}
             >
-              Real ({realTrades.length})
+              Real ({realTrades?.length ?? 0})
             </button>
             <button
               onClick={() => setActiveTab('paper')}
@@ -71,7 +71,7 @@ export default function TradeHistoryPanel() {
                   : 'bg-transparent text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
               }`}
             >
-              Paper ({tradeHistory.length})
+              Paper ({tradeHistory?.length ?? 0})
             </button>
           </div>
           <button

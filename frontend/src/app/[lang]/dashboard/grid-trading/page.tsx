@@ -952,7 +952,7 @@ export default function GridTradingPage() {
               </tr>
             </thead>
             <tbody>
-              {tradeHistory.length === 0 ? (
+              {(tradeHistory?.length ?? 0) === 0 ? (
                 <tr><td colSpan={8} className="px-4 py-6 text-center text-sm text-gray-400">No trades yet</td></tr>
               ) : tradeHistory.slice(0, 15).map((trade) => (
                 <tr key={trade.id} className="border-b border-gray-50 dark:border-gray-700/50">

@@ -233,7 +233,7 @@ export default function OrderTracking({
             Total Orders
           </span>
           <div className="text-lg font-bold text-gray-900 dark:text-white mt-1">
-            {orders.length}
+            {(orders?.length ?? 0)}
           </div>
         </div>
         <div className="p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
@@ -241,7 +241,7 @@ export default function OrderTracking({
             Fill Rate
           </span>
           <div className="text-lg font-bold text-purple-600 mt-1">
-            {((filledOrders / orders.length) * 100).toFixed(1)}%
+            {((filledOrders / (orders?.length || 1)) * 100).toFixed(1)}%
           </div>
         </div>
         <div className="p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg">

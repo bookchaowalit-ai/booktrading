@@ -213,7 +213,8 @@ export const api = {
         headers: authHeaders(),
       });
       if (!response.ok) return [];
-      return response.json();
+      const data = await response.json();
+      return data ?? [];
     } catch {
       return [];
     }
@@ -238,7 +239,8 @@ export const api = {
         headers: authHeaders(),
       });
       if (!response.ok) return [];
-      return response.json();
+      const data = await response.json();
+      return data ?? [];
     } catch {
       return [];
     }
@@ -700,7 +702,8 @@ export const api = {
         headers: authHeaders(),
       });
       if (!response.ok) return [];
-      return response.json();
+      const data = await response.json();
+      return data ?? [];
     } catch {
       return [];
     }

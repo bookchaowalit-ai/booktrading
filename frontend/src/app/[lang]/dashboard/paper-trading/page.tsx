@@ -261,7 +261,7 @@ export default function PaperTradingPage() {
       </Card>
 
       {/* Order History */}
-      {orders.length > 0 ? (
+      {(orders?.length ?? 0) > 0 ? (
         <Card variant="elevated" className="p-6">
           <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
             <Activity className="w-5 h-5 text-blue-600" />
