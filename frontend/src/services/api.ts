@@ -799,6 +799,18 @@ export const api = {
       return null;
     }
   },
+
+  async getCommandCenter() {
+    try {
+      const response = await apiFetch(`${STRATEGY_API_URL}/api/command-center`, {
+        headers: authHeaders(),
+      });
+      if (!response.ok) return null;
+      return response.json();
+    } catch {
+      return null;
+    }
+  },
 };
 
 export default api;

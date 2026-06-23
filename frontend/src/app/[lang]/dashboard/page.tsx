@@ -1,11 +1,11 @@
 /**
  * Command Center - AI Trading Dashboard
- * Capital Protection & Evidence Collection view
+ * Single source of truth from /api/command-center
  * Observe-only: AI operates, user monitors
  */
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAppStore } from '@/store/store';
 import { useWebSocket, useAutoRefresh } from '@/hooks';
@@ -15,26 +15,48 @@ import Card from '@/components/ui/Card';
 import {
   Shield, ShieldAlert, ShieldCheck, Activity, Zap, Eye,
   FileText, FlaskConical, Cpu, ArrowRight, Clock,
-  AlertTriangle, CheckCircle2, XCircle, Loader2, Bitcoin
+  CheckCircle2, XCircle, Loader2, Bitcoin, RefreshCw
 } from 'lucide-react';
 
-// --- Static config (will be replaced by API) ---
-const PAPER_GRID_STATUS = {
-  pair: 'BTCTHB',
-  status: 'OBSERVING' as const, // RUNNING | PASSED | FAILED | OBSERVING
-  duration: '1D+ live observation',
-  gridLevels: { buy: [2023578, 2065736], sell: [2150052, 2192210] },
-  baseline: { price: 2107894, at: '2026-06-23T00:50:23Z' },
-  fills: 0,
-  pnl: 0,
-};
+interface CommandCenterData {
+  timestamp: string;
+  current_decision: 'WAIT' | 'REVIEW_SIGNALS' | 'ENABLE_DRY_RUN' | 'MONITOR';
+  next_trigger: string;
+  kill_switch: {
+    active: boolean;
+    drawdown_pct: number;
+    max_drawdown_pct: number;
+  };
+  positions: {
+    active: number;
+    resolved: number;
+  };
+  grid: {
+    running: boolean;
+    daily_fills: number;
+    daily_pnl: number;
+  };
+  evidence: {
+    latest: { date: string; title: string } | null;
+    gates_ready: number;
+    gates_total: number;
+  };
+  research: {
+    crypto_pairs: number;
+  };
+  paper_trial: unknown | null;
+  system_health: {
+    strategy_api: string;
+    redis_connected: boolean;
+  };
+}
 
-const RECOVERY_GATES = [
-  { id: 'kill_switch', label: 'Kill Switch Reset', status: 'PENDING' as const, detail: 'Manual reset required after 15.8% drawdown' },
-  { id: 'paper_trial', label: 'Paper Grid Trial', status: 'PASS' as const, detail: '30min + 1D observation completed, 0 errors' },
-  { id: 'recovery_gate', label: 'Recovery Gate', status: 'PENDING' as const, detail: 'Need 3 consecutive profitable days on paper' },
-  { id: 'capital_preserve', label: 'Capital Preservation', status: 'ACTIVE' as const, detail: 'Bot halted — no new orders' },
-];
+const decisionConfig = {
+  WAIT: { color: 'red', icon: ShieldAlert, label: 'WAIT' },
+  REVIEW_SIGNALS: { color: 'yellow', icon: Activity, label: 'REVIEW SIGNALS' },
+  ENABLE_DRY_RUN: { color: 'blue', icon: Zap, label: 'ENABLE DRY-RUN' },
+  MONITOR: { color: 'green', icon: ShieldCheck, label: 'MONITOR' },
+};
 
 export default function CommandCenter() {
   const { t } = useTranslation();
@@ -43,25 +65,30 @@ export default function CommandCenter() {
   const locale = pathname.split('/')[1] || 'th';
   const portfolio = useAppStore((state) => state.portfolio);
   const botStatus = useAppStore((state) => state.botStatus);
-  const [isLoading, setIsLoading] = useState(true);
-  const [walletBalances, setWalletBalances] = useState<{ totalTHB: number; totalUSDT: number } | null>(null);
-  const [realPnl, setRealPnl] = useState<{ totalPnl: number; totalTrades: number } | null>(null);
 
   useWebSocket();
   useAutoRefresh(5000);
 
   const refreshBotStatus = useAppStore((state) => state.refreshBotStatus);
+  const [data, setData] = useState<CommandCenterData | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [walletBalances, setWalletBalances] = useState<{ totalTHB: number; totalUSDT: number } | null>(null);
+
+  const fetchData = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setIsRefreshing(true);
+    const result = await api.getCommandCenter();
+    if (result) setData(result);
+    setIsLoading(false);
+    setIsRefreshing(false);
+  }, []);
 
   useEffect(() => {
-    const init = async () => {
-      try {
-        await Promise.allSettled([refreshBotStatus()]);
-      } catch { /* ignore */ }
-      finally { setIsLoading(false); }
-    };
-    init();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    fetchData();
+    refreshBotStatus();
+    const interval = setInterval(() => fetchData(true), 30000);
+    return () => clearInterval(interval);
+  }, [fetchData, refreshBotStatus]);
 
   useEffect(() => {
     api.getAllBalances()
@@ -69,30 +96,10 @@ export default function CommandCenter() {
       .catch(() => {});
   }, []);
 
-  useEffect(() => {
-    const fetchPnl = async () => {
-      try {
-        const res = await fetch('/strategy-api/api/real-grid/status');
-        if (!res.ok) return;
-        const data = await res.json();
-        const symbols = data.symbols || {};
-        let totalPnl = 0, totalTrades = 0;
-        for (const s of Object.values(symbols) as any[]) {
-          totalPnl += s.daily_pnl || 0;
-          totalTrades += s.daily_trades || 0;
-        }
-        setRealPnl({ totalPnl, totalTrades });
-      } catch { /* ignore */ }
-    };
-    fetchPnl();
-    const interval = setInterval(fetchPnl, 30000);
-    return () => clearInterval(interval);
-  }, []);
-
   const totalValue = portfolio?.reduce((sum, item) => sum + (item.balance * item.avgBuyPrice), 0) || 0;
   const totalProfit = botStatus?.totalProfit || 0;
 
-  if (isLoading) {
+  if (isLoading || !data) {
     return (
       <div className="space-y-4">
         <div className="p-6 bg-gray-100 dark:bg-gray-800 rounded-xl animate-pulse">
@@ -106,33 +113,80 @@ export default function CommandCenter() {
     );
   }
 
+  const decision = decisionConfig[data.current_decision] || decisionConfig.WAIT;
+  const DecisionIcon = decision.icon;
+
   return (
     <div className="space-y-6">
-      {/* === CAPITAL PROTECTION BANNER === */}
-      <Card variant="elevated" className="p-5 bg-gradient-to-r from-red-50 to-orange-50 dark:from-red-900/20 dark:to-orange-900/20 border-l-4 border-l-red-500">
+      {/* === CURRENT DECISION BANNER === */}
+      <Card variant="elevated" className={`p-5 border-l-4 ${
+        data.current_decision === 'WAIT' ? 'bg-gradient-to-r from-red-50 to-orange-50 dark:from-red-900/20 dark:to-orange-900/20 border-l-red-500' :
+        data.current_decision === 'REVIEW_SIGNALS' ? 'bg-gradient-to-r from-yellow-50 to-amber-50 dark:from-yellow-900/20 dark:to-amber-900/20 border-l-yellow-500' :
+        data.current_decision === 'ENABLE_DRY_RUN' ? 'bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-900/20 dark:to-cyan-900/20 border-l-blue-500' :
+        'bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 border-l-green-500'
+      }`}>
         <div className="flex items-start justify-between">
           <div className="flex items-start gap-4">
-            <div className="p-3 bg-red-100 dark:bg-red-900/40 rounded-xl">
-              <ShieldAlert className="w-7 h-7 text-red-600 dark:text-red-400" />
+            <div className={`p-3 rounded-xl ${
+              data.current_decision === 'WAIT' ? 'bg-red-100 dark:bg-red-900/40' :
+              data.current_decision === 'REVIEW_SIGNALS' ? 'bg-yellow-100 dark:bg-yellow-900/40' :
+              data.current_decision === 'ENABLE_DRY_RUN' ? 'bg-blue-100 dark:bg-blue-900/40' :
+              'bg-green-100 dark:bg-green-900/40'
+            }`}>
+              <DecisionIcon className={`w-7 h-7 ${
+                data.current_decision === 'WAIT' ? 'text-red-600 dark:text-red-400' :
+                data.current_decision === 'REVIEW_SIGNALS' ? 'text-yellow-600 dark:text-yellow-400' :
+                data.current_decision === 'ENABLE_DRY_RUN' ? 'text-blue-600 dark:text-blue-400' :
+                'text-green-600 dark:text-green-400'
+              }`} />
             </div>
             <div>
               <h1 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                Capital Protection Mode
-                <span className="px-2 py-0.5 text-xs font-bold bg-red-100 dark:bg-red-900/50 text-red-700 dark:text-red-300 rounded-full">
-                  ACTIVE
+                Current Decision
+                <span className={`px-2 py-0.5 text-xs font-bold rounded-full ${
+                  data.current_decision === 'WAIT' ? 'bg-red-100 dark:bg-red-900/50 text-red-700 dark:text-red-300' :
+                  data.current_decision === 'REVIEW_SIGNALS' ? 'bg-yellow-100 dark:bg-yellow-900/50 text-yellow-700 dark:text-yellow-300' :
+                  data.current_decision === 'ENABLE_DRY_RUN' ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300' :
+                  'bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-300'
+                }`}>
+                  {decision.label}
                 </span>
               </h1>
               <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                Kill switch engaged — Bot halted at 15.8% drawdown. No new orders. Collecting evidence for recovery.
+                {data.current_decision === 'WAIT' && `Kill switch ${data.kill_switch.active ? 'engaged' : 'disengaged'} — Bot halted at ${data.kill_switch.drawdown_pct.toFixed(1)}% drawdown.`}
+                {data.current_decision === 'REVIEW_SIGNALS' && `Reviewing signals — ${data.evidence.gates_total - data.evidence.gates_ready} gate(s) remaining.`}
+                {data.current_decision === 'ENABLE_DRY_RUN' && 'Ready to enable dry-run mode.'}
+                {data.current_decision === 'MONITOR' && 'Monitoring live operations.'}
               </p>
               <div className="flex items-center gap-4 mt-3 text-xs text-gray-500 dark:text-gray-500">
-                <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> Since 2026-06-23</span>
+                <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {new Date(data.timestamp).toLocaleString()}</span>
                 <span className="flex items-center gap-1"><Eye className="w-3 h-3" /> Observe-only mode</span>
+                <button
+                  onClick={() => fetchData(true)}
+                  disabled={isRefreshing}
+                  className="flex items-center gap-1 px-2 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} />
+                  {isRefreshing ? 'Refreshing...' : 'Refresh'}
+                </button>
               </div>
             </div>
           </div>
         </div>
       </Card>
+
+      {/* === NEXT TRIGGER === */}
+      <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-purple-100 dark:bg-purple-900/30 rounded-lg">
+            <Zap className="w-5 h-5 text-purple-600 dark:text-purple-400" />
+          </div>
+          <div>
+            <div className="text-xs text-gray-500 dark:text-gray-400">Next Trigger</div>
+            <div className="text-sm font-semibold text-gray-900 dark:text-white">{data.next_trigger}</div>
+          </div>
+        </div>
+      </div>
 
       {/* === KEY METRICS === */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -165,97 +219,120 @@ export default function CommandCenter() {
         <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
           <div className="flex items-center gap-2 mb-2">
             <Zap className="w-4 h-4 text-yellow-500" />
-            <span className="text-xs text-gray-500 dark:text-gray-400">Real Grid P&L</span>
+            <span className="text-xs text-gray-500 dark:text-gray-400">Grid Fills / P&L</span>
           </div>
-          <div className={`text-xl font-bold ${realPnl && realPnl.totalPnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-            {realPnl ? `฿${realPnl.totalPnl.toLocaleString()}` : '—'}
+          <div className={`text-xl font-bold ${data.grid.daily_pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+            {data.grid.daily_fills} fills
           </div>
           <div className="text-xs text-gray-500 mt-1">
-            {realPnl ? `${realPnl.totalTrades} fills today` : 'no data'}
+            ฿{data.grid.daily_pnl.toLocaleString()} today
           </div>
         </div>
 
         <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
           <div className="flex items-center gap-2 mb-2">
             <Shield className="w-4 h-4 text-gray-500" />
-            <span className="text-xs text-gray-500 dark:text-gray-400">Drawdown</span>
+            <span className="text-xs text-gray-500 dark:text-gray-400">Kill Switch</span>
           </div>
-          <div className="text-xl font-bold text-red-600">-15.8%</div>
-          <div className="text-xs text-red-500 mt-1">triggered kill switch</div>
+          <div className={`text-xl font-bold ${data.kill_switch.active ? 'text-red-600' : 'text-green-600'}`}>
+            {data.kill_switch.active ? 'ACTIVE' : 'OFF'}
+          </div>
+          <div className="text-xs text-gray-500 mt-1">
+            {data.kill_switch.drawdown_pct.toFixed(1)}% drawdown
+          </div>
         </div>
       </div>
 
       {/* === READINESS GATES === */}
       <div>
         <h2 className="text-sm font-bold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
-          <ShieldCheck className="w-4 h-4" /> Recovery Readiness Gates
+          <ShieldCheck className="w-4 h-4" /> Recovery Gates ({data.evidence.gates_ready}/{data.evidence.gates_total} ready)
         </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {RECOVERY_GATES.map((gate) => (
-            <div key={gate.id} className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 flex items-start gap-3">
-              {gate.status === 'PASS' ? (
-                <CheckCircle2 className="w-5 h-5 text-green-500 mt-0.5 shrink-0" />
-              ) : gate.status === 'ACTIVE' ? (
-                <XCircle className="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
+        <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              {data.evidence.gates_ready === data.evidence.gates_total ? (
+                <CheckCircle2 className="w-6 h-6 text-green-500" />
               ) : (
-                <Loader2 className="w-5 h-5 text-yellow-500 mt-0.5 shrink-0" />
+                <Loader2 className="w-6 h-6 text-yellow-500" />
               )}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-gray-900 dark:text-white">{gate.label}</span>
-                  <span className={`px-1.5 py-0.5 text-[10px] font-bold rounded-full ${
-                    gate.status === 'PASS' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
-                    gate.status === 'ACTIVE' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
-                    'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
-                  }`}>
-                    {gate.status}
-                  </span>
+              <div>
+                <div className="text-sm font-semibold text-gray-900 dark:text-white">
+                  {data.evidence.gates_ready === data.evidence.gates_total ? 'All gates ready' : 'Gates pending'}
                 </div>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{gate.detail}</p>
+                <div className="text-xs text-gray-500 dark:text-gray-400">
+                  {data.evidence.gates_total - data.evidence.gates_ready} gate(s) remaining before dry-run
+                </div>
               </div>
             </div>
-          ))}
+            <div className="text-2xl font-bold text-gray-900 dark:text-white">
+              {data.evidence.gates_ready}/{data.evidence.gates_total}
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* === PAPER GRID TRIAL === */}
-      <div>
-        <h2 className="text-sm font-bold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
-          <FlaskConical className="w-4 h-4" /> Paper Grid Trial — {PAPER_GRID_STATUS.pair}
-        </h2>
-        <Card className="p-4">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      {/* === POSITIONS + RESEARCH === */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
+          <div className="flex items-center gap-2 mb-3">
+            <Eye className="w-5 h-5 text-blue-500" />
+            <span className="text-sm font-bold text-gray-700 dark:text-gray-300">Active Positions</span>
+          </div>
+          <div className="flex items-center gap-6">
             <div>
-              <div className="text-xs text-gray-500 dark:text-gray-400">Status</div>
-              <div className="text-sm font-bold text-blue-600 flex items-center gap-1 mt-1">
-                <Eye className="w-3 h-3" /> {PAPER_GRID_STATUS.status}
+              <div className="text-2xl font-bold text-gray-900 dark:text-white">{data.positions.active}</div>
+              <div className="text-xs text-gray-500">active</div>
+            </div>
+            <div>
+              <div className="text-2xl font-bold text-gray-900 dark:text-white">{data.positions.resolved}</div>
+              <div className="text-xs text-gray-500">resolved</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
+          <div className="flex items-center gap-2 mb-3">
+            <FlaskConical className="w-5 h-5 text-purple-500" />
+            <span className="text-sm font-bold text-gray-700 dark:text-gray-300">Research</span>
+          </div>
+          <div className="flex items-center gap-6">
+            <div>
+              <div className="text-2xl font-bold text-gray-900 dark:text-white">{data.research.crypto_pairs}</div>
+              <div className="text-xs text-gray-500">crypto pairs</div>
+            </div>
+            {data.evidence.latest && (
+              <div className="flex-1 min-w-0">
+                <div className="text-xs text-gray-500">Latest evidence</div>
+                <div className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                  {data.evidence.latest.title}
+                </div>
               </div>
-            </div>
-            <div>
-              <div className="text-xs text-gray-500 dark:text-gray-400">Duration</div>
-              <div className="text-sm font-semibold text-gray-900 dark:text-white mt-1">{PAPER_GRID_STATUS.duration}</div>
-            </div>
-            <div>
-              <div className="text-xs text-gray-500 dark:text-gray-400">Fills</div>
-              <div className="text-sm font-semibold text-gray-900 dark:text-white mt-1">{PAPER_GRID_STATUS.fills}</div>
-            </div>
-            <div>
-              <div className="text-xs text-gray-500 dark:text-gray-400">Paper P&L</div>
-              <div className="text-sm font-semibold text-gray-900 dark:text-white mt-1">฿{PAPER_GRID_STATUS.pnl.toLocaleString()}</div>
-            </div>
+            )}
           </div>
-          <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-700">
-            <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Grid Levels</div>
-            <div className="flex flex-wrap gap-2 text-xs">
-              <span className="px-2 py-1 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 rounded">
-                BUY ฿{PAPER_GRID_STATUS.gridLevels.buy[0].toLocaleString()} / ฿{PAPER_GRID_STATUS.gridLevels.buy[1].toLocaleString()}
-              </span>
-              <span className="px-2 py-1 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 rounded">
-                SELL ฿{PAPER_GRID_STATUS.gridLevels.sell[0].toLocaleString()} / ฿{PAPER_GRID_STATUS.gridLevels.sell[1].toLocaleString()}
-              </span>
-            </div>
+        </div>
+      </div>
+
+      {/* === SYSTEM HEALTH === */}
+      <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
+        <div className="flex items-center gap-2 mb-3">
+          <Cpu className="w-5 h-5 text-green-500" />
+          <span className="text-sm font-bold text-gray-700 dark:text-gray-300">System Health</span>
+        </div>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${data.system_health.strategy_api === 'healthy' ? 'bg-green-500' : 'bg-red-500'}`} />
+            <span className="text-xs text-gray-600 dark:text-gray-400">Strategy API</span>
           </div>
-        </Card>
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${data.system_health.redis_connected ? 'bg-green-500' : 'bg-red-500'}`} />
+            <span className="text-xs text-gray-600 dark:text-gray-400">Redis</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${data.grid.running ? 'bg-green-500' : 'bg-yellow-500'}`} />
+            <span className="text-xs text-gray-600 dark:text-gray-400">Grid Bot {data.grid.running ? 'Running' : 'Stopped'}</span>
+          </div>
+        </div>
       </div>
 
       {/* === QUICK NAVIGATION === */}

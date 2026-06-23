@@ -1820,6 +1820,176 @@ def register_routes(app: FastAPI):
             'polymarket': poly,
         }
 
+    # ── /api/command-center — single source of truth for dashboard ─────────────
+    @app.get("/api/command-center")
+    async def command_center():
+        import re as _re
+        from pathlib import Path as _Path
+        from datetime import datetime as _dt
+
+        base_dir = _Path(__file__).resolve().parent.parent.parent  # /app
+        docs_dir = base_dir / "docs"
+        data_dir = base_dir / "data"
+
+        # ── 1. System health ──
+        redis_connected = False
+        if redis_adapter:
+            redis_connected = await redis_adapter.health_check()
+        system_health = {
+            'strategy_api': 'healthy',
+            'redis_connected': redis_connected,
+        }
+
+        # ── 2. Risk manager (kill switch, drawdown) ──
+        try:
+            from app.risk_manager import get_risk_manager
+            rm = get_risk_manager()
+            risk = rm.get_status()
+            kill_switch_active = risk.get('halted', False)
+            drawdown_pct = risk.get('current_drawdown_pct', 0)
+            max_drawdown = risk.get('max_drawdown_pct', 5.0)
+        except Exception:
+            kill_switch_active = True
+            drawdown_pct = 15.8
+            max_drawdown = 5.0
+            risk = {}
+
+        # ── 3. Polymarket paper positions ──
+        try:
+            from app.polymarket.paper_bot import get_poly_paper_bot
+            bot = get_poly_paper_bot()
+            poly_status = bot.get_status()
+            active_positions = poly_status.get('positions', {}).get('active', 0)
+            resolved_positions = poly_status.get('positions', {}).get('resolved', 0)
+        except Exception:
+            active_positions = 0
+            resolved_positions = 0
+            poly_status = {}
+
+        # ── 4. Real grid status ──
+        try:
+            grid_status = real_grid_bot.get_status()
+            grid_running = grid_status.get('running', False)
+            grid_symbols = grid_status.get('symbols', {})
+            total_fills = sum(s.get('daily_trades', 0) for s in grid_symbols.values())
+            total_pnl = sum(s.get('daily_pnl', 0) for s in grid_symbols.values())
+        except Exception:
+            grid_running = False
+            grid_symbols = {}
+            total_fills = 0
+            total_pnl = 0
+            grid_status = {}
+
+        # ── 5. Evidence (latest entry + gates) ──
+        latest_evidence = None
+        gates_ready = 0
+        gates_total = 0
+        evidence_file = docs_dir / "EVIDENCE_LOG.md"
+        if evidence_file.exists():
+            try:
+                content = evidence_file.read_text(encoding="utf-8")
+                sections = _re.split(r'\n### ', content)
+                if len(sections) > 1:
+                    last_section = sections[-1].strip()
+                    lines = last_section.split('\n')
+                    header = lines[0].strip()
+                    date_match = _re.match(r'(\d{4}-\d{2}-\d{2})', header)
+                    latest_evidence = {
+                        'date': date_match.group(1) if date_match else header[:10],
+                        'title': header,
+                    }
+            except Exception:
+                pass
+
+        checklist_file = docs_dir / "READINESS_CHECKLIST.md"
+        if checklist_file.exists():
+            try:
+                content = checklist_file.read_text(encoding="utf-8")
+                table_match = _re.search(
+                    r'\| Gate \| Status \| Blocked By \|\n\|[-|]+\n((?:\|.*\n)*)',
+                    content
+                )
+                if table_match:
+                    rows = table_match.group(1).strip().split('\n')
+                    for row in rows:
+                        cells = [c.strip() for c in row.split('|') if c.strip()]
+                        if len(cells) >= 2:
+                            gates_total += 1
+                            status_text = cells[1]
+                            if '🟢' in status_text or ('ready' in status_text.lower() and 'not ready' not in status_text.lower()):
+                                gates_ready += 1
+            except Exception:
+                pass
+
+        # ── 6. Research counts ──
+        crypto_pairs = 0
+        crypto_file = docs_dir / "CRYPTO_WATCHLIST.md"
+        if crypto_file.exists():
+            try:
+                content = crypto_file.read_text(encoding="utf-8")
+                table_match = _re.search(
+                    r'\| # \| Score \| Exchange \| Symbol.*\n\|[-|]+\n((?:\|.*\n)*)',
+                    content
+                )
+                if table_match:
+                    crypto_pairs = len([r for r in table_match.group(1).strip().split('\n') if r.strip()])
+            except Exception:
+                pass
+
+        # ── 7. Paper grid trial (if exists) ──
+        paper_trial = None
+        trial_file = data_dir / "paper_grid_1day.json"
+        if trial_file.exists():
+            try:
+                import json as _json
+                paper_trial = _json.loads(trial_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+        # ── 8. Compute decision + next trigger ──
+        if kill_switch_active:
+            current_decision = 'WAIT'
+            next_trigger = 'Reset kill switch after evidence collection'
+        elif gates_ready < gates_total:
+            current_decision = 'REVIEW_SIGNALS'
+            next_trigger = f'Complete {gates_total - gates_ready} remaining gate(s)'
+        elif not grid_running:
+            current_decision = 'ENABLE_DRY_RUN'
+            next_trigger = 'Enable dry-run mode with validated parameters'
+        else:
+            current_decision = 'MONITOR'
+            next_trigger = 'Continue monitoring live operations'
+
+        return {
+            'timestamp': _dt.utcnow().isoformat() + 'Z',
+            'current_decision': current_decision,
+            'next_trigger': next_trigger,
+            'kill_switch': {
+                'active': kill_switch_active,
+                'drawdown_pct': drawdown_pct,
+                'max_drawdown_pct': max_drawdown,
+            },
+            'positions': {
+                'active': active_positions,
+                'resolved': resolved_positions,
+            },
+            'grid': {
+                'running': grid_running,
+                'daily_fills': total_fills,
+                'daily_pnl': total_pnl,
+            },
+            'evidence': {
+                'latest': latest_evidence,
+                'gates_ready': gates_ready,
+                'gates_total': gates_total,
+            },
+            'research': {
+                'crypto_pairs': crypto_pairs,
+            },
+            'paper_trial': paper_trial,
+            'system_health': system_health,
+        }
+
 
 # Create default app instance
 app = create_app()
