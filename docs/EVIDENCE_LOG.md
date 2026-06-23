@@ -22,6 +22,20 @@ Notes: [what changed, why, what to watch]
 
 ## Log
 
+### 2026-06-23 — State Consistency / Risk Source Audit
+
+- Active positions: 14
+- Resolved trades: 6
+- Kill switch: ACTIVE (paper bot max drawdown 15.84%)
+- Decision: WAIT
+- Bankroll: $84.54
+- Peak bankroll: $100.45
+- Risk source: `paper_bot` controls Polymarket / paper-capital readiness gates
+- Grid risk manager: separate BTCTHB grid source; 0% grid drawdown does not clear paper-bot drawdown
+- Notes: `/api/command-center`, `/api/poly-paper/status`, and dynamic evidence gates now agree on paper-bot state. Gate 1 remains blocked by active kill switch, 14 active positions > 8, and paper drawdown > 5%.
+
+---
+
 ### 2026-06-20 (baseline)
 - Active positions: 20
 - Resolved trades: 0

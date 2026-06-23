@@ -2,11 +2,22 @@
 
 > **Current gate: WAIT — Capital Protection Mode**
 >
-> Last updated: 2026-06-20
+> Last updated: 2026-06-23
 
 This document defines the versioned gate criteria for advancing through each stage of the RUNBOOK decision tree. Each checklist must be fully satisfied before proceeding to the next stage.
 
 **Do not skip stages. Do not self-approve. Evidence required for each item.**
+
+---
+
+## Live Risk Source
+
+Readiness decisions use `/api/command-center` and the **paper bot** risk source for Polymarket / paper-capital state.
+
+| Source | Scope | Current state |
+|--------|-------|---------------|
+| `paper_bot` | Polymarket / paper-capital protection | Bankroll $84.54, peak $100.45, drawdown 15.84%, kill switch ACTIVE, 14 active positions |
+| `risk_manager` / grid bot | BTCTHB grid risk only | Separate risk source; do not use its 0% drawdown to clear paper-bot gates |
 
 ---
 
@@ -124,7 +135,7 @@ docker compose exec strategy env | grep POLY_
 ### Prerequisites
 
 - [ ] CI pipeline green (Frontend Tests + Backend Tests + Docker Images)
-- [ ] All safety tests passing (80/80 Python + 6/6 Frontend)
+- [ ] All strategy, command-center contract, and frontend safety checks passing in CI
 - [ ] `.env.example` reviewed and safe-by-default
 - [ ] `PRODUCTION_HOST` secret configured in GitHub
 - [ ] Domain name registered and DNS configured
@@ -150,9 +161,9 @@ gh secret list
 
 | Gate | Status | Blocked By |
 |------|--------|------------|
-| 1. Enable Dry-Run | 🔴 Not ready | 20 active positions, kill switch active |
+| 1. Enable Dry-Run | 🔴 Not ready | Paper kill switch active, 14 active positions > 8, paper drawdown 15.84% > 5% |
 | 2. Reset Kill Switch | 🔴 Not ready | Need dry-run evidence first |
-| 3. Micro-Live | 🔴 Not ready | Need kill switch reset first |
+| 3. Micro-Live | 🔴 Not ready | Need Gate 1 and Gate 2 evidence first |
 | 4. Production Deploy | 🔴 Not ready | Need domain/secrets/prod env |
 
 ---

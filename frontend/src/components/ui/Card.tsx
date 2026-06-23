@@ -4,13 +4,12 @@
  */
 'use client';
 
-import { motion } from 'framer-motion';
 import { ReactNode } from 'react';
 
 interface CardProps {
   children: ReactNode;
   className?: string;
-  variant?: 'default' | 'elevated' | 'outlined' | 'glass';
+  variant?: 'default' | 'elevated' | 'outlined';
   hover?: boolean;
   onClick?: () => void;
   padding?: 'none' | 'sm' | 'md' | 'lg';
@@ -26,13 +25,12 @@ export default function Card({
   padding = 'md',
   gradient = false,
 }: CardProps) {
-  const baseStyles = 'rounded-xl transition-all duration-300';
+  const baseStyles = 'rounded-lg transition-colors duration-200';
   
   const variantStyles = {
     default: 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700',
-    elevated: 'bg-white dark:bg-gray-800 shadow-lg border border-gray-100 dark:border-gray-700',
+    elevated: 'bg-white dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700',
     outlined: 'bg-transparent border-2 border-gray-200 dark:border-gray-700',
-    glass: 'bg-white/10 dark:bg-gray-800/50 backdrop-blur-lg border border-white/20 dark:border-gray-700/50',
   };
 
   const paddingStyles = {
@@ -43,7 +41,7 @@ export default function Card({
   };
 
   const hoverStyles = hover
-    ? 'hover:shadow-xl hover:-translate-y-1 cursor-pointer'
+    ? 'hover:border-gray-300 dark:hover:border-gray-600 cursor-pointer'
     : '';
 
   const gradientStyles = gradient
@@ -51,13 +49,11 @@ export default function Card({
     : '';
 
   return (
-    <motion.div
-      whileHover={hover ? { scale: 1.02 } : {}}
-      whileTap={onClick ? { scale: 0.98 } : {}}
+    <div
       onClick={onClick}
       className={`${baseStyles} ${variantStyles[variant]} ${paddingStyles[padding]} ${hoverStyles} ${gradientStyles} ${className}`}
     >
       {children}
-    </motion.div>
+    </div>
   );
 }

@@ -4,8 +4,8 @@
 import './globals.css';
 
 export const metadata = {
-  title: 'TradeBot Pro',
-  description: 'Automated Trading System',
+  title: 'BookFinance',
+  description: 'AI Financial Operating System',
 };
 
 export default function RootLayout({

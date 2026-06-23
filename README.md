@@ -1,10 +1,12 @@
-# 📘 BookFinance - Crypto Trading Bot
+# 📘 BookFinance - AI Financial Command Center
 
 [![CI/CD Pipeline](https://github.com/bookchaowalit/booktrading/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/bookchaowalit/booktrading/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://www.docker.com/)
 
-**BookFinance** is a crypto trading bot with AI predictions, arbitrage detection, multi-exchange support, and real-time monitoring.
+**BookFinance** is an AI-centered financial command center for capital protection, evidence tracking, market research, and controlled paper trading.
+
+The default UI is observe-only: it shows what is happening, what is blocked, and what evidence is needed next. Action-heavy trading tools stay hidden behind Advanced mode.
 
 ---
 
@@ -14,16 +16,20 @@
 
 | Status | Detail |
 |--------|--------|
-| Kill switch | **ACTIVE** — triggered at 15.8% drawdown |
-| Bot state | Halted — no new trades |
+| Current decision | **WAIT** |
+| Risk source | `paper_bot` for Polymarket / paper capital decisions |
+| Paper kill switch | **ACTIVE** — 15.84% drawdown ($100.45 peak → $84.54) |
+| Bot state | Halted — no new Polymarket / paper entries |
 | Real money | **Blocked** — `POLY_DRY_RUN=true` enforced |
 | Deploy | Manual only — gated behind `workflow_dispatch` |
-| Legacy positions | 20 open, waiting for resolution |
-| Bankroll | $84.54 |
+| Legacy positions | 14 active, resolving naturally |
+| Grid risk manager | Separate BTCTHB grid risk source; not used to clear paper-bot gates |
+| Bankroll | $84.54 paper bankroll |
 
 **What this means:**
-- The bot will NOT enter new positions until the kill switch is manually reset
-- Paper trading runs in dry-run mode (simulates but never executes)
+- The default dashboard reads `/api/command-center` as the single source of truth
+- The bot will NOT enter new positions until readiness gates pass and the kill switch is intentionally reset
+- Paper-bot drawdown is the source for capital-protection decisions; grid risk is tracked separately
 - Production deploy requires explicit `workflow_dispatch` with `deploy_production=true`
 - See [strategy/RUNBOOK.md](strategy/RUNBOOK.md) for the full decision tree
 
@@ -41,7 +47,7 @@ This outputs a structured decision block: current state, reason, and what trigge
 
 ### 🤖 Trading Bot
 - **Grid Trading** - Automated buy/sell within price ranges
-- **Real Exchange Orders** - Trades on Binance TH, Bitkub, Binance Global
+- **Exchange Integrations** - Binance TH, Bitkub, Binance Global research and grid infrastructure
 - **Paper Trading Fallback** - Safe testing without real money
 - **Activity Feed** - Real-time bot activity tracking
 
@@ -58,19 +64,26 @@ This outputs a structured decision block: current state, reason, and what trigge
 - **Balance Aggregation** - View all balances in one place
 
 ### 🎨 User Experience
-- **Grouped Sidebar** - Organized navigation with expand/collapse
+- **5 Main Pages** — the single source of truth for the observe-only dashboard:
+  - **Today (Command Center)** — "What to do now" — current decision, kill switch, capital, next triggers
+  - **Evidence** — "What happened" — timeline, gates checklist, paper trading positions, activity feed
+  - **Research** — "What's worth watching" — crypto candidates, Polymarket reviews, intelligence summary
+  - **System** — "Is everything healthy" — component health, risk sources, grid/bot status (auto-refresh 30s)
+  - **Daily Report** — "Operational snapshot" — trade journal summary, daily PnL, system overview
+- **Route Consolidation** — Batch 1+2 extraction complete: 38 routes categorised into 5 keep-main, 14 extracted-to-component, 8 advanced-only, 11 hidden/deferred
+- **Observe-Only Default** - No trade/start/configure controls in the main flow
+- **Advanced Mode** - Action-heavy pages hidden unless `NEXT_PUBLIC_ADVANCED_UI=true`
 - **Dark/Light Theme** - Automatic theme switching
-- **Keyboard Shortcuts** - 13 shortcuts for faster operation
 - **Mobile Responsive** - Works on all devices
 - **Toast Notifications** - Real-time alerts
 - **Empty States** - Clear messaging when no data
-- **Error Boundaries** - Graceful error handling
+- **Error Boundaries** - Graceful error handling with retry buttons on all 5 pages
 
 ### 🔐 Safety & CI
 - **CI/CD Pipeline** — automated testing, deploy gated (manual only)
 - **Kill Switch** — auto-halt on drawdown threshold breach
 - **Dry-Run Mode** — `POLY_DRY_RUN=true` prevents real execution
-- **Safety Tests** — 53 passing (kill-switch + safety filters)
+- **Safety Tests** — kill-switch, safety filters, monitor decision tree, grid safety, and command-center contracts
 - **Docker Compose** — one-command local deployment
 - **Automated Backups** — daily database backups
 
@@ -127,6 +140,10 @@ See **[PRODUCTION.md](PRODUCTION.md)** for full deployment guide.
 | Document | Description |
 |----------|-------------|
 | **[strategy/RUNBOOK.md](strategy/RUNBOOK.md)** | Operational playbook — decision tree, safety rules |
+| **[docs/READINESS_CHECKLIST.md](docs/READINESS_CHECKLIST.md)** | Versioned readiness gates before dry-run, reset, micro-live, and production |
+| **[docs/EVIDENCE_LOG.md](docs/EVIDENCE_LOG.md)** | State-change log for monitor, trial, research, and gate evidence |
+| **[docs/CRYPTO_WATCHLIST.md](docs/CRYPTO_WATCHLIST.md)** | Crypto market watchlist and review notes |
+| **[docs/BTCTHB_GRID_RESEARCH.md](docs/BTCTHB_GRID_RESEARCH.md)** | BTCTHB grid research and paper-trial context |
 | **[USER_GUIDE.md](USER_GUIDE.md)** | Complete user guide |
 | **[API.md](API.md)** | Full API documentation |
 | **[PRODUCTION.md](PRODUCTION.md)** | Production deployment guide |
@@ -198,13 +215,13 @@ bookfinance/
 
 ## 🧪 Testing
 
-### Python Safety Tests (53 passing)
+### Python Strategy Tests
 
 ```bash
 docker compose exec strategy pytest /app/tests/ -v
 ```
 
-Covers kill-switch logic, safety filters, dry-run enforcement, blocklist/allowlist.
+Covers kill-switch logic, safety filters, dry-run enforcement, blocklist/allowlist, grid safety, monitor decisions, and `/api/command-center` contracts.
 
 ### Backend Tests
 

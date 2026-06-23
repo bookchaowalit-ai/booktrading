@@ -211,7 +211,7 @@ export default function Sidebar({ isCollapsed, onToggle, isMobileOpen, onMobileC
       <motion.aside
         initial={false}
         animate={{ width: isCollapsed ? 80 : 280 }}
-        className={`fixed left-0 top-0 h-screen bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 z-50 shadow-lg
+        className={`fixed left-0 top-0 h-screen bg-white dark:bg-gray-950 border-r border-gray-200 dark:border-gray-800 z-50
           transform transition-transform duration-300 lg:translate-x-0
           ${isMobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
         `}
@@ -228,24 +228,26 @@ export default function Sidebar({ isCollapsed, onToggle, isMobileOpen, onMobileC
         </button>
 
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+        <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800">
           <motion.div
             animate={{ opacity: isCollapsed ? 0 : 1 }}
             className="flex items-center gap-2 overflow-hidden"
           >
-            <Cpu className="w-8 h-8 text-purple-600 flex-shrink-0" />
+            <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-gray-950 text-white dark:bg-white dark:text-gray-950">
+              <Cpu className="w-5 h-5" />
+            </span>
             <div className="flex flex-col">
-              <span className="text-sm font-bold text-gray-900 dark:text-white whitespace-nowrap leading-tight">
-                AI Command
+              <span className="text-sm font-semibold text-gray-950 dark:text-white whitespace-nowrap leading-tight">
+                {t('brand.name')}
               </span>
               <span className="text-[10px] text-gray-500 dark:text-gray-400 whitespace-nowrap leading-tight">
-                Trading Center
+                {t('brand.mode')}
               </span>
             </div>
           </motion.div>
           <button
             onClick={onToggle}
-            className="lg:p-2 p-3 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            className="lg:p-2 p-3 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
             aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
             {isCollapsed ? (
@@ -264,10 +266,10 @@ export default function Sidebar({ isCollapsed, onToggle, isMobileOpen, onMobileC
                 key={item.nameKey}
                 href={`/${locale}${item.href}`}
                 aria-current={isActiveItem(item.href) ? 'page' : undefined}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors mb-0.5 text-sm
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-md transition-colors mb-0.5 text-sm
                   ${isActiveItem(item.href)
-                    ? 'bg-purple-100 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 font-medium'
-                    : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-200'
+                    ? 'bg-gray-950 text-white dark:bg-white dark:text-gray-950 font-medium'
+                    : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-900 hover:text-gray-950 dark:hover:text-gray-100'
                   }
                   ${isCollapsed ? 'justify-center' : ''}
                 `}
@@ -291,7 +293,7 @@ export default function Sidebar({ isCollapsed, onToggle, isMobileOpen, onMobileC
 
           {/* Advanced Section */}
           {advancedEnabled && (
-            <div className="border-t border-gray-200 dark:border-gray-700 pt-3 mt-3 px-2">
+            <div className="border-t border-gray-200 dark:border-gray-800 pt-3 mt-3 px-2">
               <button
                 onClick={() => setShowAdvanced(!showAdvanced)}
                 className={`w-full flex items-center gap-2 px-3 py-2 mb-2 text-xs font-semibold uppercase tracking-wider transition-colors
@@ -300,7 +302,7 @@ export default function Sidebar({ isCollapsed, onToggle, isMobileOpen, onMobileC
                 `}
                 title={isCollapsed ? t('menu.advanced') : undefined}
               >
-                <span className="flex-shrink-0 text-[10px]">⚙</span>
+                <Settings className="w-3.5 h-3.5 flex-shrink-0" />
                 <motion.span
                   animate={{ opacity: isCollapsed ? 0 : 1, width: isCollapsed ? 0 : 'auto' }}
                   className="whitespace-nowrap overflow-hidden flex-1 text-left"
@@ -333,7 +335,7 @@ export default function Sidebar({ isCollapsed, onToggle, isMobileOpen, onMobileC
                             onClick={() => toggleGroup(group.groupKey)}
                             className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs font-medium transition-colors
                               ${hasActiveChild
-                                ? 'text-purple-600 dark:text-purple-400'
+                                ? 'text-gray-950 dark:text-white'
                                 : 'text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-400'
                               }
                             `}
@@ -363,8 +365,8 @@ export default function Sidebar({ isCollapsed, onToggle, isMobileOpen, onMobileC
                                       aria-current={isActiveItem(item.href) ? 'page' : undefined}
                                       className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors text-xs
                                         ${isActiveItem(item.href)
-                                          ? 'bg-purple-100 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 font-medium'
-                                          : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-200'
+                                          ? 'bg-gray-100 dark:bg-gray-900 text-gray-950 dark:text-white font-medium'
+                                          : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-900 hover:text-gray-950 dark:hover:text-gray-100'
                                         }`}
                                     >
                                       <span className="flex-shrink-0 w-4 h-4">{item.icon}</span>
@@ -389,10 +391,10 @@ export default function Sidebar({ isCollapsed, onToggle, isMobileOpen, onMobileC
 
         {/* Bottom Navigation */}
         <div className="absolute bottom-0 left-0 right-0 px-4 pb-4">
-          <div className="border-t border-gray-200 dark:border-gray-700 pt-3">
+          <div className="border-t border-gray-200 dark:border-gray-800 pt-3">
             <Link
               href={`/${locale}/dashboard/docs`}
-              className={`flex items-center gap-3 px-4 py-2 rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-200 transition-colors text-sm
+              className={`flex items-center gap-3 px-4 py-2 rounded-md text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-900 hover:text-gray-950 dark:hover:text-gray-100 transition-colors text-sm
                 ${isCollapsed ? 'justify-center' : ''}
               `}
               title={isCollapsed ? t('nav.docs') : undefined}

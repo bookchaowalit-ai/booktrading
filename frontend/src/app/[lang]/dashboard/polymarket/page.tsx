@@ -19,7 +19,7 @@ import {
   Zap,
   Eye,
 } from 'lucide-react';
-import api from '@/services/api';
+import { api } from '@/services/api';
 import Card from '@/components/ui/Card';
 
 interface PolyStatus {

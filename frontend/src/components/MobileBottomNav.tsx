@@ -9,43 +9,43 @@ import Link from 'next/link';
 import { motion } from 'framer-motion';
 import {
   LayoutDashboard,
-  Zap,
-  Wallet,
-  BarChart3,
-  Settings,
+  FileText,
+  Shield,
+  FlaskConical,
+  Cpu,
 } from 'lucide-react';
 import { useTranslation } from '@/i18n/translations';
 
 const navItems = [
   {
-    id: 'dashboard',
-    labelKey: 'nav.dashboard' as const,
+    id: 'command-center',
+    labelKey: 'nav.commandCenter' as const,
     href: '/dashboard',
     icon: LayoutDashboard,
   },
   {
-    id: 'trading',
-    labelKey: 'nav.trading' as const,
-    href: '/dashboard/trading',
-    icon: Zap,
+    id: 'daily-report',
+    labelKey: 'nav.dailyReport' as const,
+    href: '/dashboard/daily-report',
+    icon: FileText,
   },
   {
-    id: 'wallet',
-    labelKey: 'nav.wallet' as const,
-    href: '/dashboard/wallet',
-    icon: Wallet,
+    id: 'evidence',
+    labelKey: 'nav.evidence' as const,
+    href: '/dashboard/evidence',
+    icon: Shield,
   },
   {
-    id: 'finance',
-    labelKey: 'nav.finance' as const,
-    href: '/dashboard/finance',
-    icon: BarChart3,
+    id: 'research',
+    labelKey: 'nav.research' as const,
+    href: '/dashboard/research',
+    icon: FlaskConical,
   },
   {
-    id: 'settings',
-    labelKey: 'nav.settings' as const,
-    href: '/dashboard/settings',
-    icon: Settings,
+    id: 'system',
+    labelKey: 'nav.system' as const,
+    href: '/dashboard/system',
+    icon: Cpu,
   },
 ];
 
@@ -58,21 +58,21 @@ export default function MobileBottomNav() {
 
   return (
     <nav
-      className="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 md:hidden z-50"
+      className="fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-gray-950/95 backdrop-blur border-t border-gray-200 dark:border-gray-800 md:hidden z-50"
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       <div className="grid grid-cols-5 gap-1">
         {navItems.map((item) => {
-          const isActive = pathname.includes(item.href);
           const Icon = item.icon;
           const href = `/${locale}${item.href}`;
+          const isActive = pathname === href;
 
           return (
             <Link
               key={item.id}
               href={href}
-              className={`flex flex-col items-center justify-center py-3 px-2 transition-colors ${isActive
-                ? 'text-purple-600'
+              className={`flex flex-col items-center justify-center py-3 px-1 transition-colors ${isActive
+                ? 'text-gray-950 dark:text-white'
                 : 'text-gray-500 dark:text-gray-400'
                 }`}
               aria-current={isActive ? 'page' : undefined}
@@ -82,11 +82,11 @@ export default function MobileBottomNav() {
                 {isActive && (
                   <motion.div
                     layoutId="mobile-nav-indicator"
-                    className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-purple-600 rounded-full"
+                    className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-gray-950 dark:bg-white rounded-full"
                   />
                 )}
               </div>
-              <span className="text-xs mt-1">{t(item.labelKey)}</span>
+              <span className="text-[10px] mt-1 max-w-full truncate">{t(item.labelKey)}</span>
             </Link>
           );
         })}

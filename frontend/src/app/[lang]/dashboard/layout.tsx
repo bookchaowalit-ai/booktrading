@@ -10,7 +10,7 @@ import Sidebar from '@/components/Sidebar';
 import { ToastProvider } from '@/components/ui/Toast';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import { ThemeProvider } from '@/contexts/ThemeProvider';
-import { Bell, Menu, LogOut, Command, Globe, Sun, Moon } from 'lucide-react';
+import { Bell, Menu, LogOut, Command, Globe } from 'lucide-react';
 import { isAuthenticated, logout, clearSession } from '@/services/auth';
 import CommandPalette from '@/components/CommandPalette';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
@@ -22,6 +22,7 @@ import FillNotificationToast from '@/components/FillNotificationToast';
 import MobileBottomNav from '@/components/MobileBottomNav';
 import KeyboardShortcutsHelp from '@/components/KeyboardShortcutsHelp';
 import { api } from '@/services/api';
+import { useTranslation } from '@/i18n/translations';
 
 export default function DashboardLayout({
   children,
@@ -30,6 +31,7 @@ export default function DashboardLayout({
 }) {
   const pathname = usePathname();
   const router = useRouter();
+  const { t } = useTranslation();
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -107,50 +109,24 @@ export default function DashboardLayout({
     router.push(newPathname);
   };
 
-  // Keyboard shortcuts - comprehensive set
+  // Keyboard shortcuts - observe-first command center navigation
   useKeyboardShortcuts([
     { key: 'k', ctrl: true, action: () => setIsCommandPaletteOpen(true) },
     { key: 'b', ctrl: true, action: () => setIsSidebarCollapsed(!isSidebarCollapsed) },
-    // Navigation shortcuts
     { key: 'g', ctrl: true, alt: true, action: () => router.push(`/${locale}/dashboard`) },
-    { key: 't', ctrl: true, alt: true, action: () => router.push(`/${locale}/dashboard/trading`) },
-    { key: 'p', ctrl: true, alt: true, action: () => router.push(`/${locale}/dashboard/portfolio`) },
-    { key: 'w', ctrl: true, alt: true, action: () => router.push(`/${locale}/dashboard/wallet`) },
-    { key: 'f', ctrl: true, alt: true, action: () => router.push(`/${locale}/dashboard/finance`) },
-    { key: 's', ctrl: true, alt: true, action: () => router.push(`/${locale}/dashboard/settings`) },
-    // Bot control
-    {
-      key: ' ', ctrl: true, action: () => {
-        // Space + Ctrl to start/stop bot (navigate to trading page)
-        router.push(`/${locale}/dashboard/trading`);
-      }
-    },
+    { key: 'd', ctrl: true, alt: true, action: () => router.push(`/${locale}/dashboard/daily-report`) },
+    { key: 'e', ctrl: true, alt: true, action: () => router.push(`/${locale}/dashboard/evidence`) },
+    { key: 'r', ctrl: true, alt: true, action: () => router.push(`/${locale}/dashboard/research`) },
+    { key: 's', ctrl: true, alt: true, action: () => router.push(`/${locale}/dashboard/system`) },
   ]);
 
-  // Define available commands
+  // Define available commands. Keep default command palette read-only.
   const commands = [
-    { id: 'dashboard', label: 'Go to Dashboard', action: () => router.push(`/${locale}/dashboard`), shortcut: 'G D' },
-    { id: 'trading', label: 'Go to Trading', action: () => router.push(`/${locale}/dashboard/trading`), shortcut: 'G T' },
-    { id: 'portfolio', label: 'Go to Portfolio', action: () => router.push(`/${locale}/dashboard/portfolio`), shortcut: 'G P' },
-    { id: 'wallet', label: 'Go to Wallet', action: () => router.push(`/${locale}/dashboard/wallet`), shortcut: 'G W' },
-    { id: 'strategy', label: 'Go to Strategy', action: () => router.push(`/${locale}/dashboard/strategy`), shortcut: 'G S' },
-    { id: 'dex', label: 'Go to DEX Trading', action: () => router.push(`/${locale}/dashboard/dex`) },
-    { id: 'grid-trading', label: 'Go to Grid Trading', action: () => router.push(`/${locale}/dashboard/grid-trading`) },
-    { id: 'dca', label: 'Go to DCA Bot', action: () => router.push(`/${locale}/dashboard/dca`) },
-    { id: 'copy-trading', label: 'Go to Copy Trading', action: () => router.push(`/${locale}/dashboard/copy-trading`) },
-    { id: 'analytics', label: 'Go to Analytics', action: () => router.push(`/${locale}/dashboard/analytics`) },
-    { id: 'sentiment', label: 'Go to Sentiment', action: () => router.push(`/${locale}/dashboard/sentiment`) },
-    { id: 'backtest', label: 'Go to Backtest', action: () => router.push(`/${locale}/dashboard/backtest`) },
-    { id: 'risk-management', label: 'Go to Risk Management', action: () => router.push(`/${locale}/dashboard/risk-management`) },
-    { id: 'finance', label: 'Go to Finance', action: () => router.push(`/${locale}/dashboard/finance`) },
-    { id: 'finance-budgets', label: 'Go to Budgets', action: () => router.push(`/${locale}/dashboard/finance/budgets`) },
-    { id: 'finance-diary', label: 'Go to Financial Diary', action: () => router.push(`/${locale}/dashboard/finance/diary`) },
-    { id: 'history', label: 'Go to History', action: () => router.push(`/${locale}/dashboard/history`) },
-    { id: 'alerts', label: 'Go to Alerts', action: () => router.push(`/${locale}/dashboard/alerts`) },
-    { id: 'paper-trading', label: 'Go to Paper Trading', action: () => router.push(`/${locale}/dashboard/paper-trading`) },
-    { id: 'polymarket', label: 'Go to Polymarket', action: () => router.push(`/${locale}/dashboard/polymarket`) },
-    { id: 'news', label: 'Go to News', action: () => router.push(`/${locale}/dashboard/news`) },
-    { id: 'settings', label: 'Go to Settings', action: () => router.push(`/${locale}/dashboard/settings`), shortcut: 'G S' },
+    { id: 'command-center', label: 'Open Command Center', action: () => router.push(`/${locale}/dashboard`), shortcut: 'Alt+Ctrl+G' },
+    { id: 'daily-report', label: 'Open Daily Report', action: () => router.push(`/${locale}/dashboard/daily-report`), shortcut: 'Alt+Ctrl+D' },
+    { id: 'evidence', label: 'Open Evidence', action: () => router.push(`/${locale}/dashboard/evidence`), shortcut: 'Alt+Ctrl+E' },
+    { id: 'research', label: 'Open Research', action: () => router.push(`/${locale}/dashboard/research`), shortcut: 'Alt+Ctrl+R' },
+    { id: 'system', label: 'Open System', action: () => router.push(`/${locale}/dashboard/system`), shortcut: 'Alt+Ctrl+S' },
     { id: 'toggle-theme', label: 'Toggle Dark Mode', action: () => document.documentElement.classList.toggle('dark'), shortcut: 'D' },
     { id: 'logout', label: 'Logout', action: handleLogout, shortcut: 'L' },
   ];
@@ -162,7 +138,7 @@ export default function DashboardLayout({
   return (
     <ThemeProvider>
       <ToastProvider>
-        <div className="min-h-screen bg-gray-100 dark:bg-gray-900">
+        <div className="min-h-screen bg-gray-50 text-gray-950 dark:bg-gray-950 dark:text-white">
           {/* Sidebar */}
           <Sidebar
             isCollapsed={isSidebarCollapsed}
@@ -173,12 +149,12 @@ export default function DashboardLayout({
 
           {/* Main Content */}
           <main
-            className={`transition-all duration-300 ${isSidebarCollapsed ? 'ml-20' : 'ml-72'
+            className={`min-h-screen transition-all duration-300 ${isSidebarCollapsed ? 'ml-20' : 'ml-72'
               }`}
           >
             {/* Top Navigation */}
-            <nav className="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700 sticky top-0 z-40">
-              <div className="flex justify-between items-center h-16 px-6">
+            <nav className="sticky top-0 z-40 border-b border-gray-200/80 bg-white/90 backdrop-blur dark:border-gray-800 dark:bg-gray-950/85">
+              <div className="flex h-14 items-center justify-between px-5">
                 {/* Mobile menu button */}
                 <button
                   onClick={() => setIsMobileSidebarOpen(true)}
@@ -190,14 +166,17 @@ export default function DashboardLayout({
 
                 {/* Page Title */}
                 <div className="hidden lg:block">
-                  <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-                    Trading Bot Pro
+                  <h2 className="text-sm font-semibold text-gray-950 dark:text-white">
+                    {t('brand.name')}
                   </h2>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {t('brand.tagline')}
+                  </p>
                 </div>
 
                 <div className="flex-1"></div>
 
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-3">
                   {/* WebSocket Status */}
                   <WSStatusIndicator />
 
@@ -222,12 +201,12 @@ export default function DashboardLayout({
                   <KeyboardShortcutsHelp />
                   <button
                     onClick={() => setIsCommandPaletteOpen(true)}
-                    className="flex items-center gap-2 px-3 py-1.5 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md"
-                    title="Search commands (Ctrl+K)"
+                    className="hidden items-center gap-2 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 sm:flex"
+                    title="Find view (Ctrl+K)"
                   >
                     <Command className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Search</span>
-                    <kbd className="px-1.5 py-0.5 text-xs bg-gray-200 dark:bg-gray-600 rounded">
+                    <span>Find</span>
+                    <kbd className="px-1.5 py-0.5 text-xs bg-gray-100 dark:bg-gray-800 rounded">
                       Ctrl+K
                     </kbd>
                   </button>
@@ -246,8 +225,8 @@ export default function DashboardLayout({
                   </button>
 
                   {/* User Profile */}
-                  <div className="flex items-center gap-3 pl-4 border-l border-gray-200 dark:border-gray-700">
-                    <div className="w-8 h-8 bg-purple-600 rounded-full flex items-center justify-center text-white font-semibold">
+                  <div className="flex items-center gap-3 pl-3 border-l border-gray-200 dark:border-gray-800">
+                    <div className="w-8 h-8 bg-gray-900 dark:bg-white rounded-full flex items-center justify-center text-white dark:text-gray-900 font-semibold">
                       U
                     </div>
                     <button
@@ -263,7 +242,7 @@ export default function DashboardLayout({
             </nav>
 
             {/* Page Content - Scrollable */}
-            <div className="p-4 overflow-y-auto">
+            <div className="p-4 pb-20 lg:p-6">
               <ErrorBoundary>
                 {children}
               </ErrorBoundary>

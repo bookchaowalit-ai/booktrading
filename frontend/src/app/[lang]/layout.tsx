@@ -14,8 +14,8 @@ export function generateStaticParams() {
 }
 
 export const metadata = {
-  title: 'TradeBot Pro',
-  description: 'Automated Trading System',
+  title: 'BookFinance',
+  description: 'AI Financial Operating System',
 };
 
 interface LocaleLayoutProps {

@@ -16,10 +16,9 @@
   }
 }
 
-/* Compact App Design - No Scrolling */
+/* Allow page scrolling — content exceeds viewport */
 html, body {
-  overflow: hidden;
-  height: 100vh;
+  height: 100%;
   margin: 0;
   padding: 0;
 }
@@ -122,6 +121,17 @@ body {
 
 .safe-right {
   padding-right: env(safe-area-inset-right);
+}
+
+/* Reduced motion: disable animations for vestibular accessibility */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* Touch-friendly minimum sizes */

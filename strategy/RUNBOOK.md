@@ -6,18 +6,48 @@
 
 ---
 
+## Dashboard UI (Observe-Only)
+
+The frontend has **5 main pages** as the single source of truth for observing the system. All are observe-only — no Start/Trade/Configure/Reset buttons in the main UX.
+
+| Page | Answers | Key Data |
+|------|---------|----------|
+| **Today** | What to do now? | Decision, kill switch, capital, next triggers |
+| **Evidence** | What happened? | Timeline, gates, paper positions, activity feed |
+| **Research** | What's worth watching? | Crypto candidates, Polymarket reviews, intelligence |
+| **System** | Is everything healthy? | Component health, risk sources, grid/bot status |
+| **Daily Report** | Operational snapshot? | Trade journal, daily PnL, system overview |
+
+**Frontend route consolidation** (Batch 1+2 extraction) is complete. 38 routes have been categorised: 5 keep-main, 14 extracted-to-component, 8 advanced-only, 11 hidden/deferred. The 5 main pages above will NOT gain new action buttons — all future feature extractions go into components or Advanced UI only.
+
+---
+
 ## System State Snapshot
 
 | Metric                | Value         |
 |-----------------------|---------------|
 | Kill switch           | **ACTIVE**    |
-| Kill reason           | Max drawdown 15.8% (limit 5%) |
-| Bankroll              | ~$84.54       |
-| Active positions      | 20 (legacy)   |
-| Resolved positions    | 0             |
+| Kill reason           | Paper-bot max drawdown 15.84% (limit 5%) |
+| Bankroll              | $84.54 paper bankroll |
+| Peak bankroll         | $100.45       |
+| Active positions      | 14 (legacy)   |
+| Resolved positions    | 6             |
 | Max positions allowed | 8             |
 | Daily loss limit      | $5            |
 | Consecutive loss limit| 3             |
+
+---
+
+## Risk Sources
+
+There are two separate risk systems. Do not mix them when making readiness decisions.
+
+| Source | Scope | Used For |
+|--------|-------|----------|
+| `paper_bot` | Polymarket / paper-capital state | Kill switch, paper drawdown, active positions, readiness gates |
+| `risk_manager` / grid bot | BTCTHB grid state | Grid health, grid drawdown, grid daily limits |
+
+`/api/command-center` is the dashboard source of truth and should use `paper_bot` as the effective kill-switch source while the system is in capital-protection mode.
 
 ---
 
@@ -81,7 +111,7 @@ START
 4. Bankroll drawdown cause hasn't been identified
 5. You're doing it "just to see what happens"
 
-**The kill switch is working correctly.** It stopped trading at 15.8% drawdown — that's the system doing its job. Resetting without evidence is how money is lost.
+**The kill switch is working correctly.** It stopped trading at 15.84% paper-bot drawdown — that's the system doing its job. Resetting without evidence is how money is lost.
 
 ---
 
@@ -176,7 +206,7 @@ docker compose exec redis redis-cli DEL poly_paper:state
 | `b3e0907` | Monitor tooling: daily monitoring script |
 | `fcd4cf5` | Safety filter tests: 20 tests + dry-run AlphaSignal bug fix |
 
-Full test suite: **80/80 passing** (33 kill-switch + 20 safety filters + 27 monitor decision)
+Full test suite covers kill-switch, safety filters, monitor decision logic, grid safety, and `/api/command-center` contract checks.
 
 ---
 
@@ -189,8 +219,10 @@ Full test suite: **80/80 passing** (33 kill-switch + 20 safety filters + 27 moni
 | `strategy/tests/test_kill_switch.py` | 13 kill switch tests |
 | `strategy/tests/test_monitor_decision.py` | 27 monitor decision tree tests |
 | `strategy/tests/test_safety_filters.py` | 20 safety filter tests |
+| `strategy/tests/test_command_center_contract.py` | Command Center API safety contract tests |
 | `strategy/RUNBOOK.md` | This file |
 | `docs/READINESS_CHECKLIST.md` | Versioned gate criteria for each stage |
+| `docs/EVIDENCE_LOG.md` | State-change evidence log |
 
 ---
 

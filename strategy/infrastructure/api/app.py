@@ -1662,6 +1662,12 @@ def register_routes(app: FastAPI):
                         entry_type = 'trial'
                     elif 'kill switch' in section_text and 'active' in section_text:
                         entry_type = 'kill_switch'
+                    elif 'research' in section_text or 'watchlist' in section_text or 'scanner' in section_text:
+                        entry_type = 'research'
+                    elif 'monitor' in section_text or 'daily' in section_text or 'check' in section_text:
+                        entry_type = 'monitor'
+                    elif 'gate' in section_text or 'readiness' in section_text:
+                        entry_type = 'gate'
                     evidence_entries.append({
                         'date': date_str,
                         'title': title,
@@ -1669,6 +1675,8 @@ def register_routes(app: FastAPI):
                         'type': entry_type,
                         'details': ' | '.join(details_lines[:5]),  # cap at 5 lines
                     })
+                # Reverse to newest-first
+                evidence_entries.reverse()
             except Exception as e:
                 logger.warning(f"Failed to parse EVIDENCE_LOG.md: {e}")
 
@@ -1710,10 +1718,22 @@ def register_routes(app: FastAPI):
             except Exception as e:
                 logger.warning(f"Failed to read paper_grid_1day.json: {e}")
 
+        # ── 4. Build latest_change summary ──
+        latest_change = None
+        if evidence_entries:
+            first = evidence_entries[0]  # already newest-first
+            latest_change = {
+                'date': first['date'],
+                'title': first['title'],
+                'type': first['type'],
+                'status': first['status'],
+            }
+
         return {
             'evidence_entries': evidence_entries,
             'gates': gates,
             'paper_trial': paper_trial,
+            'latest_change': latest_change,
             'files_found': {
                 'evidence_log': evidence_file.exists(),
                 'readiness_checklist': checklist_file.exists(),
@@ -1815,9 +1835,28 @@ def register_routes(app: FastAPI):
             except Exception as e:
                 logger.warning(f"Failed to parse MARKET_WATCHLIST.md: {e}")
 
+        # ── 3. Build summary object ──
+        # Count trade candidates (non-REJECT items from Polymarket)
+        trade_candidates = sum(1 for r in poly.get('reviewed', []) if r.get('decision', '').upper() != 'REJECT')
+        crypto_count = len(crypto.get('pairs', []))
+        poly_blocked = all(r.get('decision', '').upper() == 'REJECT' for r in poly.get('reviewed', []))
+        
+        # Extract filter values
+        filter_map = {f['key']: f['value'] for f in poly.get('meta', {}).get('filters', [])}
+        
+        summary = {
+            'trade_candidates': trade_candidates,
+            'crypto_watch_count': crypto_count,
+            'polymarket_status': 'blocked' if poly_blocked else 'active',
+            'blocklist_active': len(filter_map.get('Blocked categories', '')) > 0,
+            'min_volume': filter_map.get('Min volume', crypto.get('meta', {}).get('min_volume', 'N/A')),
+            'min_liquidity': filter_map.get('Min liquidity', 'N/A'),
+        }
+
         return {
             'crypto': crypto,
             'polymarket': poly,
+            'summary': summary,
         }
 
     # ── /api/command-center — single source of truth for dashboard ─────────────
@@ -1855,12 +1894,17 @@ def register_routes(app: FastAPI):
             risk = {}
 
         # ── 3. Polymarket paper positions ──
+        poly_kill_switch = False
+        poly_kill_reason = ''
         try:
             from app.polymarket.paper_bot import get_poly_paper_bot
             bot = get_poly_paper_bot()
             poly_status = bot.get_status()
             active_positions = poly_status.get('positions', {}).get('active', 0)
             resolved_positions = poly_status.get('positions', {}).get('resolved', 0)
+            # Paper bot's own kill switch (separate from grid risk_manager)
+            poly_kill_switch = getattr(bot, '_kill_switch_active', False)
+            poly_kill_reason = getattr(bot, '_kill_reason', '')
         except Exception:
             active_positions = 0
             resolved_positions = 0
@@ -1946,10 +1990,104 @@ def register_routes(app: FastAPI):
             except Exception:
                 pass
 
-        # ── 8. Compute decision + next trigger ──
-        if kill_switch_active:
+        # ── 8+9 moved after dynamic gates (section 12) for correct flow ──
+
+        # ── 10. Capital snapshot ──
+        paper_bankroll = 0.0
+        peak_bankroll = 0.0
+        poly_max_positions = 0
+        poly_position_size = 0.0
+        try:
+            paper_bankroll = poly_status.get('alpha', {}).get('bankroll', {}).get('current', 0.0)
+            peak_bankroll = poly_status.get('alpha', {}).get('bankroll', {}).get('peak', 0.0)
+            poly_max_positions = poly_status.get('config', {}).get('max_positions', 0)
+            poly_position_size = poly_status.get('config', {}).get('position_size_usdc', 0.0)
+        except Exception:
+            pass
+
+        max_allowed_exposure = poly_max_positions * poly_position_size if poly_max_positions else 0.0
+        estimated_exposure = active_positions * poly_position_size if active_positions else 0.0
+        bankroll_pnl = paper_bankroll - 100.0  # initial bankroll is $100
+
+        # Paper bot drawdown (the meaningful one for capital display)
+        paper_drawdown_pct = 0.0
+        if peak_bankroll > 0:
+            paper_drawdown_pct = ((peak_bankroll - paper_bankroll) / peak_bankroll) * 100
+            paper_drawdown_pct = round(max(0, paper_drawdown_pct), 2)
+
+        capital = {
+            'paper_bankroll': round(paper_bankroll, 2),
+            'peak_bankroll': round(peak_bankroll, 2),
+            'bankroll_pnl': round(bankroll_pnl, 2),
+            'active_positions': active_positions,
+            'max_positions': poly_max_positions,
+            'estimated_exposure': round(estimated_exposure, 2),
+            'max_allowed_exposure': round(max_allowed_exposure, 2),
+            'drawdown_pct': paper_drawdown_pct,
+            'max_drawdown_pct': round(max_drawdown, 2),
+            'kill_switch_active': poly_kill_switch,
+            'risk_source': 'paper_bot',
+            'grid_running': grid_running,
+            'grid_daily_pnl': round(total_pnl, 2),
+        }
+
+        # ── 11. Risk sources — explicit about which bot reports what ──
+        risk_sources = {
+            'paper_bot': {
+                'drawdown_pct': paper_drawdown_pct,
+                'bankroll': round(paper_bankroll, 2),
+                'peak_bankroll': round(peak_bankroll, 2),
+                'kill_switch_active': poly_kill_switch,
+                'kill_reason': poly_kill_reason,
+                'active_positions': active_positions,
+            },
+            'grid_bot': {
+                'drawdown_pct': round(drawdown_pct, 2),
+                'halted': kill_switch_active,
+                'running': grid_running,
+                'daily_pnl': round(total_pnl, 2),
+            },
+        }
+
+        # ── 12. Dynamic gates — compute blocked_by from live state ──
+        dynamic_gates = []
+        _gate_defs = [
+            ('Enable Dry-Run', []),
+            ('Reset Kill Switch', ['Need dry-run evidence first']),
+            ('Micro-Live', ['Need kill switch reset first']),
+            ('Production Deploy', ['Need domain/secrets/prod env']),
+        ]
+        for _gi, (_gname, _gdefault_block) in enumerate(_gate_defs):
+            _blockers = []
+            if _gi == 0:
+                # Gate 1: check live conditions
+                if poly_kill_switch:
+                    _blockers.append(f'Kill switch active ({poly_kill_reason})' if poly_kill_reason else 'Kill switch active')
+                if active_positions > poly_max_positions:
+                    _blockers.append(f'{active_positions} active positions (target \u2264 {poly_max_positions})')
+                if paper_drawdown_pct > max_drawdown:
+                    _blockers.append(f'Drawdown {paper_drawdown_pct:.1f}% exceeds limit {max_drawdown:.1f}%')
+            else:
+                # Subsequent gates: blocked if previous gate not satisfied
+                _prev_blockers = dynamic_gates[_gi - 1]['blocked_by'] if dynamic_gates else ['Previous gate not ready']
+                if _prev_blockers:
+                    _blockers = _gdefault_block
+            _is_ready = len(_blockers) == 0
+            dynamic_gates.append({
+                'name': _gname,
+                'status': 'ready' if _is_ready else 'not_ready',
+                'status_text': 'Ready' if _is_ready else 'Not ready',
+                'blocked_by': '; '.join(_blockers) if _blockers else '',
+            })
+        # Recompute gates_ready from dynamic gates
+        gates_ready = sum(1 for g in dynamic_gates if g['status'] == 'ready')
+
+        # ── 8. Compute decision + next trigger (uses live dynamic state) ──
+        # Use paper bot kill switch — the dominant risk source for BookFinance
+        effective_kill = poly_kill_switch
+        if effective_kill:
             current_decision = 'WAIT'
-            next_trigger = 'Reset kill switch after evidence collection'
+            next_trigger = poly_kill_reason or 'Reset kill switch after evidence collection'
         elif gates_ready < gates_total:
             current_decision = 'REVIEW_SIGNALS'
             next_trigger = f'Complete {gates_total - gates_ready} remaining gate(s)'
@@ -1960,14 +2098,88 @@ def register_routes(app: FastAPI):
             current_decision = 'MONITOR'
             next_trigger = 'Continue monitoring live operations'
 
+        # ── 9. Build structured Today brief (uses live dynamic state) ──
+        _headline_map = {
+            'WAIT': 'Capital protection active — all trading paused',
+            'REVIEW_SIGNALS': f'Reviewing signals — {gates_ready}/{gates_total} gates ready',
+            'ENABLE_DRY_RUN': 'Evidence gates satisfied — ready to enable dry-run',
+            'MONITOR': 'Grid live — monitoring operations',
+        }
+        headline = _headline_map.get(current_decision, 'Unknown state')
+
+        _parts = []
+        if current_decision == 'WAIT':
+            _parts.append('Capital protection is active — all trading is paused.')
+        elif current_decision == 'REVIEW_SIGNALS':
+            _parts.append(f'Reviewing signals: {gates_ready}/{gates_total} evidence gates ready.')
+        elif current_decision == 'ENABLE_DRY_RUN':
+            _parts.append('Evidence gates are satisfied. Grid is idle — ready to enable dry-run.')
+        else:
+            _parts.append('Grid is live and monitoring.')
+
+        if active_positions or resolved_positions:
+            _parts.append(f'{active_positions} active position(s), {resolved_positions} resolved.')
+        else:
+            _parts.append('No open exposure.')
+
+        if grid_running:
+            _pnl_str = f'{total_pnl:+,.2f}' if total_pnl else '0.00'
+            _parts.append(f'Today: {total_fills} fill(s), PnL {_pnl_str} THB.')
+        elif paper_trial:
+            _parts.append('Paper grid observation is running.')
+        else:
+            _parts.append('No grid activity.')
+
+        _sh = system_health if isinstance(system_health, dict) else {}
+        _sh_api = _sh.get('strategy_api', 'unknown')
+        _sh_redis = _sh.get('redis_connected', False)
+        if _sh_api == 'healthy' and _sh_redis:
+            _parts.append('All systems healthy.')
+        elif _sh_api == 'healthy':
+            _parts.append('Strategy API is healthy. Redis connection issue.')
+        else:
+            _parts.append(f'System health: {_sh_api}.')
+
+        _parts.append(f'Next: {next_trigger}.')
+        ai_summary = ' '.join(_parts)
+
+        _action_map = {
+            'WAIT': 'Wait for kill switch reset after evidence review.',
+            'REVIEW_SIGNALS': 'Review per-signal PnL as more positions resolve.',
+            'ENABLE_DRY_RUN': 'Enable dry-run mode with validated parameters.',
+            'MONITOR': 'No action needed — continue monitoring.',
+        }
+        human_action = _action_map.get(current_decision, 'Review system state.')
+
+        blocked_by = []
+        if effective_kill:
+            blocked_by.append('Kill switch is active')
+        if gates_ready < gates_total:
+            blocked_by.append(f'{gates_total - gates_ready} readiness gate(s) incomplete')
+        if active_positions > poly_max_positions:
+            blocked_by.append(f'{active_positions} active positions (target \u2264 {poly_max_positions})')
+        if gates_ready >= gates_total and not grid_running and not effective_kill:
+            blocked_by.append('Grid not yet running')
+
+        today_brief = {
+            'headline': headline,
+            'summary': ai_summary,
+            'human_action': human_action,
+            'blocked_by': blocked_by,
+        }
+
         return {
+            'ai_summary': ai_summary,
+            'today': today_brief,
             'timestamp': _dt.utcnow().isoformat() + 'Z',
             'current_decision': current_decision,
             'next_trigger': next_trigger,
             'kill_switch': {
-                'active': kill_switch_active,
-                'drawdown_pct': drawdown_pct,
+                'active': poly_kill_switch,
+                'reason': poly_kill_reason,
+                'drawdown_pct': paper_drawdown_pct,
                 'max_drawdown_pct': max_drawdown,
+                'source': 'paper_bot',
             },
             'positions': {
                 'active': active_positions,
@@ -1982,12 +2194,15 @@ def register_routes(app: FastAPI):
                 'latest': latest_evidence,
                 'gates_ready': gates_ready,
                 'gates_total': gates_total,
+                'gates': dynamic_gates,
             },
             'research': {
                 'crypto_pairs': crypto_pairs,
             },
             'paper_trial': paper_trial,
             'system_health': system_health,
+            'capital': capital,
+            'risk_sources': risk_sources,
         }
 
 

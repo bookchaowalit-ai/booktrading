@@ -1,24 +1,47 @@
 /**
- * Command Center - AI Trading Dashboard
- * Single source of truth from /api/command-center
- * Observe-only: AI operates, user monitors
+ * AI Command Center
+ * Read-only operational dashboard backed by /api/command-center.
  */
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import type { ComponentType } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { useAppStore } from '@/store/store';
-import { useWebSocket, useAutoRefresh } from '@/hooks';
-import { useTranslation } from '@/i18n/translations';
+import {
+  Activity,
+  AlertTriangle,
+  ArrowRight,
+  Bitcoin,
+  CheckCircle2,
+  Clock,
+  Cpu,
+  DollarSign,
+  Eye,
+  FileText,
+  FlaskConical,
+  Loader2,
+  Lock,
+  RefreshCw,
+  Shield,
+  ShieldAlert,
+  ShieldCheck,
+  Sparkles,
+  TrendingDown,
+  Wallet,
+  Zap,
+} from 'lucide-react';
 import { api } from '@/services/api';
 import Card from '@/components/ui/Card';
-import {
-  Shield, ShieldAlert, ShieldCheck, Activity, Zap, Eye,
-  FileText, FlaskConical, Cpu, ArrowRight, Clock,
-  CheckCircle2, XCircle, Loader2, Bitcoin, RefreshCw
-} from 'lucide-react';
+import { useTranslation } from '@/i18n/translations';
 
 interface CommandCenterData {
+  ai_summary: string;
+  today: {
+    headline: string;
+    summary: string;
+    human_action: string;
+    blocked_by: string[];
+  };
   timestamp: string;
   current_decision: 'WAIT' | 'REVIEW_SIGNALS' | 'ENABLE_DRY_RUN' | 'MONITOR';
   next_trigger: string;
@@ -49,345 +72,597 @@ interface CommandCenterData {
     strategy_api: string;
     redis_connected: boolean;
   };
+  capital: {
+    paper_bankroll: number;
+    peak_bankroll: number;
+    bankroll_pnl: number;
+    active_positions: number;
+    max_positions: number;
+    estimated_exposure: number;
+    max_allowed_exposure: number;
+    drawdown_pct: number;
+    max_drawdown_pct: number;
+    kill_switch_active: boolean;
+    grid_running: boolean;
+    grid_daily_pnl: number;
+  };
 }
 
-const decisionConfig = {
-  WAIT: { color: 'red', icon: ShieldAlert, label: 'WAIT' },
-  REVIEW_SIGNALS: { color: 'yellow', icon: Activity, label: 'REVIEW SIGNALS' },
-  ENABLE_DRY_RUN: { color: 'blue', icon: Zap, label: 'ENABLE DRY-RUN' },
-  MONITOR: { color: 'green', icon: ShieldCheck, label: 'MONITOR' },
+const decisionMeta = {
+  WAIT: {
+    label: 'Wait',
+    title: 'Capital protection is active',
+    tone: 'red',
+    icon: ShieldAlert,
+    description: 'The system is intentionally halted until exposure and evidence gates improve.',
+  },
+  REVIEW_SIGNALS: {
+    label: 'Review signals',
+    title: 'Evidence review is the next action',
+    tone: 'amber',
+    icon: Activity,
+    description: 'Resolved positions are producing signal evidence. Review losers before any reset.',
+  },
+  ENABLE_DRY_RUN: {
+    label: 'Enable dry-run',
+    title: 'Dry-run gate is approaching',
+    tone: 'blue',
+    icon: Zap,
+    description: 'Order flow can be validated without placing real trades.',
+  },
+  MONITOR: {
+    label: 'Monitor',
+    title: 'System is in monitoring mode',
+    tone: 'green',
+    icon: ShieldCheck,
+    description: 'Continue observation and evidence logging.',
+  },
 };
+
+const toneClasses = {
+  red: {
+    panel: 'border-red-200 bg-red-50/80 text-red-950 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-100',
+    icon: 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300',
+    badge: 'bg-red-100 text-red-700 dark:bg-red-900/60 dark:text-red-200',
+    bar: 'bg-red-500',
+  },
+  amber: {
+    panel: 'border-amber-200 bg-amber-50/80 text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100',
+    icon: 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300',
+    badge: 'bg-amber-100 text-amber-700 dark:bg-amber-900/60 dark:text-amber-200',
+    bar: 'bg-amber-500',
+  },
+  blue: {
+    panel: 'border-blue-200 bg-blue-50/80 text-blue-950 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-100',
+    icon: 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300',
+    badge: 'bg-blue-100 text-blue-700 dark:bg-blue-900/60 dark:text-blue-200',
+    bar: 'bg-blue-500',
+  },
+  green: {
+    panel: 'border-emerald-200 bg-emerald-50/80 text-emerald-950 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100',
+    icon: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300',
+    badge: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-200',
+    bar: 'bg-emerald-500',
+  },
+};
+
+function formatTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Unknown';
+  return date.toLocaleString();
+}
+
+function formatTHB(value: number) {
+  return `฿${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+}
+
+function progressValue(ready: number, total: number) {
+  if (!total) return 0;
+  return Math.max(0, Math.min(100, (ready / total) * 100));
+}
 
 export default function CommandCenter() {
   const { t } = useTranslation();
   const router = useRouter();
   const pathname = usePathname();
   const locale = pathname.split('/')[1] || 'th';
-  const portfolio = useAppStore((state) => state.portfolio);
-  const botStatus = useAppStore((state) => state.botStatus);
-
-  useWebSocket();
-  useAutoRefresh(5000);
-
-  const refreshBotStatus = useAppStore((state) => state.refreshBotStatus);
   const [data, setData] = useState<CommandCenterData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [walletBalances, setWalletBalances] = useState<{ totalTHB: number; totalUSDT: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const fetchData = useCallback(async (isRefresh = false) => {
-    if (isRefresh) setIsRefreshing(true);
+  const fetchData = useCallback(async (refresh = false) => {
+    if (refresh) setIsRefreshing(true);
     const result = await api.getCommandCenter();
-    if (result) setData(result);
+    if (result) {
+      setData(result);
+      setError(null);
+    } else if (!refresh) {
+      setError('Unable to load command center data. Retrying…');
+    }
     setIsLoading(false);
     setIsRefreshing(false);
   }, []);
 
   useEffect(() => {
     fetchData();
-    refreshBotStatus();
     const interval = setInterval(() => fetchData(true), 30000);
     return () => clearInterval(interval);
-  }, [fetchData, refreshBotStatus]);
+  }, [fetchData]);
 
-  useEffect(() => {
-    api.getAllBalances()
-      .then((data) => setWalletBalances({ totalTHB: data.totalTHB, totalUSDT: data.totalUSDT }))
-      .catch(() => {});
-  }, []);
-
-  const totalValue = portfolio?.reduce((sum, item) => sum + (item.balance * item.avgBuyPrice), 0) || 0;
-  const totalProfit = botStatus?.totalProfit || 0;
-
-  if (isLoading || !data) {
+  if (isLoading) {
     return (
-      <div className="space-y-4">
-        <div className="p-6 bg-gray-100 dark:bg-gray-800 rounded-xl animate-pulse">
-          <div className="h-6 w-48 bg-gray-200 dark:bg-gray-700 rounded mb-2" />
-          <div className="h-4 w-72 bg-gray-200 dark:bg-gray-700 rounded" />
-        </div>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {[1,2,3,4].map(i => <div key={i} className="h-20 bg-gray-200 dark:bg-gray-700 rounded-xl animate-pulse" />)}
+      <div className="mx-auto max-w-7xl space-y-5">
+        <div className="h-44 rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900 animate-pulse" />
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+          {[1, 2, 3, 4].map((item) => (
+            <div key={item} className="h-28 rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900 animate-pulse" />
+          ))}
         </div>
       </div>
     );
   }
 
-  const decision = decisionConfig[data.current_decision] || decisionConfig.WAIT;
-  const DecisionIcon = decision.icon;
+  if (!data) {
+    return (
+      <div className="mx-auto max-w-7xl space-y-5 p-6">
+        <div className="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 p-5 dark:border-amber-800 dark:bg-amber-900/20">
+          <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+          <div>
+            <p className="text-sm font-medium text-amber-800 dark:text-amber-300">{error || 'Unable to load dashboard data.'}</p>
+            <button onClick={() => fetchData(true)} className="mt-1 text-xs text-amber-700 underline hover:no-underline dark:text-amber-400">Retry</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const meta = decisionMeta[data.current_decision] || decisionMeta.WAIT;
+  const tone = toneClasses[meta.tone as keyof typeof toneClasses];
+  const DecisionIcon = meta.icon;
+  const gateProgress = progressValue(data.evidence.gates_ready, data.evidence.gates_total);
+  const positionTargetMet = data.positions.active <= 8;
+  const systemHealthy = data.system_health.strategy_api === 'healthy' && data.system_health.redis_connected;
+
+  const nextCards = [
+    {
+      title: t('nav.evidence'),
+      detail: data.evidence.latest?.title || 'No evidence entry yet',
+      href: '/dashboard/evidence',
+      icon: FileText,
+      tone: 'text-indigo-600 bg-indigo-50 dark:bg-indigo-950/40 dark:text-indigo-300',
+    },
+    {
+      title: t('nav.research'),
+      detail: `${data.research.crypto_pairs} crypto pairs under watch`,
+      href: '/dashboard/research',
+      icon: FlaskConical,
+      tone: 'text-cyan-700 bg-cyan-50 dark:bg-cyan-950/40 dark:text-cyan-300',
+    },
+    {
+      title: t('nav.system'),
+      detail: systemHealthy ? 'Core services healthy' : 'Service attention needed',
+      href: '/dashboard/system',
+      icon: Cpu,
+      tone: 'text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 dark:text-emerald-300',
+    },
+  ];
 
   return (
-    <div className="space-y-6">
-      {/* === CURRENT DECISION BANNER === */}
-      <Card variant="elevated" className={`p-5 border-l-4 ${
-        data.current_decision === 'WAIT' ? 'bg-gradient-to-r from-red-50 to-orange-50 dark:from-red-900/20 dark:to-orange-900/20 border-l-red-500' :
-        data.current_decision === 'REVIEW_SIGNALS' ? 'bg-gradient-to-r from-yellow-50 to-amber-50 dark:from-yellow-900/20 dark:to-amber-900/20 border-l-yellow-500' :
-        data.current_decision === 'ENABLE_DRY_RUN' ? 'bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-900/20 dark:to-cyan-900/20 border-l-blue-500' :
-        'bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 border-l-green-500'
-      }`}>
-        <div className="flex items-start justify-between">
-          <div className="flex items-start gap-4">
-            <div className={`p-3 rounded-xl ${
-              data.current_decision === 'WAIT' ? 'bg-red-100 dark:bg-red-900/40' :
-              data.current_decision === 'REVIEW_SIGNALS' ? 'bg-yellow-100 dark:bg-yellow-900/40' :
-              data.current_decision === 'ENABLE_DRY_RUN' ? 'bg-blue-100 dark:bg-blue-900/40' :
-              'bg-green-100 dark:bg-green-900/40'
-            }`}>
-              <DecisionIcon className={`w-7 h-7 ${
-                data.current_decision === 'WAIT' ? 'text-red-600 dark:text-red-400' :
-                data.current_decision === 'REVIEW_SIGNALS' ? 'text-yellow-600 dark:text-yellow-400' :
-                data.current_decision === 'ENABLE_DRY_RUN' ? 'text-blue-600 dark:text-blue-400' :
-                'text-green-600 dark:text-green-400'
-              }`} />
+    <div className="mx-auto max-w-7xl space-y-6">
+      {/* Today Brief */}
+      <section className="relative overflow-hidden rounded-xl border border-indigo-200/60 bg-gradient-to-br from-indigo-50 via-white to-violet-50 dark:border-indigo-800/40 dark:from-indigo-950/30 dark:via-gray-900 dark:to-violet-950/20">
+        {/* Header */}
+        <div className="flex flex-wrap items-center gap-3 border-b border-indigo-100 px-5 py-3 dark:border-indigo-900/50">
+          <Sparkles className="h-4 w-4 text-indigo-500 dark:text-indigo-400" />
+          <span className="text-sm font-semibold text-indigo-700 dark:text-indigo-300">
+            {t('today.brief')}
+          </span>
+          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${tone.badge}`}>
+            {meta.label}
+          </span>
+          <span className="ml-auto text-xs text-gray-400 dark:text-gray-500">
+            {formatTime(data.timestamp)}
+          </span>
+        </div>
+
+        {/* 3-column body */}
+        <div className="grid gap-0 divide-y md:grid-cols-3 md:divide-x md:divide-y-0 md:divide-indigo-100 dark:md:divide-indigo-900/50">
+          {/* What is happening */}
+          <div className="p-5">
+            <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              <Eye className="h-3.5 w-3.5" />
+              {t('today.happening')}
             </div>
-            <div>
-              <h1 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                Current Decision
-                <span className={`px-2 py-0.5 text-xs font-bold rounded-full ${
-                  data.current_decision === 'WAIT' ? 'bg-red-100 dark:bg-red-900/50 text-red-700 dark:text-red-300' :
-                  data.current_decision === 'REVIEW_SIGNALS' ? 'bg-yellow-100 dark:bg-yellow-900/50 text-yellow-700 dark:text-yellow-300' :
-                  data.current_decision === 'ENABLE_DRY_RUN' ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300' :
-                  'bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-300'
-                }`}>
-                  {decision.label}
-                </span>
-              </h1>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                {data.current_decision === 'WAIT' && `Kill switch ${data.kill_switch.active ? 'engaged' : 'disengaged'} — Bot halted at ${data.kill_switch.drawdown_pct.toFixed(1)}% drawdown.`}
-                {data.current_decision === 'REVIEW_SIGNALS' && `Reviewing signals — ${data.evidence.gates_total - data.evidence.gates_ready} gate(s) remaining.`}
-                {data.current_decision === 'ENABLE_DRY_RUN' && 'Ready to enable dry-run mode.'}
-                {data.current_decision === 'MONITOR' && 'Monitoring live operations.'}
-              </p>
-              <div className="flex items-center gap-4 mt-3 text-xs text-gray-500 dark:text-gray-500">
-                <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {new Date(data.timestamp).toLocaleString()}</span>
-                <span className="flex items-center gap-1"><Eye className="w-3 h-3" /> Observe-only mode</span>
-                <button
-                  onClick={() => fetchData(true)}
-                  disabled={isRefreshing}
-                  className="flex items-center gap-1 px-2 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50"
-                >
-                  <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} />
-                  {isRefreshing ? 'Refreshing...' : 'Refresh'}
-                </button>
+            <p className="text-sm font-medium leading-snug text-gray-900 dark:text-white">
+              {data.today.headline}
+            </p>
+            <p className="mt-2 text-xs leading-relaxed text-gray-600 dark:text-gray-400">
+              {data.today.summary}
+            </p>
+          </div>
+
+          {/* What should I do */}
+          <div className="p-5">
+            <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              <Zap className="h-3.5 w-3.5" />
+              {t('today.humanAction')}
+            </div>
+            <p className="text-sm font-medium leading-snug text-gray-900 dark:text-white">
+              {data.today.human_action}
+            </p>
+          </div>
+
+          {/* What is blocked */}
+          <div className="p-5">
+            <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              <Lock className="h-3.5 w-3.5" />
+              {t('today.blockedBy')}
+            </div>
+            {data.today.blocked_by.length === 0 ? (
+              <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
+                <CheckCircle2 className="h-4 w-4" />
+                {t('today.noBlockers')}
               </div>
-            </div>
-          </div>
-        </div>
-      </Card>
-
-      {/* === NEXT TRIGGER === */}
-      <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-purple-100 dark:bg-purple-900/30 rounded-lg">
-            <Zap className="w-5 h-5 text-purple-600 dark:text-purple-400" />
-          </div>
-          <div>
-            <div className="text-xs text-gray-500 dark:text-gray-400">Next Trigger</div>
-            <div className="text-sm font-semibold text-gray-900 dark:text-white">{data.next_trigger}</div>
-          </div>
-        </div>
-      </div>
-
-      {/* === KEY METRICS === */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
-          <div className="flex items-center gap-2 mb-2">
-            <Bitcoin className="w-4 h-4 text-gray-500" />
-            <span className="text-xs text-gray-500 dark:text-gray-400">Portfolio Value</span>
-          </div>
-          <div className="text-xl font-bold text-gray-900 dark:text-white">
-            ฿{totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-          </div>
-          {walletBalances?.totalTHB ? (
-            <div className="text-xs text-gray-500 mt-1">
-              Cash: ฿{walletBalances.totalTHB.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-            </div>
-          ) : null}
-        </div>
-
-        <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
-          <div className="flex items-center gap-2 mb-2">
-            <Activity className="w-4 h-4 text-gray-500" />
-            <span className="text-xs text-gray-500 dark:text-gray-400">Total P&L</span>
-          </div>
-          <div className={`text-xl font-bold ${totalProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-            ${totalProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-          </div>
-          <div className="text-xs text-gray-500 mt-1">all time</div>
-        </div>
-
-        <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
-          <div className="flex items-center gap-2 mb-2">
-            <Zap className="w-4 h-4 text-yellow-500" />
-            <span className="text-xs text-gray-500 dark:text-gray-400">Grid Fills / P&L</span>
-          </div>
-          <div className={`text-xl font-bold ${data.grid.daily_pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-            {data.grid.daily_fills} fills
-          </div>
-          <div className="text-xs text-gray-500 mt-1">
-            ฿{data.grid.daily_pnl.toLocaleString()} today
-          </div>
-        </div>
-
-        <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
-          <div className="flex items-center gap-2 mb-2">
-            <Shield className="w-4 h-4 text-gray-500" />
-            <span className="text-xs text-gray-500 dark:text-gray-400">Kill Switch</span>
-          </div>
-          <div className={`text-xl font-bold ${data.kill_switch.active ? 'text-red-600' : 'text-green-600'}`}>
-            {data.kill_switch.active ? 'ACTIVE' : 'OFF'}
-          </div>
-          <div className="text-xs text-gray-500 mt-1">
-            {data.kill_switch.drawdown_pct.toFixed(1)}% drawdown
-          </div>
-        </div>
-      </div>
-
-      {/* === READINESS GATES === */}
-      <div>
-        <h2 className="text-sm font-bold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
-          <ShieldCheck className="w-4 h-4" /> Recovery Gates ({data.evidence.gates_ready}/{data.evidence.gates_total} ready)
-        </h2>
-        <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              {data.evidence.gates_ready === data.evidence.gates_total ? (
-                <CheckCircle2 className="w-6 h-6 text-green-500" />
-              ) : (
-                <Loader2 className="w-6 h-6 text-yellow-500" />
-              )}
-              <div>
-                <div className="text-sm font-semibold text-gray-900 dark:text-white">
-                  {data.evidence.gates_ready === data.evidence.gates_total ? 'All gates ready' : 'Gates pending'}
-                </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">
-                  {data.evidence.gates_total - data.evidence.gates_ready} gate(s) remaining before dry-run
-                </div>
-              </div>
-            </div>
-            <div className="text-2xl font-bold text-gray-900 dark:text-white">
-              {data.evidence.gates_ready}/{data.evidence.gates_total}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* === POSITIONS + RESEARCH === */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
-          <div className="flex items-center gap-2 mb-3">
-            <Eye className="w-5 h-5 text-blue-500" />
-            <span className="text-sm font-bold text-gray-700 dark:text-gray-300">Active Positions</span>
-          </div>
-          <div className="flex items-center gap-6">
-            <div>
-              <div className="text-2xl font-bold text-gray-900 dark:text-white">{data.positions.active}</div>
-              <div className="text-xs text-gray-500">active</div>
-            </div>
-            <div>
-              <div className="text-2xl font-bold text-gray-900 dark:text-white">{data.positions.resolved}</div>
-              <div className="text-xs text-gray-500">resolved</div>
-            </div>
-          </div>
-        </div>
-
-        <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
-          <div className="flex items-center gap-2 mb-3">
-            <FlaskConical className="w-5 h-5 text-purple-500" />
-            <span className="text-sm font-bold text-gray-700 dark:text-gray-300">Research</span>
-          </div>
-          <div className="flex items-center gap-6">
-            <div>
-              <div className="text-2xl font-bold text-gray-900 dark:text-white">{data.research.crypto_pairs}</div>
-              <div className="text-xs text-gray-500">crypto pairs</div>
-            </div>
-            {data.evidence.latest && (
-              <div className="flex-1 min-w-0">
-                <div className="text-xs text-gray-500">Latest evidence</div>
-                <div className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                  {data.evidence.latest.title}
-                </div>
-              </div>
+            ) : (
+              <ul className="space-y-1.5">
+                {data.today.blocked_by.map((block, i) => (
+                  <li key={i} className="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-amber-500 dark:text-amber-400" />
+                    {block}
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* === SYSTEM HEALTH === */}
-      <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
-        <div className="flex items-center gap-2 mb-3">
-          <Cpu className="w-5 h-5 text-green-500" />
-          <span className="text-sm font-bold text-gray-700 dark:text-gray-300">System Health</span>
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${data.system_health.strategy_api === 'healthy' ? 'bg-green-500' : 'bg-red-500'}`} />
-            <span className="text-xs text-gray-600 dark:text-gray-400">Strategy API</span>
+      {/* Capital Snapshot + Risk Exposure */}
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {/* Capital Snapshot */}
+        <div className="relative overflow-hidden rounded-xl border border-emerald-200/60 bg-gradient-to-br from-emerald-50 via-white to-teal-50 dark:border-emerald-800/40 dark:from-emerald-950/30 dark:via-gray-900 dark:to-teal-950/20">
+          <div className="flex items-center gap-2 border-b border-emerald-100 px-5 py-3 dark:border-emerald-900/50">
+            <Wallet className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+            <span className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">
+              {t('today.capitalSnapshot')}
+            </span>
           </div>
-          <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${data.system_health.redis_connected ? 'bg-green-500' : 'bg-red-500'}`} />
-            <span className="text-xs text-gray-600 dark:text-gray-400">Redis</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${data.grid.running ? 'bg-green-500' : 'bg-yellow-500'}`} />
-            <span className="text-xs text-gray-600 dark:text-gray-400">Grid Bot {data.grid.running ? 'Running' : 'Stopped'}</span>
+          <div className="p-5">
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <div className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  {t('today.paperBankroll')}
+                </div>
+                <div className="mt-1 text-xl font-semibold text-gray-950 dark:text-white">
+                  ${data.capital.paper_bankroll.toFixed(2)}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  {t('today.peakBankroll')}
+                </div>
+                <div className="mt-1 text-xl font-semibold text-gray-950 dark:text-white">
+                  ${data.capital.peak_bankroll.toFixed(2)}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  {t('today.bankrollPnl')}
+                </div>
+                <div className={`mt-1 text-xl font-semibold ${
+                  data.capital.bankroll_pnl >= 0
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-red-600 dark:text-red-400'
+                }`}>
+                  {data.capital.bankroll_pnl >= 0 ? '+' : ''}${data.capital.bankroll_pnl.toFixed(2)}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* === QUICK NAVIGATION === */}
-      <div>
-        <h2 className="text-sm font-bold text-gray-700 dark:text-gray-300 mb-3">Quick Navigation</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <button
-            onClick={() => router.push(`/${locale}/dashboard/evidence`)}
-            className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-purple-300 dark:hover:border-purple-700 transition-colors text-left group"
-          >
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-purple-100 dark:bg-purple-900/30 rounded-lg">
-                <FileText className="w-5 h-5 text-purple-600 dark:text-purple-400" />
+        {/* Risk Exposure */}
+        <div className="relative overflow-hidden rounded-xl border border-amber-200/60 bg-gradient-to-br from-amber-50 via-white to-orange-50 dark:border-amber-800/40 dark:from-amber-950/30 dark:via-gray-900 dark:to-orange-950/20">
+          <div className="flex items-center gap-2 border-b border-amber-100 px-5 py-3 dark:border-amber-900/50">
+            <TrendingDown className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+            <span className="text-sm font-semibold text-amber-700 dark:text-amber-300">
+              {t('today.riskExposure')}
+            </span>
+          </div>
+          <div className="p-5">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <div className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  {t('today.activePositions')}
+                </div>
+                <div className="mt-1 text-xl font-semibold text-gray-950 dark:text-white">
+                  {data.capital.active_positions}
+                  <span className="ml-1 text-sm font-normal text-gray-500 dark:text-gray-400">
+                    / {data.capital.max_positions} {t('today.positionsUnit')}
+                  </span>
+                </div>
               </div>
-              <div className="flex-1">
-                <div className="text-sm font-semibold text-gray-900 dark:text-white">{t('nav.evidence')}</div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">Kill switch log, trial results, gates</div>
+              <div>
+                <div className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  {t('today.estimatedExposure')}
+                </div>
+                <div className="mt-1 text-xl font-semibold text-gray-950 dark:text-white">
+                  ${data.capital.estimated_exposure.toFixed(2)}
+                  <span className="ml-1 text-sm font-normal text-gray-500 dark:text-gray-400">
+                    / ${data.capital.max_allowed_exposure.toFixed(2)}
+                  </span>
+                </div>
               </div>
-              <ArrowRight className="w-4 h-4 text-gray-400 group-hover:text-purple-500 transition-colors" />
+              <div>
+                <div className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  {t('today.drawdown')}
+                </div>
+                <div className={`mt-1 text-xl font-semibold ${
+                  data.capital.drawdown_pct > data.capital.max_drawdown_pct
+                    ? 'text-red-600 dark:text-red-400'
+                    : 'text-gray-950 dark:text-white'
+                }`}>
+                  {data.capital.drawdown_pct.toFixed(2)}%
+                  <span className="ml-1 text-sm font-normal text-gray-500 dark:text-gray-400">
+                    {t('today.drawdownLimit')}: {data.capital.max_drawdown_pct.toFixed(1)}%
+                  </span>
+                </div>
+              </div>
+              <div>
+                <div className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  {t('today.killSwitchStatus')}
+                </div>
+                <div className="mt-1">
+                  {data.capital.kill_switch_active ? (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-red-100 px-2.5 py-0.5 text-sm font-medium text-red-700 dark:bg-red-900/60 dark:text-red-200">
+                      <ShieldAlert className="h-3.5 w-3.5" />
+                      {t('today.killSwitchActive')}
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-0.5 text-sm font-medium text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-200">
+                      <ShieldCheck className="h-3.5 w-3.5" />
+                      {t('today.killSwitchOff')}
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
-          </button>
-
-          <button
-            onClick={() => router.push(`/${locale}/dashboard/research`)}
-            className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-700 transition-colors text-left group"
-          >
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
-                <FlaskConical className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-              </div>
-              <div className="flex-1">
-                <div className="text-sm font-semibold text-gray-900 dark:text-white">{t('nav.research')}</div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">Polymarket scanner, crypto watchlist</div>
-              </div>
-              <ArrowRight className="w-4 h-4 text-gray-400 group-hover:text-blue-500 transition-colors" />
-            </div>
-          </button>
-
-          <button
-            onClick={() => router.push(`/${locale}/dashboard/system`)}
-            className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-green-300 dark:hover:border-green-700 transition-colors text-left group"
-          >
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-lg">
-                <Cpu className="w-5 h-5 text-green-600 dark:text-green-400" />
-              </div>
-              <div className="flex-1">
-                <div className="text-sm font-semibold text-gray-900 dark:text-white">{t('nav.system')}</div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">Health, deploy status, settings</div>
-              </div>
-              <ArrowRight className="w-4 h-4 text-gray-400 group-hover:text-green-500 transition-colors" />
-            </div>
-          </button>
+          </div>
         </div>
+      </section>
+
+      <section className={`relative overflow-hidden rounded-lg border p-6 ${tone.panel}`}>
+        <div className="relative z-10 grid gap-6 lg:grid-cols-[1.5fr_1fr]">
+          <div className="space-y-5">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${tone.badge}`}>
+                <DecisionIcon className="h-3.5 w-3.5" />
+                {meta.label}
+              </span>
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-white/70 px-3 py-1 text-xs text-gray-600 dark:bg-gray-950/30 dark:text-gray-300">
+                <Eye className="h-3.5 w-3.5" />
+                Observe-only
+              </span>
+            </div>
+
+            <div>
+              <h1 className="max-w-3xl text-3xl font-semibold tracking-normal text-gray-950 dark:text-white">
+                {meta.title}
+              </h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-700 dark:text-gray-300">
+                {meta.description}
+              </p>
+            </div>
+
+            <div className="rounded-lg border border-white/60 bg-white/70 p-4 dark:border-gray-800/80 dark:bg-gray-950/30">
+              <div className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                Next trigger
+              </div>
+              <div className="mt-1 text-lg font-semibold text-gray-950 dark:text-white">
+                {data.next_trigger}
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-white/70 bg-white/75 p-4 dark:border-gray-800/80 dark:bg-gray-950/35">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">Last sync</div>
+                <div className="text-sm font-medium text-gray-950 dark:text-white">{formatTime(data.timestamp)}</div>
+              </div>
+              <button
+                onClick={() => fetchData(true)}
+                disabled={isRefreshing}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
+                aria-label="Refresh command center"
+              >
+                <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              <StatusLine
+                label="Kill switch"
+                value={data.kill_switch.active ? 'Active' : 'Off'}
+                danger={data.kill_switch.active}
+              />
+              <StatusLine
+                label="Active positions"
+                value={`${data.positions.active} / target <= 8`}
+                danger={!positionTargetMet}
+              />
+              <StatusLine
+                label="Grid observer"
+                value={data.grid.running ? 'Running' : 'Stopped'}
+                danger={!data.grid.running}
+              />
+              <StatusLine
+                label="System"
+                value={systemHealthy ? 'Healthy' : 'Degraded'}
+                danger={!systemHealthy}
+              />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard
+          icon={Shield}
+          label="Drawdown"
+          value={`${data.kill_switch.drawdown_pct.toFixed(1)}%`}
+          detail={`Limit ${data.kill_switch.max_drawdown_pct.toFixed(1)}%`}
+          danger={data.kill_switch.drawdown_pct > data.kill_switch.max_drawdown_pct}
+        />
+        <MetricCard
+          icon={Activity}
+          label="Legacy exposure"
+          value={`${data.positions.active}`}
+          detail={`${data.positions.resolved} resolved positions`}
+          danger={!positionTargetMet}
+        />
+        <MetricCard
+          icon={Zap}
+          label="Grid today"
+          value={`${data.grid.daily_fills} fills`}
+          detail={formatTHB(data.grid.daily_pnl)}
+          danger={data.grid.daily_pnl < 0}
+        />
+        <MetricCard
+          icon={Bitcoin}
+          label="Research scope"
+          value={`${data.research.crypto_pairs}`}
+          detail="crypto pairs ranked"
+        />
+      </section>
+
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+        <Card className="p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-base font-semibold text-gray-950 dark:text-white">Recovery gates</h2>
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                Gates stay closed until evidence supports the next mode.
+              </p>
+            </div>
+            <div className="text-right">
+              <div className="text-2xl font-semibold text-gray-950 dark:text-white">
+                {data.evidence.gates_ready}/{data.evidence.gates_total}
+              </div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">ready</div>
+            </div>
+          </div>
+          <div className="mt-5 h-2 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
+            <div className={`h-full rounded-full ${tone.bar}`} style={{ width: `${gateProgress}%` }} />
+          </div>
+          <div className="mt-4 flex items-center gap-3 rounded-lg bg-gray-50 p-3 dark:bg-gray-900/70">
+            {data.evidence.gates_ready === data.evidence.gates_total ? (
+              <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+            ) : (
+              <Loader2 className="h-5 w-5 text-amber-500" />
+            )}
+            <div>
+              <div className="text-sm font-medium text-gray-950 dark:text-white">
+                {data.evidence.gates_total - data.evidence.gates_ready} gate(s) remaining
+              </div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">
+                Review Evidence before any mode change.
+              </div>
+            </div>
+          </div>
+        </Card>
+
+        <Card className="p-5">
+          <h2 className="text-base font-semibold text-gray-950 dark:text-white">Operating posture</h2>
+          <div className="mt-4 space-y-3">
+            <PostureRow label="Trading mode" value="Capital protection" />
+            <PostureRow label="Bot action" value={data.kill_switch.active ? 'Blocked by kill switch' : 'Readiness gated'} />
+            <PostureRow label="Paper grid" value={data.grid.running ? 'Observing BTCTHB' : 'Idle'} />
+            <PostureRow label="Human role" value="Monitor and log evidence" />
+          </div>
+        </Card>
+      </section>
+
+      <section>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Explore details</h2>
+          <span className="text-xs text-gray-400">Read-only views</span>
+        </div>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          {nextCards.map((card) => {
+            const Icon = card.icon;
+            return (
+              <button
+                key={card.href}
+                onClick={() => router.push(`/${locale}${card.href}`)}
+                className="group rounded-lg border border-gray-200 bg-white p-4 text-left transition hover:border-gray-300 dark:border-gray-800 dark:bg-gray-900 dark:hover:border-gray-700"
+              >
+                <div className="flex items-center gap-3">
+                  <span className={`inline-flex h-10 w-10 items-center justify-center rounded-md ${card.tone}`}>
+                    <Icon className="h-5 w-5" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-semibold text-gray-950 dark:text-white">{card.title}</div>
+                    <div className="truncate text-xs text-gray-500 dark:text-gray-400">{card.detail}</div>
+                  </div>
+                  <ArrowRight className="h-4 w-4 text-gray-400 transition group-hover:translate-x-0.5" />
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function StatusLine({ label, value, danger }: { label: string; value: string; danger?: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <span className="text-sm text-gray-500 dark:text-gray-400">{label}</span>
+      <span className={`text-sm font-medium ${danger ? 'text-red-600 dark:text-red-300' : 'text-gray-950 dark:text-white'}`}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function MetricCard({
+  icon: Icon,
+  label,
+  value,
+  detail,
+  danger,
+}: {
+  icon: ComponentType<{ className?: string }>;
+  label: string;
+  value: string;
+  detail: string;
+  danger?: boolean;
+}) {
+  return (
+    <Card className="p-4">
+      <div className="flex items-center justify-between">
+        <span className="inline-flex h-9 w-9 items-center justify-center rounded-md bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+          <Icon className="h-4 w-4" />
+        </span>
+        <span className={`h-2 w-2 rounded-full ${danger ? 'bg-red-500' : 'bg-emerald-500'}`} />
       </div>
+      <div className="mt-4 text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+        {label}
+      </div>
+      <div className="mt-1 text-2xl font-semibold text-gray-950 dark:text-white">{value}</div>
+      <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{detail}</div>
+    </Card>
+  );
+}
+
+function PostureRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md bg-gray-50 px-3 py-2 dark:bg-gray-900/70">
+      <span className="text-sm text-gray-500 dark:text-gray-400">{label}</span>
+      <span className="text-right text-sm font-medium text-gray-950 dark:text-white">{value}</span>
     </div>
   );
 }
