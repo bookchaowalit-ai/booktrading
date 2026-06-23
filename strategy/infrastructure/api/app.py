@@ -1599,6 +1599,128 @@ def register_routes(app: FastAPI):
             return {"status": "no_scan_yet", "message": "Background scan has not completed yet"}
         return _last_scan_result
 
+    # ── Evidence Endpoint ──
+
+    @app.get("/api/evidence")
+    async def evidence_status():
+        """
+        Read evidence files and return structured JSON.
+        - docs/EVIDENCE_LOG.md → parsed timeline entries
+        - docs/READINESS_CHECKLIST.md → gate statuses
+        - data/paper_grid_1day.json → latest trial results (if exists)
+        All reads are read-only. Missing files return safe defaults.
+        """
+        import json as _json
+        import re
+        from pathlib import Path
+
+        base_dir = Path(__file__).resolve().parent.parent.parent  # /app inside container
+        docs_dir = base_dir / "docs"
+        data_dir = base_dir / "data"
+
+        # ── 1. Parse EVIDENCE_LOG.md ──
+        evidence_entries = []
+        evidence_file = docs_dir / "EVIDENCE_LOG.md"
+        if evidence_file.exists():
+            try:
+                content = evidence_file.read_text(encoding="utf-8")
+                # Split by ### headers (each entry starts with ### YYYY-MM-DD)
+                sections = re.split(r'\n### ', content)
+                for section in sections[1:]:  # skip preamble before first ###
+                    lines = section.strip().split('\n')
+                    header = lines[0].strip()
+                    # Extract date
+                    date_match = re.match(r'(\d{4}-\d{2}-\d{2})', header)
+                    date_str = date_match.group(1) if date_match else header[:10]
+                    # Extract key fields
+                    title = header
+                    status = 'info'
+                    details_lines = []
+                    for line in lines[1:]:
+                        line = line.strip()
+                        if not line or line.startswith('---'):
+                            continue
+                        if line.startswith('**') and line.endswith('**'):
+                            continue  # skip bold section headers
+                        if line.startswith('- '):
+                            details_lines.append(line[2:])
+                        elif line.startswith('**Verdict:**'):
+                            verdict_text = line.replace('**Verdict:**', '').strip()
+                            if 'PASS' in verdict_text.upper():
+                                status = 'pass'
+                            elif 'FAIL' in verdict_text.upper():
+                                status = 'fail'
+                            else:
+                                status = 'info'
+                            details_lines.append(f"Verdict: {verdict_text}")
+                        else:
+                            details_lines.append(line)
+                    # Determine entry type from THIS section (not whole file)
+                    section_text = (header + ' ' + ' '.join(details_lines)).lower()
+                    entry_type = 'log'
+                    if 'trial' in section_text or 'paper grid' in section_text:
+                        entry_type = 'trial'
+                    elif 'kill switch' in section_text and 'active' in section_text:
+                        entry_type = 'kill_switch'
+                    evidence_entries.append({
+                        'date': date_str,
+                        'title': title,
+                        'status': status,
+                        'type': entry_type,
+                        'details': ' | '.join(details_lines[:5]),  # cap at 5 lines
+                    })
+            except Exception as e:
+                logger.warning(f"Failed to parse EVIDENCE_LOG.md: {e}")
+
+        # ── 2. Parse READINESS_CHECKLIST.md gates ──
+        gates = []
+        checklist_file = docs_dir / "READINESS_CHECKLIST.md"
+        if checklist_file.exists():
+            try:
+                content = checklist_file.read_text(encoding="utf-8")
+                # Find the Current Status table
+                table_match = re.search(
+                    r'\| Gate \| Status \| Blocked By \|\n\|[-|]+\|\n((?:\|.*\|\n)*)',
+                    content
+                )
+                if table_match:
+                    rows = table_match.group(1).strip().split('\n')
+                    for row in rows:
+                        cells = [c.strip() for c in row.split('|') if c.strip()]
+                        if len(cells) >= 3:
+                            gate_name = cells[0].lstrip('0123456789. ')
+                            status_text = cells[1]
+                            blocked_by = cells[2]
+                            is_ready = '🟢' in status_text or ('ready' in status_text.lower() and 'not ready' not in status_text.lower())
+                            gates.append({
+                                'name': gate_name,
+                                'status': 'ready' if is_ready else 'not_ready',
+                                'status_text': status_text.replace('🔴', '').replace('🟢', '').strip(),
+                                'blocked_by': blocked_by,
+                            })
+            except Exception as e:
+                logger.warning(f"Failed to parse READINESS_CHECKLIST.md: {e}")
+
+        # ── 3. Paper grid trial results (if exists) ──
+        paper_trial = None
+        trial_file = data_dir / "paper_grid_1day.json"
+        if trial_file.exists():
+            try:
+                paper_trial = _json.loads(trial_file.read_text(encoding="utf-8"))
+            except Exception as e:
+                logger.warning(f"Failed to read paper_grid_1day.json: {e}")
+
+        return {
+            'evidence_entries': evidence_entries,
+            'gates': gates,
+            'paper_trial': paper_trial,
+            'files_found': {
+                'evidence_log': evidence_file.exists(),
+                'readiness_checklist': checklist_file.exists(),
+                'paper_grid_json': trial_file.exists(),
+            },
+        }
+
 
 # Create default app instance
 app = create_app()

@@ -773,6 +773,20 @@ export const api = {
       return null;
     }
   },
+
+  // ── Evidence ──────────────────────────────────────────────────────────────
+
+  async getEvidence() {
+    try {
+      const response = await apiFetch(`${STRATEGY_API_URL}/api/evidence`, {
+        headers: authHeaders(),
+      });
+      if (!response.ok) return null;
+      return response.json();
+    } catch {
+      return null;
+    }
+  },
 };
 
 export default api;

@@ -154,6 +154,8 @@ services:
       - BACKEND_API_BASE=http://backend:8080
       - BINANCE_PRICE_API=https://api.binance.th
       - EXCHANGE_PROVIDER=${EXCHANGE_PROVIDER:-binance_th}
+    volumes:
+      - ./docs:/app/docs:ro
     depends_on:
       redis:
         condition: service_healthy
