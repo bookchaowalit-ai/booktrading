@@ -47,7 +47,7 @@ FEE_RATE = 0.001
 
 DURATION_HOURS = 24
 SNAPSHOT_INTERVAL_HOURS = 6
-MAX_CONSECUTIVE_ERRORS = 5
+MAX_CONSECUTIVE_ERRORS = 10
 
 
 @dataclass
@@ -199,7 +199,9 @@ async def run_observation(poll_sec: int, output_path: str):
                 if state.consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
                     logger.error(f"ABORT: {MAX_CONSECUTIVE_ERRORS} consecutive errors")
                     break
-                await asyncio.sleep(poll_sec)
+                # Backoff: wait longer on repeated errors to let API recover
+                backoff = min(poll_sec * state.consecutive_errors, 600)
+                await asyncio.sleep(backoff)
                 continue
 
             state.consecutive_errors = 0  # Reset on success
@@ -237,6 +239,7 @@ async def run_observation(poll_sec: int, output_path: str):
                     state.cash -= (level_price * ORDER_SIZE) + order.fee
                     state.total_fees += order.fee
                     filled_this_tick.append(order)
+                    state.filled_orders.append(order)
                     logger.info(
                         f"[Tick {state.ticks}] FILL {order.id} BUY @ ฿{level_price:,.0f} "
                         f"(pos={state.position:.6f} BTC, cash=฿{state.cash:,.2f})"
@@ -266,6 +269,7 @@ async def run_observation(poll_sec: int, output_path: str):
                     gross_profit = (level_price - state.center_price) * ORDER_SIZE
                     state.realized_pnl += gross_profit - order.fee
                     filled_this_tick.append(order)
+                    state.filled_orders.append(order)
                     logger.info(
                         f"[Tick {state.ticks}] FILL {order.id} SELL @ ฿{level_price:,.0f} "
                         f"(pos={state.position:.6f} BTC, cash=฿{state.cash:,.2f}, PnL=฿{state.realized_pnl:,.2f})"

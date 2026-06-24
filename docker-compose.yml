@@ -157,6 +157,7 @@ services:
       - EXCHANGE_PROVIDER=${EXCHANGE_PROVIDER:-binance_th}
     volumes:
       - ./docs:/app/docs:ro
+      - ./data:/app/data
     depends_on:
       redis:
         condition: service_healthy

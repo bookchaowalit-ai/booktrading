@@ -410,9 +410,13 @@ def _resolve_watchlist_path():
     if env:
         return Path(env)
     script_docs = Path(__file__).resolve().parent.parent.parent / 'docs' / 'CRYPTO_WATCHLIST.md'
-    if script_docs.parent.exists():
+    if script_docs.parent.exists() and os.access(script_docs.parent, os.W_OK):
         return script_docs
-    return Path.cwd() / 'docs' / 'CRYPTO_WATCHLIST.md'
+    # Fall back to writable data dir (e.g. inside read-only container)
+    data_dir = Path(__file__).resolve().parent.parent.parent / 'data'
+    if data_dir.exists() and os.access(data_dir, os.W_OK):
+        return data_dir / 'CRYPTO_WATCHLIST.md'
+    return Path.cwd() / 'CRYPTO_WATCHLIST.md'
 
 
 WATCHLIST_PATH = _resolve_watchlist_path()
