@@ -811,6 +811,38 @@ export const api = {
       return null;
     }
   },
+
+  // ── Paper Trading Engine (Go — BTCTHB) ──────────────────────────────────────
+
+  async getPaperPortfolio() {
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/api/paper/portfolio`);
+      if (!response.ok) return null;
+      return response.json();
+    } catch {
+      return null;
+    }
+  },
+
+  async getPaperOpenOrders() {
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/api/paper/orders`);
+      if (!response.ok) return [];
+      return response.json();
+    } catch {
+      return [];
+    }
+  },
+
+  async getPaperHistory() {
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/api/paper/history`);
+      if (!response.ok) return [];
+      return response.json();
+    } catch {
+      return [];
+    }
+  },
 };
 
 export default api;

@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from '@/i18n/translations';
-import { Cpu, Activity, CheckCircle, XCircle, Clock, Server, Shield, RefreshCw, Target, AlertTriangle, DollarSign } from 'lucide-react';
+import { Cpu, Activity, CheckCircle, XCircle, Clock, Server, Shield, RefreshCw, Target, AlertTriangle, DollarSign, Layers } from 'lucide-react';
 import { monitoringService } from '@/services/monitoring';
 import { api } from '@/services/api';
 
@@ -35,6 +35,32 @@ interface RiskSources {
     running: boolean;
     daily_pnl: number;
   };
+}
+
+interface PaperPortfolio {
+  initial_balance: number;
+  current_balance: number;
+  total_value: number;
+  total_pnl: number;
+  total_pnl_percent: number;
+  total_trades: number;
+  win_trades: number;
+  loss_trades: number;
+  max_drawdown: number;
+  updated_at: string;
+}
+
+interface PaperOpenOrder {
+  id: string;
+  symbol: string;
+  side: string;
+  type: string;
+  quantity: number;
+  price: number;
+  limit_price: number;
+  status: string;
+  fee: number;
+  created_at: string;
 }
 
 interface CommandCenterData {
@@ -86,6 +112,8 @@ export default function SystemPage() {
   const { t } = useTranslation();
   const [components, setComponents] = useState<ComponentHealth[]>([]);
   const [ccData, setCcData] = useState<CommandCenterData | null>(null);
+  const [paperPortfolio, setPaperPortfolio] = useState<PaperPortfolio | null>(null);
+  const [paperOrders, setPaperOrders] = useState<PaperOpenOrder[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<string>('');
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -95,12 +123,14 @@ export default function SystemPage() {
     const results: ComponentHealth[] = [];
 
     // Fire all checks in parallel
-    const [healthRes, botStatusRes, gridHealthRes, riskRes, polyPaperRes] = await Promise.allSettled([
+    const [healthRes, botStatusRes, gridHealthRes, riskRes, polyPaperRes, paperPortfolioRes, paperOrdersRes] = await Promise.allSettled([
       monitoringService.getHealth(),
       api.getBotStatus(),
       api.getRealGridHealth(),
       api.getRiskStatus(),
       api.getPolyPaperStatus(),
+      api.getPaperPortfolio(),
+      api.getPaperOpenOrders(),
     ]);
 
     // 1. Strategy API (from /api/health — redis + overall)
@@ -223,6 +253,14 @@ export default function SystemPage() {
       if (ccRes) setCcData(ccRes as CommandCenterData);
     } catch {
       // Optional — component health still works without it
+    }
+
+    // Paper Trading Engine (Go — BTCTHB)
+    if (paperPortfolioRes.status === 'fulfilled' && paperPortfolioRes.value) {
+      setPaperPortfolio(paperPortfolioRes.value as PaperPortfolio);
+    }
+    if (paperOrdersRes.status === 'fulfilled' && paperOrdersRes.value) {
+      setPaperOrders(paperOrdersRes.value as PaperOpenOrder[]);
     }
 
     setComponents(results);
@@ -377,25 +415,121 @@ export default function SystemPage() {
         </div>
       </div>
 
-      {/* ── Risk Sources Card (paper_bot vs grid_bot) ── */}
-      {ccData?.risk_sources && (
-        <div>
-          <div className="flex items-center gap-2 mb-3">
-            <Shield className="w-5 h-5 text-red-500" />
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Risk Sources</h2>
-            {ccData.kill_switch?.active && (
-              <span className="ml-auto text-xs font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">
-                Kill Switch Active
-              </span>
+      {/* ── Trading Metrics (3 separate panels — never combine PnL) ── */}
+      <div>
+        <div className="flex items-center gap-2 mb-3">
+          <Layers className="w-5 h-5 text-indigo-500" />
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Trading Metrics</h2>
+          <span className="text-xs text-gray-400 ml-2">PnL is separated per engine — never combined</span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+          {/* ── 1. Paper Grid Bot (BTCTHB) — Go Paper Engine ── */}
+          <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-purple-200 dark:border-purple-800/50">
+            <div className="flex items-center gap-2 mb-3">
+              <Layers className="w-4 h-4 text-purple-500" />
+              <span className="text-sm font-semibold text-gray-900 dark:text-white">Paper Grid (BTCTHB)</span>
+              <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">SIMULATED</span>
+            </div>
+            {paperPortfolio ? (
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500 dark:text-gray-400">Balance</span>
+                  <span className="font-medium text-gray-900 dark:text-white">${paperPortfolio.current_balance.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500 dark:text-gray-400">Total Value</span>
+                  <span className="font-medium text-gray-900 dark:text-white">${paperPortfolio.total_value.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500 dark:text-gray-400">Total P&L</span>
+                  <span className={`font-medium ${paperPortfolio.total_pnl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                    {paperPortfolio.total_pnl >= 0 ? '+' : ''}${paperPortfolio.total_pnl.toFixed(2)} ({paperPortfolio.total_pnl_percent.toFixed(2)}%)
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500 dark:text-gray-400">Open Orders</span>
+                  <span className="font-medium text-gray-900 dark:text-white">{paperOrders.filter(o => o.status === 'PENDING').length}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500 dark:text-gray-400">Trades</span>
+                  <span className="font-medium text-gray-900 dark:text-white">{paperPortfolio.total_trades} ({paperPortfolio.win_trades}W/{paperPortfolio.loss_trades}L)</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500 dark:text-gray-400">Max Drawdown</span>
+                  <span className="font-medium text-gray-900 dark:text-white">{paperPortfolio.max_drawdown.toFixed(2)}%</span>
+                </div>
+                {/* Pending orders detail */}
+                {paperOrders.filter(o => o.status === 'PENDING').length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-gray-100 dark:border-gray-700">
+                    <p className="text-xs text-gray-400 mb-1">Pending Limits:</p>
+                    {paperOrders.filter(o => o.status === 'PENDING').slice(0, 4).map(o => (
+                      <div key={o.id} className="flex justify-between text-xs py-0.5">
+                        <span className={`${o.side === 'BUY' ? 'text-green-600' : 'text-red-600'}`}>{o.side}</span>
+                        <span className="text-gray-500 font-mono">฿{Math.round(o.limit_price).toLocaleString()}</span>
+                      </div>
+                    ))}
+                    {paperOrders.filter(o => o.status === 'PENDING').length > 4 && (
+                      <p className="text-xs text-gray-400">+{paperOrders.filter(o => o.status === 'PENDING').length - 4} more</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-400">No data</p>
             )}
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Paper Bot */}
-            <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
-              <div className="flex items-center gap-2 mb-3">
-                <Target className="w-4 h-4 text-purple-500" />
-                <span className="text-sm font-semibold text-gray-900 dark:text-white">Paper Bot (Polymarket)</span>
+
+          {/* ── 2. Real Grid Bot (BTCTHB) — Testnet/Safety Mode ── */}
+          <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-blue-200 dark:border-blue-800/50">
+            <div className="flex items-center gap-2 mb-3">
+              <Activity className="w-4 h-4 text-blue-500" />
+              <span className="text-sm font-semibold text-gray-900 dark:text-white">Real Grid (BTCTHB)</span>
+              <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">TESTNET</span>
+            </div>
+            {ccData?.risk_sources?.grid_bot ? (
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500 dark:text-gray-400">Running</span>
+                  <span className={`font-medium ${ccData.risk_sources.grid_bot.running ? 'text-green-600 dark:text-green-400' : 'text-gray-500'}`}>
+                    {ccData.risk_sources.grid_bot.running ? 'Yes' : 'No'}
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500 dark:text-gray-400">Halted</span>
+                  <span className={`font-medium ${ccData.risk_sources.grid_bot.halted ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
+                    {ccData.risk_sources.grid_bot.halted ? 'Yes' : 'No'}
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500 dark:text-gray-400">Drawdown</span>
+                  <span className="font-medium text-gray-900 dark:text-white">
+                    {ccData.risk_sources.grid_bot.drawdown_pct.toFixed(1)}%
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500 dark:text-gray-400">Daily P&L</span>
+                  <span className={`font-medium ${ccData.risk_sources.grid_bot.daily_pnl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                    {ccData.risk_sources.grid_bot.daily_pnl >= 0 ? '+' : ''}${ccData.risk_sources.grid_bot.daily_pnl.toFixed(2)}
+                  </span>
+                </div>
+                <div className="mt-2 pt-2 border-t border-gray-100 dark:border-gray-700">
+                  <p className="text-xs text-gray-400">Real orders DISABLED — safety/testnet mode. No real capital at risk.</p>
+                </div>
               </div>
+            ) : (
+              <p className="text-sm text-gray-400">No data</p>
+            )}
+          </div>
+
+          {/* ── 3. Paper Bot (Polymarket) — Prediction Market Paper ── */}
+          <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-emerald-200 dark:border-emerald-800/50">
+            <div className="flex items-center gap-2 mb-3">
+              <Target className="w-4 h-4 text-emerald-500" />
+              <span className="text-sm font-semibold text-gray-900 dark:text-white">Paper Bot (Polymarket)</span>
+              <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">PAPER</span>
+            </div>
+            {ccData?.risk_sources?.paper_bot ? (
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-500 dark:text-gray-400">Bankroll</span>
@@ -427,57 +561,25 @@ export default function SystemPage() {
                   </p>
                 )}
               </div>
-            </div>
-
-            {/* Grid Bot */}
-            <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
-              <div className="flex items-center gap-2 mb-3">
-                <Activity className="w-4 h-4 text-blue-500" />
-                <span className="text-sm font-semibold text-gray-900 dark:text-white">Grid Bot (BTCTHB)</span>
-              </div>
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-500 dark:text-gray-400">Running</span>
-                  <span className={`font-medium ${ccData.risk_sources.grid_bot.running ? 'text-green-600 dark:text-green-400' : 'text-gray-500'}`}>
-                    {ccData.risk_sources.grid_bot.running ? 'Yes' : 'No'}
-                  </span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-500 dark:text-gray-400">Halted</span>
-                  <span className={`font-medium ${ccData.risk_sources.grid_bot.halted ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
-                    {ccData.risk_sources.grid_bot.halted ? 'Yes' : 'No'}
-                  </span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-500 dark:text-gray-400">Drawdown</span>
-                  <span className="font-medium text-gray-900 dark:text-white">
-                    {ccData.risk_sources.grid_bot.drawdown_pct.toFixed(1)}%
-                  </span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-500 dark:text-gray-400">Daily P&L</span>
-                  <span className={`font-medium ${ccData.risk_sources.grid_bot.daily_pnl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-                    {ccData.risk_sources.grid_bot.daily_pnl >= 0 ? '+' : ''}${ccData.risk_sources.grid_bot.daily_pnl.toFixed(2)}
-                  </span>
-                </div>
-              </div>
-            </div>
+            ) : (
+              <p className="text-sm text-gray-400">No data</p>
+            )}
           </div>
-
-          {/* Decision context */}
-          {ccData.current_decision && (
-            <div className="mt-3 p-3 bg-gray-50 dark:bg-gray-700/30 rounded-lg">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Current Decision:</span>
-                <span className="text-sm font-bold text-gray-900 dark:text-white">{ccData.current_decision}</span>
-              </div>
-              {ccData.next_trigger && (
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Next: {ccData.next_trigger}</p>
-              )}
-            </div>
-          )}
         </div>
-      )}
+
+        {/* Decision context */}
+        {ccData?.current_decision && (
+          <div className="mt-3 p-3 bg-gray-50 dark:bg-gray-700/30 rounded-lg">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Current Decision:</span>
+              <span className="text-sm font-bold text-gray-900 dark:text-white">{ccData.current_decision}</span>
+            </div>
+            {ccData.next_trigger && (
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Next: {ccData.next_trigger}</p>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

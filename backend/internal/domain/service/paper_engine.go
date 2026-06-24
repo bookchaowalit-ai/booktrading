@@ -67,6 +67,8 @@ func NewPaperEngine(initialBalance float64, feeRate float64, db *pgxpool.Pool) *
 }
 
 // PlaceOrder creates a simulated order
+// For LIMIT orders: order stays PENDING until price touches the limit level.
+// For MARKET orders (limitPrice=0): fills immediately at currentPrice.
 func (e *PaperEngine) PlaceOrder(ctx context.Context, symbol string, side model.OrderSide, quantity float64, limitPrice float64, currentPrice float64) (*model.PaperOrder, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -75,9 +77,13 @@ func (e *PaperEngine) PlaceOrder(ctx context.Context, symbol string, side model.
 		return nil, fmt.Errorf("quantity must be greater than 0")
 	}
 
-	// For buy orders, check sufficient balance
+	// For buy orders, check sufficient balance (use limitPrice for cost estimate)
+	costPrice := limitPrice
+	if costPrice <= 0 {
+		costPrice = currentPrice
+	}
 	if side == model.SideBuy {
-		totalCost := quantity * currentPrice
+		totalCost := quantity * costPrice
 		fee := totalCost * e.feeRate
 		if totalCost+fee > e.portfolio.CurrentBalance {
 			return nil, fmt.Errorf("insufficient balance: need %.2f, have %.2f", totalCost+fee, e.portfolio.CurrentBalance)
@@ -99,13 +105,32 @@ func (e *PaperEngine) PlaceOrder(ctx context.Context, symbol string, side model.
 		Type:       model.OrderTypeLimit,
 		Quantity:   quantity,
 		LimitPrice: limitPrice,
-		Price:      currentPrice, // Fill at current market price for simplicity
+		Price:      currentPrice, // Reference price at time of placement
 		Status:     model.PaperOrderStatusPending,
 		CreatedAt:  time.Now(),
 	}
 
-	// Execute immediately (market simulation)
-	e.fillOrder(order, currentPrice)
+	// LIMIT ORDER: stay pending until price touches the level
+	// Only auto-fill if limitPrice == 0 (market order) or if price already touches
+	if limitPrice <= 0 {
+		// Market order: fill immediately
+		e.fillOrder(order, currentPrice)
+	} else if side == model.SideBuy && limitPrice >= currentPrice {
+		// Buy limit price >= market → would have filled
+		e.fillOrder(order, currentPrice)
+	} else if side == model.SideSell && limitPrice <= currentPrice {
+		// Sell limit price <= market → would have filled
+		e.fillOrder(order, currentPrice)
+	} else {
+		// Limit order stays PENDING — will fill when UpdatePrice is called
+		logger.Info("Paper order placed (PENDING)",
+			"symbol", symbol,
+			"side", side,
+			"quantity", quantity,
+			"limitPrice", limitPrice,
+			"currentPrice", currentPrice,
+		)
+	}
 
 	e.orders[order.ID] = order
 	return order, nil
@@ -212,11 +237,36 @@ func (e *PaperEngine) applySell(order *model.PaperOrder) {
 	e.tradeHistory = append(e.tradeHistory, order)
 }
 
-// UpdatePrice updates the current price for all positions and recalculates PnL
+// UpdatePrice updates the current price for all positions and recalculates PnL.
+// Also checks pending limit orders — fills them if price touches the limit level.
 func (e *PaperEngine) UpdatePrice(symbol string, price float64) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	// Check pending orders for this symbol
+	for _, order := range e.orders {
+		if order.Symbol != symbol || order.Status != model.PaperOrderStatusPending {
+			continue
+		}
+		// BUY fills when market price drops to or below limit price
+		if order.Side == model.SideBuy && price <= order.LimitPrice {
+			e.fillOrder(order, order.LimitPrice) // Fill at limit price (realistic)
+			logger.Info("Paper PENDING order filled (price dropped to limit)",
+				"symbol", symbol, "side", "BUY",
+				"limitPrice", order.LimitPrice, "marketPrice", price,
+			)
+		}
+		// SELL fills when market price rises to or above limit price
+		if order.Side == model.SideSell && price >= order.LimitPrice {
+			e.fillOrder(order, order.LimitPrice) // Fill at limit price (realistic)
+			logger.Info("Paper PENDING order filled (price rose to limit)",
+				"symbol", symbol, "side", "SELL",
+				"limitPrice", order.LimitPrice, "marketPrice", price,
+			)
+		}
+	}
+
+	// Update position price
 	pos := e.getPosition(symbol)
 	if pos == nil {
 		return
@@ -277,6 +327,20 @@ func (e *PaperEngine) GetOrders() []*model.PaperOrder {
 	orders := make([]*model.PaperOrder, 0, len(e.orders))
 	for _, o := range e.orders {
 		orders = append(orders, o)
+	}
+	return orders
+}
+
+// GetOpenOrders returns only pending (unfilled) orders
+func (e *PaperEngine) GetOpenOrders() []*model.PaperOrder {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	orders := make([]*model.PaperOrder, 0)
+	for _, o := range e.orders {
+		if o.Status == model.PaperOrderStatusPending {
+			orders = append(orders, o)
+		}
 	}
 	return orders
 }

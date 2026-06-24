@@ -47,6 +47,8 @@ func (h *FeatureHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/paper/portfolio", h.PaperPortfolio)
 	mux.HandleFunc("/api/paper/history", h.PaperHistory)
 	mux.HandleFunc("/api/paper/reset", h.PaperReset)
+	mux.HandleFunc("/api/paper/update-price", h.PaperUpdatePrice)
+	mux.HandleFunc("/api/paper/orders", h.PaperOpenOrders)
 
 	// Risk Management
 	mux.HandleFunc("/api/risk/config", h.RiskConfig)
@@ -73,10 +75,11 @@ func (h *FeatureHandler) RegisterRoutes(mux *http.ServeMux) {
 // ── Paper Trading Handlers ──
 
 type PaperOrderRequest struct {
-	Symbol     string  `json:"symbol"`
-	Side       string  `json:"side"`
-	Quantity   float64 `json:"quantity"`
-	LimitPrice float64 `json:"limit_price"`
+	Symbol       string  `json:"symbol"`
+	Side         string  `json:"side"`
+	Quantity     float64 `json:"quantity"`
+	LimitPrice   float64 `json:"limit_price"`
+	CurrentPrice float64 `json:"current_price,omitempty"` // Market price for realistic simulation
 }
 
 func (h *FeatureHandler) PaperOrder(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +100,14 @@ func (h *FeatureHandler) PaperOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	order, err := h.paperEngine.PlaceOrder(r.Context(), req.Symbol, side, req.Quantity, req.LimitPrice, req.LimitPrice)
+	// Use provided current_price (market price) for realistic limit order simulation.
+	// If not provided, use limit_price as fallback (backward compat).
+	currentPrice := req.CurrentPrice
+	if currentPrice <= 0 {
+		currentPrice = req.LimitPrice
+	}
+
+	order, err := h.paperEngine.PlaceOrder(r.Context(), req.Symbol, side, req.Quantity, req.LimitPrice, currentPrice)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -137,6 +147,44 @@ func (h *FeatureHandler) PaperReset(w http.ResponseWriter, r *http.Request) {
 
 	h.paperEngine.Reset()
 	writeJSON(w, http.StatusOK, map[string]string{"status": "reset"})
+}
+
+// PaperUpdatePrice updates the market price for a symbol, triggering pending order fills.
+type PaperUpdatePriceRequest struct {
+	Symbol string  `json:"symbol"`
+	Price  float64 `json:"price"`
+}
+
+func (h *FeatureHandler) PaperUpdatePrice(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req PaperUpdatePriceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	if req.Price <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Price must be > 0"})
+		return
+	}
+
+	h.paperEngine.UpdatePrice(req.Symbol, req.Price)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+// PaperOpenOrders returns all pending (unfilled) orders.
+func (h *FeatureHandler) PaperOpenOrders(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	orders := h.paperEngine.GetOpenOrders()
+	writeJSON(w, http.StatusOK, orders)
 }
 
 // ── Risk Management Handlers ──

@@ -158,7 +158,7 @@ class GridBot:
             await self._http.aclose()
 
     async def _tick(self, cfg: GridConfig):
-        """One tick: fetch price, evaluate grid, place orders."""
+        """One tick: fetch price, update pending orders, evaluate grid, place orders."""
         price = await self._fetch_price(cfg.symbol)
         if price <= 0:
             return
@@ -174,6 +174,17 @@ class GridBot:
 
         state = self.states[cfg.symbol]
         state.last_price = price
+
+        # ── Update paper engine with current price ──
+        # This triggers pending limit order fills if price touched the level
+        try:
+            await self._http.post(
+                f"{PAPER_API_BASE}/api/paper/update-price",
+                json={"symbol": cfg.symbol, "price": price},
+            )
+        except Exception:
+            pass
+
         spacing = price * (cfg.grid_spacing_pct / 100.0)
 
         logger.info(
@@ -195,7 +206,7 @@ class GridBot:
             if sell_price not in state.active_sells:
                 await self._place_grid_order(cfg, state, "SELL", sell_price)
 
-        # Check portfolio to see which orders filled
+        # Sync grid state with paper engine (reconcile filled vs pending)
         await self._sync_state(cfg, state, price)
 
     async def _fetch_price(self, symbol: str) -> float:
@@ -234,7 +245,7 @@ class GridBot:
         return 0.0
 
     async def _place_grid_order(self, cfg: GridConfig, state: GridState, side: str, price: float):
-        """Place a paper order at a grid level."""
+        """Place a paper limit order at a grid level."""
         try:
             resp = await self._http.post(
                 f"{PAPER_API_BASE}/api/paper/order",
@@ -243,6 +254,7 @@ class GridBot:
                     "side": side,
                     "quantity": cfg.order_size,
                     "limit_price": price,
+                    "current_price": state.last_price,  # Market price for realistic simulation
                 },
             )
             if resp.status_code == 201:
@@ -260,10 +272,15 @@ class GridBot:
                         cfg.symbol, side, price, cfg.order_size, state.total_profit,
                     )
                 else:
+                    # PENDING — limit order waiting for price to touch
                     if side == "BUY":
                         state.active_buys[price] = order_id
                     else:
                         state.active_sells[price] = order_id
+                    logger.debug(
+                        "[Grid %s] %s PENDING @ %.2f (qty=%.4f)",
+                        cfg.symbol, side, price, cfg.order_size,
+                    )
             else:
                 # Order rejected (insufficient balance, no position, etc.) — normal
                 pass
@@ -271,23 +288,37 @@ class GridBot:
             logger.debug("Failed to place %s order @ %.2f: %s", side, price, e)
 
     async def _sync_state(self, cfg: GridConfig, state: GridState, current_price: float):
-        """Sync grid state with paper engine portfolio."""
+        """Sync grid state with paper engine — reconcile filled vs pending orders."""
         try:
-            resp = await self._http.get(f"{PAPER_API_BASE}/api/paper/portfolio")
+            # Query open (pending) orders from paper engine
+            resp = await self._http.get(f"{PAPER_API_BASE}/api/paper/orders")
             if resp.status_code == 200:
-                portfolio = resp.json()
-                positions = {p["symbol"]: p for p in portfolio.get("positions", [])}
-                pos = positions.get(cfg.symbol)
-                if pos:
-                    # Clean up filled orders from active tracking
-                    filled_buys = [p for p in state.active_buys if p < current_price * 0.99]
-                    filled_sells = [p for p in state.active_sells if p > current_price * 1.01]
-                    for p in filled_buys:
-                        del state.active_buys[p]
-                    for p in filled_sells:
-                        del state.active_sells[p]
-        except Exception:
-            pass
+                open_orders = resp.json()
+                # Build set of order IDs that are still pending for this symbol
+                pending_ids = {
+                    o["id"] for o in open_orders
+                    if o.get("symbol") == cfg.symbol and o.get("status") == "PENDING"
+                }
+                # Remove grid levels whose orders are no longer pending (filled or cancelled)
+                filled_prices = []
+                for price, oid in list(state.active_buys.items()):
+                    if oid not in pending_ids:
+                        filled_prices.append(("BUY", price))
+                        del state.active_buys[price]
+                for price, oid in list(state.active_sells.items()):
+                    if oid not in pending_ids:
+                        filled_prices.append(("SELL", price))
+                        del state.active_sells[price]
+
+                if filled_prices:
+                    logger.info(
+                        "[Grid %s] Synced: %d orders filled/removed, "
+                        "remaining buys=%d sells=%d",
+                        cfg.symbol, len(filled_prices),
+                        len(state.active_buys), len(state.active_sells),
+                    )
+        except Exception as e:
+            logger.debug("Failed to sync state: %s", e)
 
     async def _reset_paper_engine(self):
         """Reset the paper trading engine to initial state."""
