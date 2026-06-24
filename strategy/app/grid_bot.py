@@ -199,23 +199,36 @@ class GridBot:
         await self._sync_state(cfg, state, price)
 
     async def _fetch_price(self, symbol: str) -> float:
-        """Fetch current price from Binance testnet (public, no key needed)."""
+        """Fetch current price from Binance TH API (for THB pairs) or fallback to testnet."""
         try:
-            resp = await self._http.get(
-                f"{BINANCE_TESTNET_REST}/api/v3/ticker/price",
-                params={"symbol": symbol},
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                return float(data["price"])
-            else:
-                # Fallback: use Binance global public API
-                resp2 = await self._http.get(
-                    "https://api.binance.com/api/v3/ticker/price",
+            # THB pairs are only available on Binance TH
+            if symbol.endswith("THB"):
+                resp = await self._http.get(
+                    "https://api.binance.th/api/v1/ticker/price",
                     params={"symbol": symbol},
                 )
-                if resp2.status_code == 200:
-                    return float(resp2.json()["price"])
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return float(data["price"])
+                else:
+                    logger.warning("Binance TH price fetch failed for %s: %d", symbol, resp.status_code)
+            else:
+                # Non-THB pairs: try Binance testnet first
+                resp = await self._http.get(
+                    f"{BINANCE_TESTNET_REST}/api/v3/ticker/price",
+                    params={"symbol": symbol},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return float(data["price"])
+                else:
+                    # Fallback: use Binance global public API
+                    resp2 = await self._http.get(
+                        "https://api.binance.com/api/v3/ticker/price",
+                        params={"symbol": symbol},
+                    )
+                    if resp2.status_code == 200:
+                        return float(resp2.json()["price"])
         except Exception as e:
             logger.warning("Failed to fetch price for %s: %s", symbol, e)
         return 0.0
