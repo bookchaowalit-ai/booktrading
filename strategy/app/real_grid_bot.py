@@ -149,7 +149,7 @@ SYMBOL_DEFAULTS = {
     "SOLTHB": {
         "grid_spacing_pct": 3.0,        # ~45 THB between levels at ~5K (wider for volatility)
         "grid_levels": 2,               # 2 above + 2 below = 4 levels max
-        "order_size": 0.025,            # ~125 THB per order (above 100 THB min)
+        "order_size": 0.05,             # ~115 THB per order (step=0.01, min notional=100 THB)
         "max_position": 0.5,            # ~2,500 THB max exposure
         "max_daily_loss_usd": 30.0,
         "volatility_mode": "atr",       # Use ATR for dynamic spacing (SOL is volatile)
@@ -1409,6 +1409,14 @@ class RealGridBot:
 
     async def _place_grid_order(self, cfg: RealGridConfig, state: RealGridState, side: str, price: int):
         """Place a real LIMIT order at a grid level via Go backend."""
+        # ── Testnet safety: block ALL real order placement ──
+        if not BINANCE_TH_MAINNET:
+            logger.debug(
+                "[RealGrid %s] Order SKIPPED (testnet mode): %s @ %d",
+                cfg.symbol, side, price,
+            )
+            return
+
         # Use dynamic order size from auto-compounding if available, else base config size
         order_size = state.current_order_size if state.current_order_size > 0 else cfg.order_size
         

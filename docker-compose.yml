@@ -153,6 +153,7 @@ services:
       # Real grid bot config
       - BACKEND_API_BASE=http://backend:8080
       - BINANCE_PRICE_API=https://api.binance.th
+      - BINANCE_TH_USE_TESTNET=${BINANCE_TH_USE_TESTNET:-true}
       - EXCHANGE_PROVIDER=${EXCHANGE_PROVIDER:-binance_th}
     volumes:
       - ./docs:/app/docs:ro

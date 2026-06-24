@@ -191,6 +191,15 @@ class RiskManager:
         self.state.consecutive_losses = 0
         self._log_event("KILL_SWITCH_RESET", "Risk manager reset by user")
         logger.info("Risk manager kill switch reset")
+        
+        # ── Re-enable real grid bot ──
+        try:
+            from app.real_grid_bot import get_real_grid_bot
+            bot = get_real_grid_bot()
+            bot.enable()
+            logger.info("Real grid bot re-enabled via risk manager reset")
+        except Exception as e:
+            logger.warning("Failed to re-enable real grid bot on reset: %s", e)
 
     def get_status(self) -> Dict:
         """Return current risk metrics for dashboard."""
@@ -243,6 +252,16 @@ class RiskManager:
         self.state.halt_reason = reason
         self._log_event("HALT", reason)
         logger.warning("RISK MANAGER HALT: %s", reason)
+        
+        # ── Propagate to real grid bot ──
+        # When risk manager halts, also disable the real grid bot
+        try:
+            from app.real_grid_bot import get_real_grid_bot
+            bot = get_real_grid_bot()
+            bot.disable()
+            logger.info("Real grid bot disabled via risk manager halt")
+        except Exception as e:
+            logger.warning("Failed to disable real grid bot on halt: %s", e)
 
     def _log_event(self, event_type: str, message: str):
         """Log risk event for audit trail."""
