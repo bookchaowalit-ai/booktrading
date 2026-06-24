@@ -289,6 +289,11 @@ class PolymarketPaperBot:
         self._market_allowlist: List[str] = MARKET_ALLOWLIST
         self._market_blocklist: List[str] = MARKET_BLOCKLIST
 
+        # ── Per-market loss cooldown: market_id -> timestamp of loss close ──
+        # Prevents re-entry into the same market for 48h after a stop-loss
+        self._market_loss_cooldown: Dict[str, float] = {}
+        self._loss_cooldown_seconds: float = 48 * 3600
+
     def set_redis(self, redis):
         """Set Redis connection for state persistence."""
         self._redis = redis
@@ -571,37 +576,39 @@ class PolymarketPaperBot:
         elif deviation > 0.001:  # Log near-misses for debugging
             logger.debug(f"Mispricing near-miss: dev={deviation:.4f} < {self.min_deviation} for {question[:40]}")
 
-        # Signal 2: Momentum (price trending — detect early moves)
+        # Signal 2: Momentum — requires sustained trend across 5+ data points and >2% move
         history = self.price_history.get(market_id, [])
-        if len(history) >= 2:  # lowered from 3 to catch earlier moves
+        if len(history) >= 5:
             recent_prices = [p for _, p in history[-5:]]
-            if len(recent_prices) >= 2:
-                trend_yes = recent_prices[-1] - recent_prices[0]
-                if abs(trend_yes) > 0.005:  # >0.5% move (lowered from 1%)
-                    if trend_yes > 0 and yes_price > 0.30:  # lowered from 0.50
-                        conf = min(abs(trend_yes) * 50, 0.85)  # 1% = 0.50, 2% = 0.85
-                        signals.append(AlphaSignal(
-                            signal_type="momentum",
-                            market_id=market_id,
-                            question=question,
-                            side="YES",
-                            confidence=conf,
-                            price=yes_price,
-                            reason=f"YES momentum: {recent_prices[0]:.3f} → {yes_price:.3f} (+{trend_yes:.1%})",
-                            metadata={"trend": trend_yes, "history_len": len(history)},
-                        ))
-                    elif trend_yes < 0 and no_price > 0.30:  # lowered from 0.50
-                        conf = min(abs(trend_yes) * 50, 0.85)  # 1% = 0.50, 2% = 0.85
-                        signals.append(AlphaSignal(
-                            signal_type="momentum",
-                            market_id=market_id,
-                            question=question,
-                            side="NO",
-                            confidence=conf,
-                            price=no_price,
-                            reason=f"NO momentum: YES dropping {trend_yes:.1%}, NO rising",
-                            metadata={"trend": trend_yes, "history_len": len(history)},
-                        ))
+            trend_yes = recent_prices[-1] - recent_prices[0]
+            # Require monotonic trend: all steps must move in the same direction
+            steps = [recent_prices[i+1] - recent_prices[i] for i in range(len(recent_prices)-1)]
+            monotonic = all(s > 0 for s in steps) or all(s < 0 for s in steps)
+            if monotonic and abs(trend_yes) > 0.02:  # >2% sustained move
+                if trend_yes > 0 and yes_price > 0.40:
+                    conf = min(abs(trend_yes) * 25, 0.80)  # 2% = 0.50, 4% = 0.80
+                    signals.append(AlphaSignal(
+                        signal_type="momentum",
+                        market_id=market_id,
+                        question=question,
+                        side="YES",
+                        confidence=conf,
+                        price=yes_price,
+                        reason=f"YES momentum: {recent_prices[0]:.3f} → {yes_price:.3f} (+{trend_yes:.1%}, monotonic)",
+                        metadata={"trend": trend_yes, "history_len": len(history)},
+                    ))
+                elif trend_yes < 0 and no_price > 0.40:
+                    conf = min(abs(trend_yes) * 25, 0.80)
+                    signals.append(AlphaSignal(
+                        signal_type="momentum",
+                        market_id=market_id,
+                        question=question,
+                        side="NO",
+                        confidence=conf,
+                        price=no_price,
+                        reason=f"NO momentum: YES dropping {trend_yes:.1%} monotonically, NO rising",
+                        metadata={"trend": trend_yes, "history_len": len(history)},
+                    ))
 
         # Signal 3: Time-decay (near resolution with high confidence price)
         if end_date and yes_price > 0:
@@ -919,6 +926,13 @@ class PolymarketPaperBot:
             if pos.market_id == opp["market_id"] and not pos.resolved:
                 return False
 
+        # Check loss cooldown: skip re-entry for 48h after a stop-loss on this market
+        loss_ts = self._market_loss_cooldown.get(opp["market_id"])
+        if loss_ts and (time.time() - loss_ts) < self._loss_cooldown_seconds:
+            hours_left = (self._loss_cooldown_seconds - (time.time() - loss_ts)) / 3600
+            logger.debug("Market %s in loss cooldown (%.1fh left), skipping", opp["market_id"][:12], hours_left)
+            return False
+
         # Check max positions
         active_positions = sum(1 for p in self.positions.values() if not p.resolved)
         if active_positions >= self.max_positions:
@@ -1125,6 +1139,10 @@ class PolymarketPaperBot:
         total_resolved = sum(self.signal_trade_count.values())
         if total_resolved % 10 == 0:
             self._log_signal_pnl_summary()
+
+        # Record loss cooldown so we don't re-enter this market for 48h
+        if position.pnl < 0:
+            self._market_loss_cooldown[position.market_id] = time.time()
 
         # Kill switch tracking
         self._on_position_closed(position)

@@ -16,22 +16,19 @@ MIN_RESOLVED_FOR_REVIEW = 10
 
 
 def compute_signal_pnl(resolved):
-    """Compute per-signal PnL from resolved positions. Pure function."""
+    """Compute per-signal PnL from resolved positions using actual pnl field."""
     signal_pnl = {}
     signal_count = {}
     signal_wins = {}
     for p in resolved:
-        sig = p.get('signal_type', p.get('signals', ['unknown'])[0] if p.get('signals') else 'unknown')
-        size = p.get('size_usdc', p.get('size', 5.0))
-        outcome = p.get('outcome', '')
-        if outcome == 'win':
-            entry = p.get('entry_price', 0.5)
-            profit = size * (1 - entry) / entry if entry > 0 else 0
-            signal_wins[sig] = signal_wins.get(sig, 0) + 1
-        else:
-            profit = -size
-        signal_pnl[sig] = signal_pnl.get(sig, 0) + profit
-        signal_count[sig] = signal_count.get(sig, 0) + 1
+        signals = p.get('signals') or [p.get('signal_type', 'unknown')]
+        pnl = p.get('pnl', 0.0)
+        is_win = pnl > 0
+        for sig in signals:
+            signal_pnl[sig] = signal_pnl.get(sig, 0.0) + pnl
+            signal_count[sig] = signal_count.get(sig, 0) + 1
+            if is_win:
+                signal_wins[sig] = signal_wins.get(sig, 0) + 1
     return signal_pnl, signal_count, signal_wins
 
 
@@ -43,8 +40,10 @@ def compute_decision(state):
     Returns: (decision, reason, next_trigger)
     """
     positions = state.get('positions', {})
-    active = [p for p in positions.values() if p.get('status') not in ('resolved', 'closed')]
-    resolved = [p for p in positions.values() if p.get('status') in ('resolved', 'closed')]
+    def _is_resolved(p):
+        return p.get('resolved', False) or p.get('status') in ('resolved', 'closed')
+    active = [p for p in positions.values() if not _is_resolved(p)]
+    resolved = [p for p in positions.values() if _is_resolved(p)]
 
     ks_active = state.get('kill_switch_active', False)
     ks_reason = state.get('kill_reason', '')
@@ -89,14 +88,19 @@ def main():
     state = json.loads(r.get('poly_paper:state') or '{}')
 
     positions = state.get('positions', {})
-    # Legacy positions have no status field — treat as active if not resolved/closed
-    active = [p for p in positions.values() if p.get('status') not in ('resolved', 'closed')]
-    resolved = [p for p in positions.values() if p.get('status') in ('resolved', 'closed')]
+    # Support both resolved boolean (current) and status string (legacy)
+    def _is_resolved(p):
+        return p.get('resolved', False) or p.get('status') in ('resolved', 'closed')
+    active = [p for p in positions.values() if not _is_resolved(p)]
+    resolved = [p for p in positions.values() if _is_resolved(p)]
 
     bankroll = state.get('bankroll', 100.0)
     peak = state.get('peak_bankroll', 100.0)
     initial = 100.0
-    pnl = bankroll - initial
+    # Mark-to-market PnL: realized (resolved) + unrealized (active)
+    realized_pnl = sum(p.get('pnl', 0.0) for p in resolved)
+    unrealized_pnl = sum(p.get('pnl', 0.0) for p in active)
+    pnl = realized_pnl + unrealized_pnl
     dd_pct = ((peak - bankroll) / peak) * 100 if peak > 0 else 0
 
     ks_active = state.get('kill_switch_active', False)
