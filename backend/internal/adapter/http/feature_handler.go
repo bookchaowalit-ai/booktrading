@@ -49,6 +49,7 @@ func (h *FeatureHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/paper/reset", h.PaperReset)
 	mux.HandleFunc("/api/paper/update-price", h.PaperUpdatePrice)
 	mux.HandleFunc("/api/paper/orders", h.PaperOpenOrders)
+	mux.HandleFunc("/api/paper/cancel", h.PaperCancelOrder)
 
 	// Risk Management
 	mux.HandleFunc("/api/risk/config", h.RiskConfig)
@@ -185,6 +186,28 @@ func (h *FeatureHandler) PaperOpenOrders(w http.ResponseWriter, r *http.Request)
 
 	orders := h.paperEngine.GetOpenOrders()
 	writeJSON(w, http.StatusOK, orders)
+}
+
+func (h *FeatureHandler) PaperCancelOrder(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		OrderID string `json:"order_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.OrderID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "order_id required"})
+		return
+	}
+
+	if err := h.paperEngine.CancelOrder(req.OrderID); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled", "order_id": req.OrderID})
 }
 
 // ── Risk Management Handlers ──

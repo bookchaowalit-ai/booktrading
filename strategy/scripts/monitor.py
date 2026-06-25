@@ -121,6 +121,7 @@ def main():
                 oldest_question = p.get('question', '?')[:50]
 
     signal_pnl, signal_count, signal_wins = compute_signal_pnl(resolved)
+    disabled_signals = set(state.get('disabled_signal_types', []))
 
     decision, reason, next_trigger = compute_decision(state)
 
@@ -167,7 +168,10 @@ def main():
             cnt = signal_count.get(sig, 0)
             wins = signal_wins.get(sig, 0)
             wr = (wins / cnt * 100) if cnt > 0 else 0
-            flag = '  ← DISABLE' if pnl_s < -5 else ''
+            if sig in disabled_signals:
+                flag = '  ← DISABLED'
+            else:
+                flag = '  ← DISABLE' if pnl_s < -5 else ''
             print(f'    {sig:22s}  ${pnl_s:+7.2f}  ({cnt} trades, {wr:.0f}% WR){flag}')
     else:
         print('    (no resolved trades yet)')

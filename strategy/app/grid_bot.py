@@ -193,21 +193,65 @@ class GridBot:
             len(state.active_buys), len(state.active_sells),
         )
 
-        # Check which grid levels should have orders
+        # ── Cancel stale orders outside active grid range ──
+        await self._cancel_stale_orders(cfg, state, price, spacing)
+
+        # ── Place orders at active grid levels ──
         for level in range(1, cfg.grid_levels + 1):
             buy_price = round(price - (spacing * level), 2)
             sell_price = round(price + (spacing * level), 2)
 
-            # Place buy if not already active
-            if buy_price not in state.active_buys:
+            # Place buy if not already active at this level
+            if not state.active_buys.get(buy_price):
                 await self._place_grid_order(cfg, state, "BUY", buy_price)
 
             # Place sell if not already active and we have position
-            if sell_price not in state.active_sells:
+            if not state.active_sells.get(sell_price):
                 await self._place_grid_order(cfg, state, "SELL", sell_price)
 
         # Sync grid state with paper engine (reconcile filled vs pending)
         await self._sync_state(cfg, state, price)
+
+    async def _cancel_stale_orders(self, cfg: GridConfig, state: GridState, price: float, spacing: float):
+        """Cancel orders that are outside the current active grid range."""
+        # Calculate active grid levels
+        active_buy_prices = set()
+        active_sell_prices = set()
+        for level in range(1, cfg.grid_levels + 1):
+            active_buy_prices.add(round(price - (spacing * level), 2))
+            active_sell_prices.add(round(price + (spacing * level), 2))
+
+        # Cancel stale BUY orders (price no longer in active grid)
+        stale_buy_prices = [p for p in state.active_buys if p not in active_buy_prices]
+        for buy_price in stale_buy_prices:
+            order_id = state.active_buys.pop(buy_price, None)
+            if order_id:
+                await self._cancel_order(order_id)
+                logger.debug("[Grid %s] Cancelled stale BUY @ %.2f", cfg.symbol, buy_price)
+
+        # Cancel stale SELL orders (price no longer in active grid)
+        stale_sell_prices = [p for p in state.active_sells if p not in active_sell_prices]
+        for sell_price in stale_sell_prices:
+            order_id = state.active_sells.pop(sell_price, None)
+            if order_id:
+                await self._cancel_order(order_id)
+                logger.debug("[Grid %s] Cancelled stale SELL @ %.2f", cfg.symbol, sell_price)
+
+        if stale_buy_prices or stale_sell_prices:
+            logger.info(
+                "[Grid %s] Cancelled %d stale buys, %d stale sells",
+                cfg.symbol, len(stale_buy_prices), len(stale_sell_prices),
+            )
+
+    async def _cancel_order(self, order_id: str):
+        """Cancel a pending order in the paper engine."""
+        try:
+            await self._http.post(
+                f"{PAPER_API_BASE}/api/paper/cancel",
+                json={"order_id": order_id},
+            )
+        except Exception as e:
+            logger.debug("Failed to cancel order %s: %s", order_id, e)
 
     async def _fetch_price(self, symbol: str) -> float:
         """Fetch current price from Binance TH API (for THB pairs) or fallback to testnet."""

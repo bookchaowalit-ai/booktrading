@@ -1715,6 +1715,20 @@ def register_routes(app: FastAPI):
         if trial_file.exists():
             try:
                 paper_trial = _json.loads(trial_file.read_text(encoding="utf-8"))
+                if isinstance(paper_trial, dict):
+                    _snapshots = paper_trial.get('snapshots') or []
+                    _final_price = float(paper_trial.get('final_price') or 0)
+                    if _final_price <= 0 and _snapshots:
+                        _fallback_price = float((_snapshots[-1] or {}).get('price') or 0)
+                        if _fallback_price > 0:
+                            paper_trial['final_price'] = _fallback_price
+                            paper_trial['final_price_source'] = 'last_snapshot'
+                            _baseline = float(paper_trial.get('baseline_price') or 0)
+                            if _baseline > 0:
+                                paper_trial['price_change_pct'] = round((_fallback_price - _baseline) / _baseline * 100, 3)
+                    if not paper_trial.get('status'):
+                        _duration = float(paper_trial.get('duration_hours') or 0)
+                        paper_trial['status'] = 'completed' if _duration >= 23.5 else 'partial'
             except Exception as e:
                 logger.warning(f"Failed to read paper_grid_1day.json: {e}")
 
@@ -1987,6 +2001,20 @@ def register_routes(app: FastAPI):
             try:
                 import json as _json
                 paper_trial = _json.loads(trial_file.read_text(encoding="utf-8"))
+                if isinstance(paper_trial, dict):
+                    _snapshots = paper_trial.get('snapshots') or []
+                    _final_price = float(paper_trial.get('final_price') or 0)
+                    if _final_price <= 0 and _snapshots:
+                        _fallback_price = float((_snapshots[-1] or {}).get('price') or 0)
+                        if _fallback_price > 0:
+                            paper_trial['final_price'] = _fallback_price
+                            paper_trial['final_price_source'] = 'last_snapshot'
+                            _baseline = float(paper_trial.get('baseline_price') or 0)
+                            if _baseline > 0:
+                                paper_trial['price_change_pct'] = round((_fallback_price - _baseline) / _baseline * 100, 3)
+                    if not paper_trial.get('status'):
+                        _duration = float(paper_trial.get('duration_hours') or 0)
+                        paper_trial['status'] = 'completed' if _duration >= 23.5 else 'partial'
             except Exception:
                 pass
 
@@ -2126,7 +2154,15 @@ def register_routes(app: FastAPI):
             _pnl_str = f'{total_pnl:+,.2f}' if total_pnl else '0.00'
             _parts.append(f'Today: {total_fills} fill(s), PnL {_pnl_str} THB.')
         elif paper_trial:
-            _parts.append('Paper grid observation is running.')
+            _trial_status = paper_trial.get('status', 'completed') if isinstance(paper_trial, dict) else 'completed'
+            _trial_hours = paper_trial.get('duration_hours') if isinstance(paper_trial, dict) else None
+            _trial_fills = paper_trial.get('orders_filled') if isinstance(paper_trial, dict) else None
+            if _trial_status == 'running':
+                _parts.append('Paper grid observation is running.')
+            else:
+                _hours_text = f'{_trial_hours:.1f}h' if isinstance(_trial_hours, (int, float)) else 'recorded'
+                _fills_text = f', {_trial_fills} fill(s)' if isinstance(_trial_fills, int) else ''
+                _parts.append(f'Paper grid observation {_trial_status}: {_hours_text}{_fills_text}.')
         else:
             _parts.append('No grid activity.')
 

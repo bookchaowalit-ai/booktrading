@@ -146,6 +146,7 @@ async def run_observation(poll_sec: int, output_path: str):
     trial_end = trial_start + (DURATION_HOURS * 3600)
     order_counter = 0
     last_snapshot_time = trial_start
+    stop_reason = "duration_complete"
 
     async with httpx.AsyncClient(timeout=15.0) as client:
         # ── Baseline ──────────────────────────────────────────────────────────
@@ -198,6 +199,7 @@ async def run_observation(poll_sec: int, output_path: str):
 
                 if state.consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
                     logger.error(f"ABORT: {MAX_CONSECUTIVE_ERRORS} consecutive errors")
+                    stop_reason = "api_errors"
                     break
                 # Backoff: wait longer on repeated errors to let API recover
                 backoff = min(poll_sec * state.consecutive_errors, 600)
@@ -222,6 +224,7 @@ async def run_observation(poll_sec: int, output_path: str):
                     f"Tick {state.ticks}: exposure ฿{exposure:,.0f} > cap ฿{MAX_NOTIONAL:,.0f}"
                 )
                 logger.error(f"[Tick {state.ticks}] SAFETY VIOLATION: exposure exceeds cap — ABORT")
+                stop_reason = "safety_violation"
                 break
 
             # Check fills
@@ -321,6 +324,11 @@ async def run_observation(poll_sec: int, output_path: str):
         logger.info("--- OBSERVATION COMPLETE ---")
         trial_duration = (time.time() - trial_start) / 60
         final_price = await fetch_price(client)
+        final_price_source = "live_fetch"
+        if final_price <= 0 and state.price_history:
+            final_price = state.price_history[-1]["price"]
+            final_price_source = "last_observed_price"
+            state.errors.append("Final price fetch failed; used last observed price")
 
         unrealized_pnl = 0.0
         if state.position > 0 and final_price > 0:
@@ -336,9 +344,12 @@ async def run_observation(poll_sec: int, output_path: str):
         results = {
             "trial_start": baseline_time,
             "trial_end": datetime.now(timezone.utc).isoformat(),
+            "status": "completed" if stop_reason == "duration_complete" else "partial",
+            "stop_reason": stop_reason,
             "duration_hours": round(trial_duration / 60, 2),
             "baseline_price": baseline_price,
             "final_price": final_price,
+            "final_price_source": final_price_source,
             "min_price": min_price,
             "max_price": max_price,
             "price_change_pct": round((final_price - baseline_price) / baseline_price * 100, 3) if final_price > 0 else None,

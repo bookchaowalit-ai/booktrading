@@ -30,7 +30,7 @@ Readiness decisions use `/api/command-center` and the **paper bot** risk source 
 - [ ] Kill switch has been reset (confirm via `monitor.py` output: `Kill switch: OFF`)
 - [ ] Active positions ≤ 8 (legacy positions resolved or closed)
 - [ ] Per-signal PnL reviewed for all signal types
-- [ ] Losing signals (net PnL < -$5) disabled or documented with rationale
+- [x] Losing signals (net PnL < -$5) disabled or documented with rationale — `momentum` disabled after -$10.93 over 4 trades, 0% WR
 - [ ] Market blocklist confirmed: `politics,sports,entertainment,celebrities`
 - [ ] Daily loss limit confirmed at $5 (see `.env`)
 - [ ] Max positions confirmed at 8 (see `.env`)

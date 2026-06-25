@@ -135,12 +135,14 @@ POLY_DRY_RUN=true
 
 ## When to Disable Losing Signals
 
-After kill switch is reset and resolved trades have PnL data:
+When resolved trades have PnL data:
 
 1. Run monitor — check per-signal PnL breakdown
-2. Any signal type with **net negative PnL over 10+ resolved trades** → disable
-3. Edit signal weights or remove signal from the alpha engine
+2. Any signal type with **net PnL < -$5** → disable before any reset/dry-run
+3. Add it to `POLY_DISABLED_SIGNALS` or the default disabled signal list
 4. Re-run dry-run mode to validate improvement
+
+Current evidence: `momentum` is disabled by default after -$10.93 PnL over 4 resolved trades with 0% win rate.
 
 ---
 

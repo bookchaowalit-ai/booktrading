@@ -65,6 +65,24 @@ def _make_position(pnl: float = 0.0, resolved: bool = False) -> PaperPosition:
     )
 
 
+def _make_market(
+    market_id: str = "momentum_market",
+    yes_price: float = 0.52,
+    no_price: float = 0.48,
+    volume: float = 10000.0,
+    liquidity: float = 5000.0,
+) -> dict:
+    """Helper to create a mock Polymarket market dict."""
+    return {
+        "conditionId": market_id,
+        "question": "Will BTC trend higher?",
+        "outcomePrices": f"[{yes_price}, {no_price}]",
+        "volume": volume,
+        "liquidity": liquidity,
+        "endDate": "2099-01-01T00:00:00Z",
+    }
+
+
 # ── Market Blocklist Tests ──────────────────────────────────────────────────────
 
 
@@ -278,6 +296,112 @@ class TestDryRunMode:
             # But dry_run_trades should have an entry
             assert len(self.bot.dry_run_trades) == 1
             assert self.bot.dry_run_trades[0]["market_id"] == "dry_run_test"
+
+
+# ── Momentum Signal Regression Tests ───────────────────────────────────────────
+
+
+class TestMomentumSignalFiltering:
+    """Regression tests for the stricter momentum filter."""
+
+    def setup_method(self):
+        self.bot = PolymarketPaperBot()
+        self.bot.min_volume = 1000
+        self.bot.min_liquidity = 500
+        self.bot.disabled_signal_types = set()
+
+    def _momentum_signals(self, history_prices, yes_price=0.525):
+        market_id = "momentum_market"
+        now = time.time()
+        self.bot.price_history[market_id] = [
+            (now - (len(history_prices) - i) * 60, price)
+            for i, price in enumerate(history_prices)
+        ]
+        market = _make_market(
+            market_id=market_id,
+            yes_price=yes_price,
+            no_price=round(1.0 - yes_price, 3),
+        )
+        signals = self.bot._analyze_all_signals(market, _make_event("Crypto Trend"))
+        return [s for s in signals if s.signal_type == "momentum"]
+
+    def test_momentum_requires_five_price_points(self):
+        signals = self._momentum_signals([0.500, 0.508, 0.516, 0.525])
+
+        assert signals == []
+
+    def test_momentum_requires_monotonic_trend(self):
+        signals = self._momentum_signals([0.500, 0.516, 0.510, 0.522, 0.526])
+
+        assert signals == []
+
+    def test_momentum_requires_more_than_two_percent_move(self):
+        signals = self._momentum_signals([0.500, 0.504, 0.508, 0.513, 0.519], yes_price=0.519)
+
+        assert signals == []
+
+    def test_momentum_accepts_sustained_monotonic_yes_move(self):
+        signals = self._momentum_signals([0.500, 0.506, 0.512, 0.519, 0.525], yes_price=0.525)
+
+        assert len(signals) == 1
+        assert signals[0].side == "YES"
+        assert signals[0].confidence >= 0.5
+
+    def test_momentum_accepts_sustained_monotonic_no_move(self):
+        signals = self._momentum_signals([0.530, 0.523, 0.516, 0.508, 0.500], yes_price=0.500)
+
+        assert len(signals) == 1
+        assert signals[0].side == "NO"
+        assert signals[0].confidence >= 0.5
+
+    def test_disabled_momentum_signal_is_filtered_out(self):
+        self.bot.disabled_signal_types = {"momentum"}
+
+        signals = self._momentum_signals([0.500, 0.506, 0.512, 0.519, 0.525], yes_price=0.525)
+
+        assert signals == []
+
+
+# ── Loss Cooldown Regression Tests ─────────────────────────────────────────────
+
+
+class TestMarketLossCooldown:
+    """Regression tests for avoiding repeated losses on the same market."""
+
+    def setup_method(self):
+        self.bot = PolymarketPaperBot()
+        self.bot.bankroll = 100.0
+        self.bot.max_positions = 8
+
+    @pytest.mark.asyncio
+    async def test_close_loss_records_market_cooldown(self):
+        position = _make_position(pnl=-2.0)
+        position.market_id = "cooldown_market"
+
+        await self.bot._close_position(position, "STOP LOSS")
+
+        assert position.resolved is True
+        assert "cooldown_market" in self.bot._market_loss_cooldown
+
+    @pytest.mark.asyncio
+    async def test_recent_loss_cooldown_blocks_reentry(self):
+        self.bot._market_loss_cooldown["cooldown_market"] = time.time()
+        opp = _make_opp(market_id="cooldown_market", confidence=0.8)
+
+        entered = await self.bot._maybe_enter(opp, [_make_event("Crypto Trend")])
+
+        assert entered is False
+        assert self.bot.positions == {}
+
+    @pytest.mark.asyncio
+    async def test_expired_loss_cooldown_allows_reentry(self):
+        self.bot._market_loss_cooldown["cooldown_market"] = time.time() - self.bot._loss_cooldown_seconds - 1
+        opp = _make_opp(market_id="cooldown_market", confidence=0.8)
+
+        entered = await self.bot._maybe_enter(opp, [_make_event("Crypto Trend")])
+
+        assert entered is True
+        assert len(self.bot.positions) == 1
 
 
 # ── Max Positions Tests ─────────────────────────────────────────────────────────

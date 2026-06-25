@@ -26,13 +26,22 @@ def _active_position(question="Will X happen?", entry_time=0):
     return {'question': question, 'entry_time': entry_time, 'size_usdc': 5.0}
 
 
-def _resolved_position(signal_type, outcome='win', size_usdc=5.0, entry_price=0.5):
+def _resolved_position(signal_type, outcome='win', size_usdc=5.0, entry_price=0.5, pnl=None):
+    if pnl is None:
+        if outcome == 'win' and entry_price > 0:
+            pnl = size_usdc * (1.0 - entry_price) / entry_price
+        elif outcome == 'loss':
+            pnl = -size_usdc
+        else:
+            pnl = 0.0
     return {
         'status': 'resolved',
+        'resolved': True,
         'signal_type': signal_type,
         'outcome': outcome,
         'size_usdc': size_usdc,
         'entry_price': entry_price,
+        'pnl': pnl,
     }
 
 
@@ -209,11 +218,10 @@ class TestEnableDryRun:
 class TestEvaluate:
     def test_resolved_without_outcomes(self):
         """10+ resolved but no PnL computable → EVALUATE."""
-        # Positions with status='resolved' but no outcome field → profit = -size (still computes)
+        # Positions with status='resolved' but no pnl field → profit defaults to 0.
         # To get empty signal_pnl, we need resolved positions that somehow produce no data.
-        # Actually with current logic, any resolved position produces PnL.
+        # Actually with current logic, any resolved position with signal metadata produces PnL.
         # EVALUATE is only reachable if signal_pnl is empty despite resolved >= 10.
-        # This happens if all resolved positions have zero-size and zero-entry-price wins.
         resolved = [{'status': 'resolved', 'signal_type': 'news',
                       'outcome': 'win', 'size_usdc': 0, 'entry_price': 0}
                      for _ in range(10)]
@@ -234,32 +242,39 @@ class TestEvaluate:
 
 class TestComputeSignalPnl:
     def test_win_profit_calculation(self):
-        """Win at 0.5 entry, $5 size → profit = 5 * (1-0.5)/0.5 = $5."""
-        resolved = [_resolved_position('news', 'win', size_usdc=5.0, entry_price=0.5)]
+        """Uses actual pnl field for winning trades."""
+        resolved = [_resolved_position('news', 'win', pnl=4.25)]
         pnl, count, wins = compute_signal_pnl(resolved)
-        assert pnl['news'] == pytest.approx(5.0)
+        assert pnl['news'] == pytest.approx(4.25)
         assert count['news'] == 1
         assert wins['news'] == 1
 
     def test_loss_calculation(self):
-        """Loss at $5 size → profit = -$5."""
-        resolved = [_resolved_position('news', 'loss', size_usdc=5.0)]
+        """Uses actual pnl field for losing trades."""
+        resolved = [_resolved_position('news', 'loss', pnl=-3.75)]
         pnl, count, wins = compute_signal_pnl(resolved)
-        assert pnl['news'] == pytest.approx(-5.0)
+        assert pnl['news'] == pytest.approx(-3.75)
         assert count['news'] == 1
         assert wins.get('news', 0) == 0
 
     def test_multiple_signals_aggregated(self):
         """Two signals, each with multiple trades."""
         resolved = (
-            [_resolved_position('news', 'win', size_usdc=5.0) for _ in range(3)]
-            + [_resolved_position('sentiment', 'loss', size_usdc=5.0) for _ in range(2)]
+            [_resolved_position('news', 'win', pnl=2.0) for _ in range(3)]
+            + [_resolved_position('sentiment', 'loss', pnl=-4.0) for _ in range(2)]
         )
         pnl, count, wins = compute_signal_pnl(resolved)
-        assert pnl['news'] == pytest.approx(15.0)   # 3 × $5
-        assert pnl['sentiment'] == pytest.approx(-10.0)  # 2 × -$5
+        assert pnl['news'] == pytest.approx(6.0)
+        assert pnl['sentiment'] == pytest.approx(-8.0)
         assert count['news'] == 3
         assert count['sentiment'] == 2
+
+    def test_pnl_field_is_source_of_truth(self):
+        """Outcome and entry price are legacy metadata; actual pnl is authoritative."""
+        resolved = [_resolved_position('news', 'win', size_usdc=5.0, entry_price=0.5, pnl=-1.25)]
+        pnl, _, wins = compute_signal_pnl(resolved)
+        assert pnl['news'] == pytest.approx(-1.25)
+        assert wins.get('news', 0) == 0
 
     def test_empty_resolved(self):
         """No resolved positions → empty dicts."""
@@ -271,13 +286,13 @@ class TestComputeSignalPnl:
     def test_signal_type_fallback_to_signals_list(self):
         """If signal_type missing, falls back to signals[0]."""
         resolved = [{'status': 'resolved', 'signals': ['momentum'], 'outcome': 'win',
-                      'size_usdc': 5.0, 'entry_price': 0.5}]
+                      'size_usdc': 5.0, 'entry_price': 0.5, 'pnl': 5.0}]
         pnl, _, _ = compute_signal_pnl(resolved)
         assert 'momentum' in pnl
 
     def test_unknown_signal_when_no_type_info(self):
         """If neither signal_type nor signals present → 'unknown'."""
-        resolved = [{'status': 'resolved', 'outcome': 'loss', 'size_usdc': 5.0}]
+        resolved = [{'status': 'resolved', 'outcome': 'loss', 'size_usdc': 5.0, 'pnl': -5.0}]
         pnl, _, _ = compute_signal_pnl(resolved)
         assert 'unknown' in pnl
 

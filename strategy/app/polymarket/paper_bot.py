@@ -60,6 +60,14 @@ SIGNAL_WEIGHTS = {
     "liquidity_alpha": 0.15,
 }
 
+# Signal types disabled by default after evidence review.
+# Override with POLY_DISABLED_SIGNALS="" to enable all, or a comma-separated list.
+DISABLED_SIGNAL_TYPES = {
+    sig.strip()
+    for sig in os.getenv("POLY_DISABLED_SIGNALS", "momentum").split(",")
+    if sig.strip()
+}
+
 # Max positions per signal type (diversity cap)
 MAX_POSITIONS_PER_SIGNAL = 4
 
@@ -252,6 +260,7 @@ class PolymarketPaperBot:
         self.signal_pnl: Dict[str, float] = {sig: 0.0 for sig in SIGNAL_WEIGHTS}
         self.signal_trade_count: Dict[str, int] = {sig: 0 for sig in SIGNAL_WEIGHTS}
         self.signal_win_count: Dict[str, int] = {sig: 0 for sig in SIGNAL_WEIGHTS}
+        self.disabled_signal_types = set(DISABLED_SIGNAL_TYPES)
 
         # Price history for momentum detection (market_id -> [(timestamp, yes_price)])
         self.price_history: Dict[str, List[Tuple[float, float]]] = {}
@@ -307,8 +316,9 @@ class PolymarketPaperBot:
         self._running = True
         self.start_time = time.time()
         logger.info(
-            "Starting Polymarket Alpha Engine: interval=%ds max_pos=%d size=$%.2f signals=7",
+            "Starting Polymarket Alpha Engine: interval=%ds max_pos=%d size=$%.2f signals=%d disabled=%s",
             self.scan_interval, self.max_positions, self.position_size,
+            len(SIGNAL_WEIGHTS), sorted(self.disabled_signal_types),
         )
         logger.info(
             "Kill switch: daily_loss=$%.2f max_dd=%.0f%% max_consec_losses=%d dry_run=%s",
@@ -321,6 +331,7 @@ class PolymarketPaperBot:
             logger.info("Market blocklist: %s", self._market_blocklist)
 
         await self._restore_state()
+        await self._save_state()
         self._task = asyncio.create_task(self._scan_loop())
 
     async def stop(self):
@@ -836,6 +847,9 @@ class PolymarketPaperBot:
                             reason=f"Stale market: liq/vol={liq_ratio:.3f}, price={entry_price:.3f}. Mean reversion to 0.50.",
                             metadata={"liq_vol_ratio": liq_ratio, "distance_to_mid": dist},
                         ))
+
+        if self.disabled_signal_types:
+            signals = [s for s in signals if s.signal_type not in self.disabled_signal_types]
 
         return signals
 
@@ -1490,6 +1504,7 @@ class PolymarketPaperBot:
                 "signal_pnl": self.signal_pnl,
                 "signal_trade_count": self.signal_trade_count,
                 "signal_win_count": self.signal_win_count,
+                "disabled_signal_types": sorted(self.disabled_signal_types),
                 # Kill switch state
                 "kill_switch_active": self._kill_switch_active,
                 "kill_reason": self._kill_reason,
@@ -1573,6 +1588,7 @@ class PolymarketPaperBot:
                 "min_liquidity": self.min_liquidity,
                 "min_volume": self.min_volume,
                 "scan_interval": self.scan_interval,
+                "disabled_signals": sorted(self.disabled_signal_types),
             },
             "positions": {
                 "active": active,
@@ -1589,6 +1605,11 @@ class PolymarketPaperBot:
             "alpha": {
                 "signals_detected": len(self.recent_signals),
                 "signal_types": list(SIGNAL_WEIGHTS.keys()),
+                "active_signal_types": [
+                    sig for sig in SIGNAL_WEIGHTS.keys()
+                    if sig not in self.disabled_signal_types
+                ],
+                "disabled_signal_types": sorted(self.disabled_signal_types),
                 "crypto_tracking": {k: round(v, 2) for k, v in self._crypto_snapshot.items()},
                 "price_history_markets": len(self.price_history),
                 "news_headlines": len(self._news_headlines),

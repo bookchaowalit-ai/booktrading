@@ -22,6 +22,19 @@ Notes: [what changed, why, what to watch]
 
 ## Log
 
+### 2026-06-25 — Momentum Signal Disabled
+
+- Active positions: 14
+- Resolved trades: 6
+- Kill switch: ACTIVE (paper bot max drawdown 15.84%)
+- Decision: WAIT
+- Bankroll: $84.54
+- Signal action: `momentum` disabled by default via `POLY_DISABLED_SIGNALS=momentum`
+- Evidence: momentum PnL $-10.93 over 4 resolved trades, 0% win rate
+- Notes: This is a risk-tuning change only. Kill switch remains active; no dry-run reset and no live trading.
+
+---
+
 ### 2026-06-23 — State Consistency / Risk Source Audit
 
 - Active positions: 14

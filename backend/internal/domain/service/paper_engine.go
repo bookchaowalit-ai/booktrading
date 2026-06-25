@@ -376,6 +376,29 @@ func (e *PaperEngine) removePosition(symbol string) {
 	e.portfolio.Positions = positions
 }
 
+// CancelOrder cancels a pending order by ID
+func (e *PaperEngine) CancelOrder(orderID string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	order, exists := e.orders[orderID]
+	if !exists {
+		return fmt.Errorf("order %s not found", orderID)
+	}
+	if order.Status != model.PaperOrderStatusPending {
+		return fmt.Errorf("order %s is %s, cannot cancel", orderID, order.Status)
+	}
+
+	order.Status = model.PaperOrderStatusCancelled
+	logger.Info("Paper order cancelled",
+		"id", orderID,
+		"symbol", order.Symbol,
+		"side", order.Side,
+		"limitPrice", order.LimitPrice,
+	)
+	return nil
+}
+
 // Reset resets the paper trading engine to initial state
 func (e *PaperEngine) Reset() {
 	e.mu.Lock()
