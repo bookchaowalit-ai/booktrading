@@ -46,6 +46,7 @@ class GridConfig:
     max_position: float = 0.001        # max position size in base asset
     poll_interval_sec: int = 60        # how often to check prices
     max_notional: float = DEFAULT_MAX_NOTIONAL  # safety cap in quote currency (THB or USD)
+    price_decimals: int = 2            # decimal places for limit prices (0 = integer)
 
 
 def validate_grid_config(cfg: GridConfig, ref_price: float = 0.0) -> List[str]:
@@ -78,7 +79,7 @@ def safe_paper_defaults() -> List[GridConfig]:
     """Conservative paper defaults — aligned with real_grid_bot.py BTCTHB config.
 
     Exposure per symbol: ~฿2,120 max (0.001 BTC × ฿2.1M).
-    Total max exposure across all symbols: ~฿2,120.
+    Total max exposure across all symbols: ~฿3,200.
     """
     return [
         GridConfig(
@@ -88,6 +89,16 @@ def safe_paper_defaults() -> List[GridConfig]:
             order_size=0.00005,    # ~฿106 per order
             max_position=0.001,    # ~฿2,120 max exposure
             max_notional=3000.0,   # ฿3,000 cap (≈$85)
+            price_decimals=0,      # tickSize=1.0, integer prices
+        ),
+        GridConfig(
+            symbol="ETHTHB",
+            grid_spacing_pct=2.0,
+            grid_levels=2,
+            order_size=0.002,      # ~฿108 per order (above 100 THB min notional)
+            max_position=0.02,     # ~฿1,085 max exposure
+            max_notional=1500.0,   # ฿1,500 cap (≈$42)
+            price_decimals=0,      # tickSize=1.0, integer prices
         ),
     ]
 
@@ -197,9 +208,10 @@ class GridBot:
         await self._cancel_stale_orders(cfg, state, price, spacing)
 
         # ── Place orders at active grid levels ──
+        rnd = cfg.price_decimals
         for level in range(1, cfg.grid_levels + 1):
-            buy_price = round(price - (spacing * level), 2)
-            sell_price = round(price + (spacing * level), 2)
+            buy_price = round(price - (spacing * level), rnd)
+            sell_price = round(price + (spacing * level), rnd)
 
             # Place buy if not already active at this level
             if not state.active_buys.get(buy_price):
@@ -217,9 +229,10 @@ class GridBot:
         # Calculate active grid levels
         active_buy_prices = set()
         active_sell_prices = set()
+        rnd = cfg.price_decimals
         for level in range(1, cfg.grid_levels + 1):
-            active_buy_prices.add(round(price - (spacing * level), 2))
-            active_sell_prices.add(round(price + (spacing * level), 2))
+            active_buy_prices.add(round(price - (spacing * level), rnd))
+            active_sell_prices.add(round(price + (spacing * level), rnd))
 
         # Cancel stale BUY orders (price no longer in active grid)
         stale_buy_prices = [p for p in state.active_buys if p not in active_buy_prices]
