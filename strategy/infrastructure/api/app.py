@@ -194,9 +194,13 @@ async def lifespan(app: FastAPI):
     grpc_client_manager = GRPCClientManager(host=grpc_host, port=grpc_port)
     grpc_client_manager.connect_with_retry()
 
-    # Initialize Redis adapter
+    # Initialize Redis adapter (non-fatal: grid bot uses paper engine HTTP, not Redis)
     redis_adapter = RedisAdapter(host=redis_host, port=redis_port, password=redis_password)
-    await redis_adapter.connect()
+    try:
+        await redis_adapter.connect()
+    except Exception as e:
+        logger.warning("Redis unavailable at startup, continuing without it: %s", e)
+        redis_adapter = None
 
     # Start grid trading bot as background task (PAPER trading)
     if DISABLE_PAPER_BOT:
