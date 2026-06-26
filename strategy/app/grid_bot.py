@@ -78,8 +78,8 @@ def validate_grid_config(cfg: GridConfig, ref_price: float = 0.0) -> List[str]:
 def safe_paper_defaults() -> List[GridConfig]:
     """Conservative paper defaults — aligned with real_grid_bot.py BTCTHB config.
 
-    Exposure per symbol: ~฿2,120 max (0.001 BTC × ฿2.1M).
-    Total max exposure across all symbols: ~฿3,200.
+    Exposure per symbol: ~฿1,000-2,120 max.
+    Total max exposure across all symbols: ~฿6,200.
     """
     return [
         GridConfig(
@@ -99,6 +99,24 @@ def safe_paper_defaults() -> List[GridConfig]:
             max_position=0.02,     # ~฿1,085 max exposure
             max_notional=1500.0,   # ฿1,500 cap (≈$42)
             price_decimals=0,      # tickSize=1.0, integer prices
+        ),
+        GridConfig(
+            symbol="SOLTHB",
+            grid_spacing_pct=2.5,
+            grid_levels=2,
+            order_size=0.05,       # ~฿111 per order (above 100 THB min notional)
+            max_position=0.5,      # ~฿1,112 max exposure
+            max_notional=1500.0,   # ฿1,500 cap (≈$42)
+            price_decimals=2,      # tickSize=0.01
+        ),
+        GridConfig(
+            symbol="XRPTHB",
+            grid_spacing_pct=2.5,
+            grid_levels=2,
+            order_size=3.0,        # ~฿102 per order (above 100 THB min notional)
+            max_position=30.0,     # ~฿1,023 max exposure
+            max_notional=1500.0,   # ฿1,500 cap (≈$42)
+            price_decimals=2,      # tickSize=0.01
         ),
     ]
 
