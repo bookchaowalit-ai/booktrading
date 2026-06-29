@@ -452,8 +452,24 @@ async def _background_market_scan(app_instance):
                         confidence=opp.confidence,
                         metadata=opp.metadata if hasattr(opp, 'metadata') else {},
                     )
+                
+                # Auto-evaluate mature signals (24h/7d) against current prices
+                current_prices = {q.symbol.split("THB")[0]: q.price for q in result.opportunities if hasattr(q, 'current_price')}
+                # Also fetch crypto prices from quotes
+                from app.market_intel.sources.crypto import CryptoSource
+                try:
+                    crypto_source = CryptoSource()
+                    quotes = await crypto_source.fetch_quotes(symbols=crypto_syms)
+                    for q in quotes:
+                        base = q.symbol.replace("THB", "").replace("USDT", "")
+                        current_prices[base] = q.price
+                except Exception:
+                    pass
+                eval_result = await signal_logger.evaluate_signals(current_prices)
+                if eval_result.get("evaluated", 0) > 0:
+                    logger.info(f"Signal evaluation: {eval_result['evaluated']} signals evaluated, {eval_result['total_signals']} total")
             except Exception as e:
-                logger.warning(f"Failed to log signals: {e}")
+                logger.warning(f"Failed to log/evaluate signals: {e}")
 
             # Extract high/critical severity alerts
             from app.market_intel.models import Severity
