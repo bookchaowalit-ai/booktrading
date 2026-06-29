@@ -454,7 +454,7 @@ async def _background_market_scan(app_instance):
                     )
                 
                 # Auto-evaluate mature signals (24h/7d) against current prices
-                current_prices = {q.symbol.split("THB")[0]: q.price for q in result.opportunities if hasattr(q, 'current_price')}
+                current_prices = {q.symbol.split("THB")[0]: q.current_price for q in result.opportunities if hasattr(q, 'current_price')}
                 # Also fetch crypto prices from quotes
                 from app.market_intel.sources.crypto import CryptoSource
                 try:
