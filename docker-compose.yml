@@ -109,6 +109,9 @@ services:
       context: ./strategy
       dockerfile: Dockerfile
     container_name: trading-bot-strategy
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     ports:
       - "8001:8000"
     environment:

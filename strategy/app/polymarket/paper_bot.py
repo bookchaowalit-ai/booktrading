@@ -1516,6 +1516,7 @@ class PolymarketPaperBot:
                 "daily_pnl": self._daily_pnl,
                 "daily_pnl_date": self._daily_pnl_date,
                 "consecutive_losses": self._consecutive_losses,
+                "api_failure_count": self._api_failure_count,
             }
             await self._redis.set("poly_paper:state", json.dumps(data))
         except Exception as e:
@@ -1559,6 +1560,7 @@ class PolymarketPaperBot:
             self._daily_pnl = data.get("daily_pnl", 0.0)
             self._daily_pnl_date = data.get("daily_pnl_date", "")
             self._consecutive_losses = data.get("consecutive_losses", 0)
+            self._api_failure_count = data.get("api_failure_count", 0)
             if self._kill_switch_active:
                 logger.warning("Restored with KILL SWITCH ACTIVE: %s", self._kill_reason)
 
