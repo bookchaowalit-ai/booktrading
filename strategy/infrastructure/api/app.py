@@ -3,6 +3,7 @@ FastAPI application for the strategy service.
 Provides REST API for strategy control and monitoring.
 """
 import asyncio
+import json
 import logging
 import math
 import os
@@ -405,6 +406,35 @@ _MAX_ALERTS = 100
 _last_scan_result: dict = {}
 _prev_gate_states: dict = {}  # Track gate status transitions for notifications
 _notified_milestones: set = set()  # Track which milestones we've already notified
+_MILESTONE_REDIS_KEY = "evidence_loop:notified_milestones"
+_GATE_STATE_REDIS_KEY = "evidence_loop:gate_states"
+
+
+async def _load_notification_state(redis_client):
+    """Load milestone and gate state from Redis to survive restarts."""
+    global _notified_milestones, _prev_gate_states
+    if not redis_client:
+        return
+    try:
+        raw_ms = await redis_client.get(_MILESTONE_REDIS_KEY)
+        if raw_ms:
+            _notified_milestones = set(json.loads(raw_ms))
+        raw_gs = await redis_client.get(_GATE_STATE_REDIS_KEY)
+        if raw_gs:
+            _prev_gate_states = json.loads(raw_gs)
+    except Exception as e:
+        logger.debug(f"Could not load notification state from Redis: {e}")
+
+
+async def _save_notification_state(redis_client):
+    """Persist milestone and gate state to Redis."""
+    if not redis_client:
+        return
+    try:
+        await redis_client.set(_MILESTONE_REDIS_KEY, json.dumps(list(_notified_milestones)))
+        await redis_client.set(_GATE_STATE_REDIS_KEY, json.dumps(_prev_gate_states))
+    except Exception as e:
+        logger.debug(f"Could not save notification state to Redis: {e}")
 
 
 async def _background_market_scan(app_instance):
@@ -414,6 +444,15 @@ async def _background_market_scan(app_instance):
     """
     global _market_alerts, _last_scan_result, _prev_gate_states, _notified_milestones
     await asyncio.sleep(30)  # Wait for startup to complete
+
+    # Load persisted notification state from Redis (survive restarts)
+    try:
+        _redis = redis_adapter.redis if redis_adapter and redis_adapter.redis else None
+        await _load_notification_state(_redis)
+        if _notified_milestones:
+            logger.info(f"Loaded {_notified_milestones.__len__()} milestone notifications from Redis")
+    except Exception as e:
+        logger.debug(f"Failed to load notification state: {e}")
 
     while True:
         try:
@@ -526,6 +565,13 @@ async def _background_market_scan(app_instance):
                             logger.info(f"Milestone reached: {threshold} signals")
                 except Exception as ms_err:
                     logger.debug(f"Gate/milestone notification skipped: {ms_err}")
+
+                # Persist notification state to Redis
+                try:
+                    _redis = redis_adapter.redis if redis_adapter and redis_adapter.redis else None
+                    await _save_notification_state(_redis)
+                except Exception:
+                    pass
 
             except Exception as e:
                 logger.warning(f"Failed to log/evaluate signals: {e}")
