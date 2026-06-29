@@ -1142,6 +1142,105 @@ function PerformanceTab({ stats, signals }: { stats: SignalPerformanceStats | nu
         </Card>
       </div>
 
+      {/* Visual Charts */}
+      {Object.keys(stats.by_source).length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Signal Distribution Chart */}
+          <Card className="p-4">
+            <h4 className="font-semibold text-gray-900 dark:text-white mb-3">Signal Distribution by Source</h4>
+            <div className="space-y-2">
+              {Object.entries(stats.by_source)
+                .sort((a, b) => b[1].total - a[1].total)
+                .map(([source, data]) => {
+                  const maxTotal = Math.max(...Object.values(stats.by_source).map(d => d.total));
+                  const widthPct = maxTotal > 0 ? (data.total / maxTotal) * 100 : 0;
+                  const colors: Record<string, string> = {
+                    polymarket: 'bg-purple-500',
+                    dexscreener: 'bg-green-500',
+                    crypto: 'bg-blue-500',
+                    binance_th: 'bg-yellow-500',
+                    yahoo_finance: 'bg-red-500',
+                    macro: 'bg-indigo-500',
+                    airdrops: 'bg-pink-500',
+                    degen: 'bg-orange-500',
+                    curated: 'bg-cyan-500',
+                  };
+                  const color = colors[source] || 'bg-gray-500';
+                  return (
+                    <div key={source} className="flex items-center gap-2">
+                      <span className="w-20 text-xs text-gray-600 dark:text-gray-400 capitalize truncate">{source}</span>
+                      <div className="flex-1 h-6 bg-gray-100 dark:bg-gray-800 rounded-lg overflow-hidden">
+                        <div
+                          className={`h-full ${color} rounded-lg transition-all duration-500 flex items-center justify-end pr-2`}
+                          style={{ width: `${widthPct}%` }}
+                        >
+                          <span className="text-xs text-white font-medium">{data.total}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          </Card>
+
+          {/* Accuracy Gauge */}
+          <Card className="p-4">
+            <h4 className="font-semibold text-gray-900 dark:text-white mb-3">Accuracy Overview</h4>
+            <div className="flex items-center justify-around py-4">
+              {/* 24h Gauge */}
+              <div className="text-center">
+                <div className="relative w-24 h-24">
+                  <svg className="w-24 h-24 transform -rotate-90">
+                    <circle cx="48" cy="48" r="40" stroke="currentColor" strokeWidth="8" fill="none" className="text-gray-200 dark:text-gray-700" />
+                    <circle
+                      cx="48" cy="48" r="40"
+                      stroke="currentColor"
+                      strokeWidth="8"
+                      fill="none"
+                      strokeDasharray={`${(stats.accuracy_24h.rate / 100) * 251.2} 251.2`}
+                      strokeLinecap="round"
+                      className={stats.accuracy_24h.rate >= 70 ? 'text-green-500' : stats.accuracy_24h.rate >= 50 ? 'text-yellow-500' : 'text-red-500'}
+                    />
+                  </svg>
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <span className={`text-xl font-bold ${accuracyColor(stats.accuracy_24h.rate)}`}>
+                      {stats.accuracy_24h.rate > 0 ? `${stats.accuracy_24h.rate}%` : '—'}
+                    </span>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-500 mt-2">24h Accuracy</p>
+                <p className="text-xs text-gray-400">{stats.evaluated_24h} evaluated</p>
+              </div>
+
+              {/* 7d Gauge */}
+              <div className="text-center">
+                <div className="relative w-24 h-24">
+                  <svg className="w-24 h-24 transform -rotate-90">
+                    <circle cx="48" cy="48" r="40" stroke="currentColor" strokeWidth="8" fill="none" className="text-gray-200 dark:text-gray-700" />
+                    <circle
+                      cx="48" cy="48" r="40"
+                      stroke="currentColor"
+                      strokeWidth="8"
+                      fill="none"
+                      strokeDasharray={`${(stats.accuracy_7d.rate / 100) * 251.2} 251.2`}
+                      strokeLinecap="round"
+                      className={stats.accuracy_7d.rate >= 70 ? 'text-green-500' : stats.accuracy_7d.rate >= 50 ? 'text-yellow-500' : 'text-red-500'}
+                    />
+                  </svg>
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <span className={`text-xl font-bold ${accuracyColor(stats.accuracy_7d.rate)}`}>
+                      {stats.accuracy_7d.rate > 0 ? `${stats.accuracy_7d.rate}%` : '—'}
+                    </span>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-500 mt-2">7d Accuracy</p>
+                <p className="text-xs text-gray-400">{stats.evaluated_7d} evaluated</p>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
       {/* Performance by Source */}
       {Object.keys(stats.by_source).length > 0 && (
         <Card className="p-4">
