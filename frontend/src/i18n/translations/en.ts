@@ -53,6 +53,7 @@ export const en = {
   'nav.settings': 'Settings',
   'nav.dex': 'DEX Trading',
   'nav.polyPaper': 'Polymarket',
+  'nav.arbPaper': 'Arbitrage',
   'nav.docs': 'Documentation',
   'nav.logout': 'Logout',
   

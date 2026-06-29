@@ -46,16 +46,22 @@ This outputs a structured decision block: current state, reason, and what trigge
 ## 🚀 Features
 
 ### 🤖 Trading Bot
-- **Grid Trading** - Automated buy/sell within price ranges
+- **Grid Trading** - Automated buy/sell within price ranges (5 pairs: BTC, ETH, SOL, XRP, BNB)
 - **Exchange Integrations** - Binance TH, Bitkub, Binance Global research and grid infrastructure
-- **Paper Trading Fallback** - Safe testing without real money
+- **Paper Trading Fallback** - Safe testing without real money ($10K paper balance)
+- **Paper Grid PnL** - Real-time profit & loss tracking for paper positions
 - **Activity Feed** - Real-time bot activity tracking
+- **Alerting System** - EventBus → AlertService pipeline for real-time notifications
 
 ### 🧠 AI & Analytics
 - **AI Price Prediction** - 5 technical indicators (SMA/EMA/RSI/MACD/Bollinger)
-- **Arbitrage Detection** - Find profit opportunities across exchanges
+- **Arbitrage Detection** - Find profit opportunities across exchanges (dedicated dashboard page)
+- **Backtest vs Paper Comparison** - Side-by-side strategy performance view
 - **Performance Charts** - Interactive portfolio visualization
 - **Analytics Dashboard** - Comprehensive trading statistics
+- **Evidence Gate Automation** - Automated evidence collection and readiness gate tracking
+- **System Health Dashboard** - Live container/service health monitoring
+- **Daily Report Auto-Generation** - Automated daily operational snapshot
 
 ### 💼 Multi-Exchange
 - **Binance Thailand** - Full trading support
@@ -64,20 +70,25 @@ This outputs a structured decision block: current state, reason, and what trigge
 - **Balance Aggregation** - View all balances in one place
 
 ### 🎨 User Experience
-- **5 Main Pages** — the single source of truth for the observe-only dashboard:
-  - **Today (Command Center)** — "What to do now" — current decision, kill switch, capital, next triggers
-  - **Evidence** — "What happened" — timeline, gates checklist, paper trading positions, activity feed
-  - **Research** — "What's worth watching" — crypto candidates, Polymarket reviews, intelligence summary
-  - **System** — "Is everything healthy" — component health, risk sources, grid/bot status (auto-refresh 30s)
-  - **Daily Report** — "Operational snapshot" — trade journal summary, daily PnL, system overview
+- **32 Dashboard Pages** — comprehensive financial command center:
+  - **Core 5 (observe-only):**
+    - **Today (Command Center)** — "What to do now" — current decision, kill switch, capital, next triggers
+    - **Evidence** — "What happened" — timeline, gates checklist, paper trading positions, activity feed
+    - **Research** — "What's worth watching" — crypto candidates, Polymarket reviews, intelligence summary
+    - **System** — "Is everything healthy" — component health, risk sources, grid/bot status (auto-refresh 30s)
+    - **Daily Report** — "Operational snapshot" — trade journal summary, daily PnL, system overview
+  - **Trading Pages:** arbitrage, polymarket, paper-trading, grid-trading, dca, copy-trading, rebalancing, trade-journal
+  - **Analytics Pages:** analytics, backtest, portfolio, market-intel, sentiment
+  - **Operations Pages:** alerts, monitoring, history, wallet, finance, bot, strategy
+  - **Other:** ai-insights, news, dex, docs, settings, evidence
 - **Route Consolidation** — Batch 1+2 extraction complete: 38 routes categorised into 5 keep-main, 14 extracted-to-component, 8 advanced-only, 11 hidden/deferred
 - **Observe-Only Default** - No trade/start/configure controls in the main flow
 - **Advanced Mode** - Action-heavy pages hidden unless `NEXT_PUBLIC_ADVANCED_UI=true`
 - **Dark/Light Theme** - Automatic theme switching
 - **Mobile Responsive** - Works on all devices
-- **Toast Notifications** - Real-time alerts
+- **Toast Notifications** - Real-time alerts via EventBus → AlertService pipeline
 - **Empty States** - Clear messaging when no data
-- **Error Boundaries** - Graceful error handling with retry buttons on all 5 pages
+- **Error Boundaries** - Graceful error handling with retry buttons on all pages
 
 ### 🔐 Safety & CI
 - **CI/CD Pipeline** — automated testing, deploy gated (manual only)
@@ -291,9 +302,9 @@ docker compose logs -f strategy
 
 - [ ] Multi-user support with RBAC
 - [ ] Mobile app (React Native)
-- [ ] Advanced trading strategies (DCA, Rebalancing)
-- [ ] Slack/Discord notifications
-- [ ] Backtesting with historical data
+- [x] ~~Advanced trading strategies (DCA, Rebalancing)~~ — Dashboard pages exist (DCA, rebalancing, copy-trading)
+- [x] ~~Slack/Discord notifications~~ — Alerting system operational (EventBus → AlertService)
+- [x] ~~Backtesting with historical data~~ — Backtest vs Paper comparison view implemented
 - [ ] Copy trading functionality
 - [ ] Advanced risk management
 - [ ] Portfolio optimization algorithms

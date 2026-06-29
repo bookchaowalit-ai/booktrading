@@ -155,6 +155,12 @@ services:
       - BINANCE_PRICE_API=https://api.binance.th
       - BINANCE_TH_USE_TESTNET=${BINANCE_TH_USE_TESTNET:-true}
       - EXCHANGE_PROVIDER=${EXCHANGE_PROVIDER:-binance_th}
+      # Brain Layer 3: Sentiment Analysis
+      - CRYPTOPANIC_AUTH_TOKEN=${CRYPTOPANIC_AUTH_TOKEN:-}
+      # Market Intel Notifications
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
     volumes:
       - ./docs:/app/docs:ro
       - ./data:/app/data

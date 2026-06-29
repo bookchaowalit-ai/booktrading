@@ -8,6 +8,7 @@ import math
 import os
 import random
 import time
+import httpx
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -202,6 +203,12 @@ async def lifespan(app: FastAPI):
         logger.warning("Redis unavailable at startup, continuing without it: %s", e)
         redis_adapter = None
 
+    # Start Brain intelligence layer (before grid bot, since grid bot queries it)
+    from app.brain.brain import get_brain
+    brain = get_brain()
+    await brain.start()
+    logger.info("Brain intelligence layer started (technical + funding + sentiment)")
+
     # Start grid trading bot as background task (PAPER trading)
     if DISABLE_PAPER_BOT:
         logger.info("Paper trading bot DISABLED via DISABLE_PAPER_BOT env var")
@@ -228,6 +235,14 @@ async def lifespan(app: FastAPI):
         poly_paper_bot.set_redis(redis_adapter.redis)
     await poly_paper_bot.start()
     logger.info("Polymarket paper trading bot started (prediction market simulation)")
+
+    # Start Arbitrage Paper Trading Bot
+    from app.arbitrage_paper_bot import get_arb_paper_bot
+    arb_paper_bot = get_arb_paper_bot()
+    if redis_adapter and redis_adapter.redis:
+        arb_paper_bot._redis = redis_adapter.redis
+    await arb_paper_bot.start()
+    logger.info("Arbitrage paper trading bot started (cross-exchange simulation)")
 
     # Start webhook notifier for Telegram/Discord alerts
     from app.webhook_notifier import get_webhook_notifier
@@ -309,6 +324,11 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
+    # Stop Brain intelligence layer
+    from app.brain.brain import get_brain
+    brain = get_brain()
+    await brain.stop()
+
     # Stop webhook notifier
     from app.webhook_notifier import get_webhook_notifier
     webhook_notifier = get_webhook_notifier()
@@ -403,7 +423,7 @@ async def _background_market_scan(app_instance):
             from app.market_intel import get_scanner
             crypto_syms = [s.strip() for s in cfg.get("market_intel_crypto_symbols", "BTCTHB,ETHTHB,BTCUSDT,ETHUSDT").split(",") if s.strip()]
             stock_syms = [s.strip() for s in cfg.get("market_intel_stock_symbols", "SPY,QQQ,AAPL,MSFT,GOOGL").split(",") if s.strip()]
-            sources = [s.strip() for s in cfg.get("market_intel_sources", "crypto,prediction,stocks,macro").split(",") if s.strip()]
+            sources = [s.strip() for s in cfg.get("market_intel_sources", "crypto,prediction,stocks,macro,airdrops,degen,binance_alpha,arb").split(",") if s.strip()]
 
             scanner = get_scanner(
                 crypto_symbols=crypto_syms,
@@ -415,6 +435,25 @@ async def _background_market_scan(app_instance):
 
             result = await scanner.scan_all(min_confidence=0.4)
             _last_scan_result = result.model_dump()
+
+            # Log signals to performance tracker
+            try:
+                from app.market_intel.signal_logger import get_signal_logger
+                signal_logger = get_signal_logger(redis_adapter.redis if redis_adapter and redis_adapter.redis else None)
+                for opp in result.opportunities:
+                    await signal_logger.log_signal(
+                        symbol=opp.symbol,
+                        market_type=opp.market_type.value,
+                        source=opp.source,
+                        signal_type=opp.opportunity_type.value,
+                        severity=opp.severity.value,
+                        title=opp.title,
+                        price_at_signal=opp.current_price,
+                        confidence=opp.confidence,
+                        metadata=opp.metadata if hasattr(opp, 'metadata') else {},
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to log signals: {e}")
 
             # Extract high/critical severity alerts
             from app.market_intel.models import Severity
@@ -442,6 +481,40 @@ async def _background_market_scan(app_instance):
                 if len(_market_alerts) > _MAX_ALERTS:
                     _market_alerts = _market_alerts[-_MAX_ALERTS:]
                 logger.info(f"Market scan: {result.total_opportunities} opps, {len(new_alerts)} high-severity alerts")
+
+                # Send Telegram notifications for new high-severity alerts
+                try:
+                    from app.webhook_notifier import get_webhook_notifier
+                    notifier = get_webhook_notifier()
+                    for alert in new_alerts[:5]:  # Limit to top 5 to avoid spam
+                        await notifier.send_market_opportunity(
+                            symbol=alert["symbol"],
+                            market=alert["market"],
+                            severity=alert["severity"],
+                            title=alert["title"],
+                            description=alert["description"],
+                            confidence=alert["confidence"],
+                            price=alert.get("price", 0),
+                            opp_type=alert.get("type", ""),
+                        )
+                    # Send summary if significant opportunities found
+                    if result.total_opportunities > 0:
+                        top_3 = [
+                            {
+                                "symbol": opp.symbol,
+                                "title": opp.title,
+                                "confidence": opp.confidence,
+                            }
+                            for opp in result.opportunities[:3]
+                        ]
+                        await notifier.send_market_scan_summary(
+                            total_opps=result.total_opportunities,
+                            by_severity=result.by_severity,
+                            by_market=result.by_market,
+                            top_opps=top_3,
+                        )
+                except Exception as notif_err:
+                    logger.debug(f"Notification send skipped: {notif_err}")
             else:
                 logger.debug(f"Market scan: {result.total_opportunities} opps, no high-severity alerts")
 
@@ -992,6 +1065,15 @@ def register_routes(app: FastAPI):
             },
         }
 
+    # ── Paper Grid Bot Endpoints ──
+
+    @app.get("/api/grid/status")
+    async def paper_grid_status():
+        """Get paper grid bot status (geometric + DGT + confluence)."""
+        from app.grid_bot import get_grid_bot
+        bot = get_grid_bot()
+        return bot.get_status()
+
     # ── Real Grid Bot Endpoints ──
 
     @app.get("/api/real-grid/status")
@@ -1094,6 +1176,57 @@ def register_routes(app: FastAPI):
         rm = get_risk_manager()
         rm.reset_kill_switch()
         return {"status": "reset", "message": "Risk manager kill switch reset"}
+
+    # ── Brain Intelligence Layer Endpoints ──
+
+    @app.get("/api/brain/status")
+    async def brain_status():
+        """Get Brain intelligence layer status — all directives and layer signals."""
+        from app.brain.brain import get_brain
+        brain = get_brain()
+        return {
+            "running": brain._running,
+            "directives": brain.get_all_directives(),
+            "refresh_interval": brain._refresh_interval,
+            "circuit_breaker": brain.circuit_breaker.get_status(),
+        }
+
+    @app.get("/api/brain/directive/{symbol}")
+    async def brain_directive(symbol: str, current_price: float = 0.0):
+        """Get current Brain directive for a specific symbol."""
+        from app.brain.brain import get_brain
+        brain = get_brain()
+        directive = await brain.get_directive(symbol.upper(), current_price=current_price)
+        return {
+            "symbol": directive.symbol,
+            "spacing_multiplier": directive.spacing_multiplier,
+            "center_offset_pct": directive.center_offset_pct,
+            "pause_buys": directive.pause_buys,
+            "pause_sells": directive.pause_sells,
+            "confidence": directive.confidence,
+            "technical": directive.technical,
+            "funding": directive.funding,
+            "sentiment": directive.sentiment,
+            "updated_at": directive.updated_at,
+        }
+
+    @app.post("/api/brain/refresh")
+    @auth_required
+    async def brain_refresh(request: Request):
+        """Force refresh all Brain signals (bypass cache)."""
+        from app.brain.brain import get_brain
+        brain = get_brain()
+        # Clear cache to force refresh on next get_directive
+        brain._last_refresh.clear()
+        return {"status": "refreshed", "message": "Brain signals will refresh on next grid tick"}
+
+    @app.post("/api/brain/reset-cb")
+    async def brain_reset_cb(symbol: str = None):
+        """Manually reset circuit breaker for a symbol (or all if symbol not specified)."""
+        from app.brain.brain import get_brain
+        brain = get_brain()
+        brain.circuit_breaker.reset(symbol.upper() if symbol else None)
+        return {"status": "reset", "symbol": symbol or "all"}
 
     # ── Trade Journal Endpoints (from strategy side) ──
 
@@ -1249,6 +1382,13 @@ def register_routes(app: FastAPI):
             atr_multiplier: float = 1.5
             min_spacing_pct: float = 0.5
             max_spacing_pct: float = 5.0
+            # ── Advanced strategy options ──
+            grid_mode: str = "arithmetic"  # "arithmetic" | "geometric"
+            dgt_enabled: bool = False      # DGT dynamic grid reset + profit reinvest
+            dgt_reinvest_pct: float = 0.5  # % of profits to reinvest
+            enable_entry_confluence: bool = False  # RSI+MACD+Volume gate
+            rsi_buy_threshold: float = 45.0
+            volume_multiplier: float = 1.5
         """
         from app.backtester import GridBacktester, BacktestConfig
 
@@ -1265,6 +1405,12 @@ def register_routes(app: FastAPI):
             atr_multiplier=request.get("atr_multiplier", 1.5),
             min_spacing_pct=request.get("min_spacing_pct", 0.5),
             max_spacing_pct=request.get("max_spacing_pct", 5.0),
+            grid_mode=request.get("grid_mode", "arithmetic"),
+            dgt_enabled=request.get("dgt_enabled", False),
+            dgt_reinvest_pct=request.get("dgt_reinvest_pct", 0.5),
+            enable_entry_confluence=request.get("enable_entry_confluence", False),
+            rsi_buy_threshold=request.get("rsi_buy_threshold", 45.0),
+            volume_multiplier=request.get("volume_multiplier", 1.5),
         )
         days = request.get("days", 30)
         interval = request.get("interval", "1h")
@@ -1296,6 +1442,11 @@ def register_routes(app: FastAPI):
                 "atr_spacing_avg": result.atr_spacing_avg,
                 "atr_spacing_min": result.atr_spacing_min,
                 "atr_spacing_max": result.atr_spacing_max,
+                "grid_mode": result.grid_mode,
+                "dgt_resets": result.dgt_resets,
+                "dgt_reinvested_thb": result.dgt_reinvested_thb,
+                "confluence_buys_blocked": result.confluence_buys_blocked,
+                "final_order_size": result.final_order_size,
                 "trades": [
                     {
                         "timestamp": t.timestamp,
@@ -1369,6 +1520,217 @@ def register_routes(app: FastAPI):
         }
 
     # ── Polymarket Endpoints ──
+
+    @app.post("/api/backtest/compare")
+    async def compare_strategies(request: dict):
+        """
+        Run 11 strategy variants side-by-side for comparison:
+          1. baseline: arithmetic grid (legacy)
+          2. geometric: geometric grid only
+          3. dgt: arithmetic + DGT reset + profit reinvest
+          4. full: geometric + DGT + confluence entry timing
+          5. full+ob1: full + order book imbalance override
+          6. full+ob1+trend: full + ob1 + EMA trend filter
+          7. full+ob1+desperation: full + ob1 + anti-over-filtering
+          8. full+ob1+desperation+adaptive: + ATR-based dynamic grid spacing
+          9. full+ob1+desp+mtf: + multi-timeframe confirmation (4h trend)
+         10. full+ob1+desp+ses: + statistical entry scoring
+         11. full+ob1+desp+mtf+ses: all improvements combined
+        """
+        from app.backtester import GridBacktester, BacktestConfig
+
+        symbol = request.get("symbol", "BTCTHB")
+        days = request.get("days", 30)
+        interval = request.get("interval", "1h")
+        spacing = request.get("grid_spacing_pct", 1.5)
+        levels = request.get("grid_levels", 2)
+        order_size = request.get("order_size", 0.00005)
+        capital = request.get("initial_capital_thb", 10000.0)
+
+        configs = {
+            "baseline": BacktestConfig(
+                symbol=symbol, grid_spacing_pct=spacing, grid_levels=levels,
+                order_size=order_size, initial_capital_thb=capital,
+            ),
+            "geometric": BacktestConfig(
+                symbol=symbol, grid_spacing_pct=spacing, grid_levels=levels,
+                order_size=order_size, initial_capital_thb=capital,
+                grid_mode="geometric",
+            ),
+            "dgt": BacktestConfig(
+                symbol=symbol, grid_spacing_pct=spacing, grid_levels=levels,
+                order_size=order_size, initial_capital_thb=capital,
+                dgt_enabled=True, dgt_reinvest_pct=0.5,
+            ),
+            "full": BacktestConfig(
+                symbol=symbol, grid_spacing_pct=spacing, grid_levels=levels,
+                order_size=order_size, initial_capital_thb=capital,
+                grid_mode="geometric", dgt_enabled=True, dgt_reinvest_pct=0.5,
+                enable_entry_confluence=True, rsi_buy_threshold=45.0,
+                volume_multiplier=1.5,
+            ),
+            "full+ob1": BacktestConfig(
+                symbol=symbol, grid_spacing_pct=spacing, grid_levels=levels,
+                order_size=order_size, initial_capital_thb=capital,
+                grid_mode="geometric", dgt_enabled=True, dgt_reinvest_pct=0.5,
+                enable_entry_confluence=True, rsi_buy_threshold=45.0,
+                volume_multiplier=1.5,
+                enable_orderbook_imbalance=True, imbalance_threshold=0.65,
+                imbalance_rsi_relax=10.0,
+            ),
+            "full+ob1+trend": BacktestConfig(
+                symbol=symbol, grid_spacing_pct=spacing, grid_levels=levels,
+                order_size=order_size, initial_capital_thb=capital,
+                grid_mode="geometric", dgt_enabled=True, dgt_reinvest_pct=0.5,
+                enable_entry_confluence=True, rsi_buy_threshold=45.0,
+                volume_multiplier=1.5,
+                enable_orderbook_imbalance=True, imbalance_threshold=0.65,
+                imbalance_rsi_relax=10.0,
+                enable_ema_trend_filter=True, ema_trend_period=50,
+            ),
+            "full+ob1+desperation": BacktestConfig(
+                symbol=symbol, grid_spacing_pct=spacing, grid_levels=levels,
+                order_size=order_size, initial_capital_thb=capital,
+                grid_mode="geometric", dgt_enabled=True, dgt_reinvest_pct=0.5,
+                enable_entry_confluence=True, rsi_buy_threshold=45.0,
+                volume_multiplier=1.5,
+                enable_orderbook_imbalance=True, imbalance_threshold=0.65,
+                imbalance_rsi_relax=10.0,
+                enable_desperation_buy=True, desperation_buy_threshold=20,
+                desperation_buy_size_pct=0.5,
+            ),
+            "full+ob1+desp+adaptive": BacktestConfig(
+                symbol=symbol, grid_spacing_pct=spacing, grid_levels=levels,
+                order_size=order_size, initial_capital_thb=capital,
+                grid_mode="geometric", dgt_enabled=True, dgt_reinvest_pct=0.5,
+                enable_entry_confluence=True, rsi_buy_threshold=45.0,
+                volume_multiplier=1.5,
+                enable_orderbook_imbalance=True, imbalance_threshold=0.65,
+                imbalance_rsi_relax=10.0,
+                enable_desperation_buy=True, desperation_buy_threshold=20,
+                desperation_buy_size_pct=0.5,
+                volatility_mode="atr", atr_period=14, atr_multiplier=1.5,
+                min_spacing_pct=0.5, max_spacing_pct=5.0,
+            ),
+            "full+ob1+desp+mtf": BacktestConfig(
+                symbol=symbol, grid_spacing_pct=spacing, grid_levels=levels,
+                order_size=order_size, initial_capital_thb=capital,
+                grid_mode="geometric", dgt_enabled=True, dgt_reinvest_pct=0.5,
+                enable_entry_confluence=True, rsi_buy_threshold=45.0,
+                volume_multiplier=1.5,
+                enable_orderbook_imbalance=True, imbalance_threshold=0.65,
+                imbalance_rsi_relax=10.0,
+                enable_desperation_buy=True, desperation_buy_threshold=20,
+                desperation_buy_size_pct=0.5,
+                enable_mtf_confirmation=True, mtf_interval="4h",
+                mtf_ema_fast=20, mtf_ema_slow=50,
+            ),
+            "full+ob1+desp+ses": BacktestConfig(
+                symbol=symbol, grid_spacing_pct=spacing, grid_levels=levels,
+                order_size=order_size, initial_capital_thb=capital,
+                grid_mode="geometric", dgt_enabled=True, dgt_reinvest_pct=0.5,
+                enable_entry_confluence=True, rsi_buy_threshold=45.0,
+                volume_multiplier=1.5,
+                enable_orderbook_imbalance=True, imbalance_threshold=0.65,
+                imbalance_rsi_relax=10.0,
+                enable_desperation_buy=True, desperation_buy_threshold=20,
+                desperation_buy_size_pct=0.5,
+                enable_statistical_scoring=True, ses_warmup_trades=10,
+                ses_min_score=0.55,
+            ),
+            "full+ob1+desp+mtf+ses": BacktestConfig(
+                symbol=symbol, grid_spacing_pct=spacing, grid_levels=levels,
+                order_size=order_size, initial_capital_thb=capital,
+                grid_mode="geometric", dgt_enabled=True, dgt_reinvest_pct=0.5,
+                enable_entry_confluence=True, rsi_buy_threshold=45.0,
+                volume_multiplier=1.5,
+                enable_orderbook_imbalance=True, imbalance_threshold=0.65,
+                imbalance_rsi_relax=10.0,
+                enable_desperation_buy=True, desperation_buy_threshold=20,
+                desperation_buy_size_pct=0.5,
+                enable_mtf_confirmation=True, mtf_interval="4h",
+                mtf_ema_fast=20, mtf_ema_slow=50,
+                enable_statistical_scoring=True, ses_warmup_trades=10,
+                ses_min_score=0.55,
+            ),
+            # ── Bear Market Micro-Scalper (0.3% spacing, 5 levels) ─────────
+            "micro-scalper(0.3%/5lv)": BacktestConfig(
+                symbol=symbol, grid_spacing_pct=0.3, grid_levels=5,
+                order_size=0.00002, initial_capital_thb=capital,
+                grid_mode="geometric", dgt_enabled=True, dgt_reinvest_pct=0.5,
+                enable_entry_confluence=True, rsi_buy_threshold=45.0,
+                volume_multiplier=1.2,
+                enable_orderbook_imbalance=True, imbalance_threshold=0.60,
+                imbalance_rsi_relax=10.0,
+                enable_desperation_buy=True, desperation_buy_threshold=8,
+                desperation_buy_size_pct=0.5,
+            ),
+        }
+
+        results = {}
+        for name, cfg in configs.items():
+            bt = GridBacktester(cfg)
+            try:
+                r = await bt.run(days=days, interval=interval)
+                results[name] = {
+                    "net_pnl": r.net_pnl,
+                    "win_rate": r.win_rate,
+                    "total_trades": r.total_trades,
+                    "trades_per_day": r.trades_per_day,
+                    "max_drawdown_pct": r.max_drawdown_pct,
+                    "profit_factor": r.profit_factor,
+                    "grid_mode": r.grid_mode,
+                    "dgt_resets": r.dgt_resets,
+                    "dgt_reinvested_thb": r.dgt_reinvested_thb,
+                    "confluence_buys_blocked": r.confluence_buys_blocked,
+                    "final_order_size": r.final_order_size,
+                    "imbalance_overrides": r.imbalance_overrides,
+                    "avg_imbalance": r.avg_imbalance,
+                    "ema_trend_blocked": r.ema_trend_blocked,
+                    "desperation_buys_triggered": r.desperation_buys_triggered,
+                    "atr_spacing_avg": r.atr_spacing_avg,
+                    "atr_spacing_min": r.atr_spacing_min,
+                    "atr_spacing_max": r.atr_spacing_max,
+                    "mtf_blocked": r.mtf_blocked,
+                    "ses_score_avg": r.ses_score_avg,
+                    "ses_trades_allowed": r.ses_trades_allowed,
+                    "ses_trades_blocked": r.ses_trades_blocked,
+                }
+            except Exception as e:
+                results[name] = {"error": str(e)}
+            finally:
+                await bt.close()
+
+        # Determine winner by net_pnl (ignoring errors)
+        valid = {k: v for k, v in results.items() if "error" not in v}
+        winner = max(valid, key=lambda k: valid[k]["net_pnl"]) if valid else None
+
+        return {
+            "symbol": symbol,
+            "days": days,
+            "interval": interval,
+            "strategies": results,
+            "winner": winner,
+        }
+
+    @app.post("/api/backtest/walk-forward")
+    async def walk_forward_tuning(request: dict):
+        """
+        Walk-forward parameter optimization.
+        Tunes desperation_buy_threshold, imbalance_threshold, rsi_buy_threshold
+        across multiple data folds to find stable optimal values.
+        """
+        from app.backtester import run_walk_forward_tuning
+
+        symbol = request.get("symbol", "BTCTHB")
+        days = request.get("days", 30)
+        interval = request.get("interval", "1h")
+        n_folds = request.get("n_folds", 3)
+
+        result = await run_walk_forward_tuning(
+            symbol=symbol, days=days, interval=interval, n_folds=n_folds,
+        )
+        return result
 
     @app.get("/api/polymarket/events")
     async def polymarket_events(limit: int = 20, active: bool = True, tag: str = None):
@@ -1478,6 +1840,31 @@ def register_routes(app: FastAPI):
         bot = get_poly_paper_bot()
         return bot.get_signals(limit=limit)
 
+    @app.post("/api/poly-paper/reset-kill-switch")
+    async def poly_paper_reset_kill_switch():
+        """Reset the Polymarket paper bot kill switch after manual review."""
+        from app.polymarket.paper_bot import get_poly_paper_bot
+        bot = get_poly_paper_bot()
+        bot.reset_kill_switch()
+        return {"status": "reset", "message": "Polymarket paper bot kill switch reset"}
+
+    # ── Arbitrage Paper Trading Bot Endpoints ──
+
+    @app.get("/api/arb-paper/status")
+    async def arb_paper_status():
+        """Get arbitrage paper trading bot status."""
+        from app.arbitrage_paper_bot import get_arb_paper_bot
+        bot = get_arb_paper_bot()
+        return bot.get_status()
+
+    @app.post("/api/arb-paper/reset")
+    async def arb_paper_reset():
+        """Reset arbitrage paper bot state."""
+        from app.arbitrage_paper_bot import get_arb_paper_bot
+        bot = get_arb_paper_bot()
+        bot.reset()
+        return {"status": "reset", "message": "Arbitrage paper bot state reset"}
+
     @app.get("/api/polymarket/summary")
     async def polymarket_summary(limit: int = 50):
         """Get summary statistics across all Polymarket markets."""
@@ -1524,7 +1911,7 @@ def register_routes(app: FastAPI):
         cfg = app.state.config
         crypto_syms = [s.strip() for s in cfg.get("market_intel_crypto_symbols", "BTCTHB,ETHTHB,BTCUSDT,ETHUSDT").split(",") if s.strip()]
         stock_syms = [s.strip() for s in cfg.get("market_intel_stock_symbols", "SPY,QQQ,AAPL,MSFT,GOOGL").split(",") if s.strip()]
-        sources = [s.strip() for s in cfg.get("market_intel_sources", "crypto,prediction,stocks,macro").split(",") if s.strip()]
+        sources = [s.strip() for s in cfg.get("market_intel_sources", "crypto,prediction,stocks,macro,airdrops,degen,binance_alpha,arb").split(",") if s.strip()]
         return get_scanner(
             crypto_symbols=crypto_syms,
             stock_symbols=stock_syms,
@@ -1542,6 +1929,25 @@ def register_routes(app: FastAPI):
             from app.market_intel.models import MarketType
             market_filter = [MarketType(m.strip()) for m in markets.split(",") if m.strip()]
         result = await scanner.scan_all(min_confidence=min_confidence, markets=market_filter)
+
+        # Log signals to performance tracker
+        try:
+            sig_logger = _get_signal_logger()
+            for opp in result.opportunities:
+                await sig_logger.log_signal(
+                    symbol=opp.symbol,
+                    market_type=opp.market_type.value,
+                    source=opp.source,
+                    signal_type=opp.opportunity_type.value,
+                    severity=opp.severity.value,
+                    title=opp.title,
+                    price_at_signal=opp.current_price,
+                    confidence=opp.confidence,
+                    metadata=opp.metadata if hasattr(opp, 'metadata') else {},
+                )
+        except Exception as e:
+            logger.warning(f"Failed to log signals from manual scan: {e}")
+
         return result.model_dump()
 
     @app.get("/api/market-intel/quotes")
@@ -1602,6 +2008,266 @@ def register_routes(app: FastAPI):
         if not _last_scan_result:
             return {"status": "no_scan_yet", "message": "Background scan has not completed yet"}
         return _last_scan_result
+
+    @app.get("/api/market-intel/portfolio")
+    async def market_intel_portfolio():
+        """
+        Portfolio integration: cross-reference Binance TH holdings with market intel signals.
+        Returns holdings with THB values and matched signals.
+        """
+        BINANCE_TH_PAIRS = {
+            "BTC": "BTCTHB", "ETH": "ETHTHB", "BNB": "BNBTHB",
+            "SOL": "SOLTHB", "XRP": "XRPTHB", "ASTER": "ASTERTHB",
+            "ATH": "ATHTHB", "PLUME": "PLUMETHB", "VELO": "VELOTHB",
+            "ZENT": "ZENTTHB", "USDT": "USDTTHB",
+        }
+
+        # 1. Fetch balances from Go backend
+        balances_raw = []
+        try:
+            from app.real_grid_bot import BACKEND_API_BASE
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(f"{BACKEND_API_BASE}/api/trade/balances")
+                if resp.status_code == 200:
+                    balances_raw = resp.json().get("balances", [])
+        except Exception as e:
+            logger.warning(f"Portfolio: failed to fetch balances: {e}")
+
+        # 2. Get prices for all THB pairs
+        prices = {}
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                for symbol in BINANCE_TH_PAIRS.values():
+                    try:
+                        resp = await client.get(
+                            f"https://api.binance.th/api/v1/ticker/price",
+                            params={"symbol": symbol},
+                        )
+                        if resp.status_code == 200:
+                            prices[symbol] = float(resp.json().get("price", 0))
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.warning(f"Portfolio: failed to fetch prices: {e}")
+
+        # 3. Build holdings list
+        holdings = []
+        total_thb = 0.0
+        for b in balances_raw:
+            currency = b.get("currency", "")
+            free = float(b.get("free", 0))
+            locked = float(b.get("locked", 0))
+            total_amt = free + locked
+
+            if total_amt <= 0:
+                continue
+
+            # THB itself
+            if currency == "THB":
+                holdings.append({
+                    "currency": "THB",
+                    "symbol": "—",
+                    "amount": total_amt,
+                    "free": free,
+                    "locked": locked,
+                    "price_thb": 1.0,
+                    "value_thb": total_amt,
+                    "signals": [],
+                })
+                total_thb += total_amt
+                continue
+
+            symbol = BINANCE_TH_PAIRS.get(currency)
+            if not symbol:
+                continue
+
+            price = prices.get(symbol, 0)
+            value_thb = total_amt * price
+            total_thb += value_thb
+
+            # 4. Match signals from last scan
+            signals = []
+            if _last_scan_result and "opportunities" in _last_scan_result:
+                for opp in _last_scan_result["opportunities"]:
+                    if opp.get("symbol") == symbol:
+                        signals.append({
+                            "title": opp.get("title", ""),
+                            "severity": opp.get("severity", "low"),
+                            "confidence": opp.get("confidence", 0),
+                            "type": opp.get("type", ""),
+                        })
+
+            holdings.append({
+                "currency": currency,
+                "symbol": symbol,
+                "amount": total_amt,
+                "free": free,
+                "locked": locked,
+                "price_thb": price,
+                "value_thb": round(value_thb, 2),
+                "signals": signals,
+            })
+
+        # Sort by value descending
+        holdings.sort(key=lambda h: h["value_thb"], reverse=True)
+        signal_count = sum(len(h["signals"]) for h in holdings)
+
+        return {
+            "holdings": holdings,
+            "total_value_thb": round(total_thb, 2),
+            "signal_count": signal_count,
+            "pairs_tracked": len(BINANCE_TH_PAIRS),
+        }
+
+    # ── Airdrop Task Tracker Endpoints ──
+
+    def _get_airdrop_tracker():
+        """Get airdrop tracker with Redis client."""
+        from app.market_intel.airdrop_tracker import get_airdrop_tracker
+        redis_client = redis_adapter.redis if redis_adapter and redis_adapter.redis else None
+        return get_airdrop_tracker(redis_client=redis_client)
+
+    @app.get("/api/airdrop-tracker/tasks")
+    async def airdrop_tracker_list():
+        """List all tracked airdrop tasks."""
+        tracker = _get_airdrop_tracker()
+        tasks = await tracker.list_tasks()
+        stats = await tracker.get_stats()
+        return {"tasks": tasks, "stats": stats}
+
+    @app.post("/api/airdrop-tracker/tasks")
+    async def airdrop_tracker_add(request: Request):
+        """Add a new airdrop task to track."""
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+        name = body.get("name")
+        if not name:
+            raise HTTPException(status_code=400, detail="'name' is required")
+
+        tracker = _get_airdrop_tracker()
+        task = await tracker.add_task(
+            name=name,
+            chain=body.get("chain", ""),
+            task_description=body.get("task_description", ""),
+            estimated_value=body.get("estimated_value", ""),
+            difficulty=body.get("difficulty", ""),
+            cost=body.get("cost", ""),
+            url=body.get("url", ""),
+            deadline=body.get("deadline", ""),
+        )
+        return {"task": task}
+
+    @app.patch("/api/airdrop-tracker/tasks/{task_id}")
+    async def airdrop_tracker_update(task_id: str, request: Request):
+        """Update an existing airdrop task."""
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+        tracker = _get_airdrop_tracker()
+        task = await tracker.update_task(task_id, body)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        return {"task": task}
+
+    @app.patch("/api/airdrop-tracker/tasks/{task_id}/subtasks/{subtask_idx}")
+    async def airdrop_tracker_update_subtask(task_id: str, subtask_idx: int, request: Request):
+        """Toggle a subtask completion status."""
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+        completed = body.get("completed", True)
+        tracker = _get_airdrop_tracker()
+        task = await tracker.update_subtask(task_id, subtask_idx, completed)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task or subtask not found")
+        return {"task": task}
+
+    @app.delete("/api/airdrop-tracker/tasks/{task_id}")
+    async def airdrop_tracker_delete(task_id: str):
+        """Remove a tracked airdrop task."""
+        tracker = _get_airdrop_tracker()
+        success = await tracker.delete_task(task_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Task not found")
+        return {"deleted": True, "task_id": task_id}
+
+    @app.get("/api/airdrop-tracker/stats")
+    async def airdrop_tracker_stats():
+        """Get tracker statistics."""
+        tracker = _get_airdrop_tracker()
+        return await tracker.get_stats()
+
+    # ── Signal Performance Tracker Endpoints ──
+
+    def _get_signal_logger():
+        """Get signal logger with Redis client."""
+        from app.market_intel.signal_logger import get_signal_logger
+        redis_client = redis_adapter.redis if redis_adapter and redis_adapter.redis else None
+        return get_signal_logger(redis_client=redis_client)
+
+    @app.get("/api/signal-tracker/signals")
+    async def signal_tracker_list(
+        limit: int = 100,
+        source: Optional[str] = None,
+        market_type: Optional[str] = None,
+        evaluated_only: bool = False,
+    ):
+        """Get logged signals with optional filters."""
+        logger = _get_signal_logger()
+        signals = await logger.get_signals(
+            limit=limit,
+            source=source,
+            market_type=market_type,
+            evaluated_only=evaluated_only,
+        )
+        return {"signals": signals, "total": len(signals)}
+
+    @app.get("/api/signal-tracker/stats")
+    async def signal_tracker_stats():
+        """Get performance statistics."""
+        logger = _get_signal_logger()
+        return await logger.get_performance_stats()
+
+    @app.post("/api/signal-tracker/evaluate")
+    async def signal_tracker_evaluate():
+        """
+        Manually trigger signal evaluation against current prices.
+        Normally runs automatically, but can be triggered on-demand.
+        """
+        import httpx
+        logger = _get_signal_logger()
+        
+        # Fetch current prices for all tracked symbols
+        BINANCE_TH_PAIRS = {
+            "BTC": "BTCTHB", "ETH": "ETHTHB", "BNB": "BNBTHB",
+            "SOL": "SOLTHB", "XRP": "XRPTHB", "ASTER": "ASTERTHB",
+            "ATH": "ATHTHB", "PLUME": "PLUMETHB", "VELO": "VELOTHB",
+            "ZENT": "ZENTTHB", "USDT": "USDTTHB",
+        }
+        
+        current_prices = {}
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                for currency, symbol in BINANCE_TH_PAIRS.items():
+                    try:
+                        resp = await client.get(f"https://api.binance.th/v3/ticker/price?symbol={symbol}")
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            current_prices[currency] = float(data.get("price", 0))
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.warning(f"Failed to fetch prices for evaluation: {e}")
+        
+        result = await logger.evaluate_signals(current_prices)
+        return result
 
     # ── Evidence Endpoint ──
 
@@ -1930,7 +2596,9 @@ def register_routes(app: FastAPI):
 
         # ── 4. Real grid status ──
         try:
-            grid_status = real_grid_bot.get_status()
+            from app.real_grid_bot import get_real_grid_bot
+            _rgbot = get_real_grid_bot()
+            grid_status = _rgbot.get_status()
             grid_running = grid_status.get('running', False)
             grid_symbols = grid_status.get('symbols', {})
             total_fills = sum(s.get('daily_trades', 0) for s in grid_symbols.values())
@@ -2080,6 +2748,22 @@ def register_routes(app: FastAPI):
                 'daily_pnl': round(total_pnl, 2),
             },
         }
+
+        # Add arbitrage paper bot to risk sources
+        try:
+            from app.arbitrage_paper_bot import get_arb_paper_bot
+            _arb_bot = get_arb_paper_bot()
+            _arb_status = _arb_bot.get_status()
+            risk_sources['arb_paper_bot'] = {
+                'running': _arb_status.get('running', False),
+                'capital_thb': _arb_status.get('capital_thb', 0),
+                'pnl_thb': _arb_status.get('pnl_thb', 0),
+                'total_trades': _arb_status.get('total_trades', 0),
+                'win_rate': _arb_status.get('win_rate', 0),
+                'opportunities_found': _arb_status.get('opportunities_found', 0),
+            }
+        except Exception as e:
+            logger.debug("Could not get arb_paper_bot status: %s", e)
 
         # ── 12. Dynamic gates — compute blocked_by from live state ──
         dynamic_gates = []

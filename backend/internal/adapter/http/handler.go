@@ -964,6 +964,11 @@ var publicRoutes = []string{
 	"/api/orders",
 	"/api/notifications",
 	"/api/settings",
+	"/api/price-alerts",
+	"/api/risk",
+	"/api/poly-paper",
+	"/api/command-center",
+	"/api/real-grid",
 }
 
 // isPublicRoute checks if the path matches any public route (exact or prefix)
@@ -1038,8 +1043,10 @@ func (rl *rateLimiter) Allow(key string) bool {
 	return client.count <= rl.maxReqs
 }
 
-// Global rate limiter: 100 requests per minute per IP, max 10000 tracked IPs
-var globalRateLimiter = newRateLimiter(100, time.Minute, 10000)
+// Global rate limiter: 1000 requests per minute per IP, max 10000 tracked IPs
+// Increased from 100 to 1000 to support strategy container making concurrent
+// requests for 10+ paper symbols + 5 real symbols + balance/ticker queries
+var globalRateLimiter = newRateLimiter(1000, time.Minute, 10000)
 
 // extractClientIP extracts the real client IP from the request.
 // Behind a trusted proxy, use X-Real-IP (set by the proxy, not the client).

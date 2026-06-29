@@ -138,12 +138,57 @@ export default function LandingPageClient({ lang }: { lang: string }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [contactSent, setContactSent] = useState(false);
+  const [liveStats, setLiveStats] = useState<{
+    paperPnl: number;
+    paperTrades: number;
+    polyPnl: number;
+    polyTrades: number;
+    arbScans: number;
+    botsRunning: number;
+  } | null>(null);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const token = localStorage.getItem('auth_token');
       setIsLoggedIn(!!token);
     }
+  }, []);
+
+  // Fetch live bot stats for portfolio proof
+  useEffect(() => {
+    const fetchLiveStats = async () => {
+      try {
+        const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
+        const STRATEGY_API = process.env.NEXT_PUBLIC_STRATEGY_URL || '/strategy-api';
+        const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
+        const [paperRes, polyRes, arbRes] = await Promise.allSettled([
+          fetch(`${API_BASE}/api/paper/portfolio`, { headers }).then(r => r.json()),
+          fetch(`${STRATEGY_API}/api/poly-paper/performance`, { headers }).then(r => r.json()),
+          fetch(`${STRATEGY_API}/api/arb-paper/status`, { headers }).then(r => r.json()),
+        ]);
+
+        const paperData = paperRes.status === 'fulfilled' ? paperRes.value : null;
+        const polyData = polyRes.status === 'fulfilled' ? polyRes.value : null;
+        const arbData = arbRes.status === 'fulfilled' ? arbRes.value : null;
+
+        setLiveStats({
+          paperPnl: paperData?.total_pnl || paperData?.net_pnl || 0,
+          paperTrades: paperData?.total_trades || paperData?.trade_count || 0,
+          polyPnl: polyData?.total_pnl || 0,
+          polyTrades: polyData?.total_trades || 0,
+          arbScans: arbData?.scan_count || 0,
+          botsRunning: (arbData?.running ? 1 : 0) + (paperData?.running ? 1 : 0),
+        });
+      } catch {
+        // Silently fail — stats are optional
+      }
+    };
+    fetchLiveStats();
+    const interval = setInterval(fetchLiveStats, 60000);
+    return () => clearInterval(interval);
   }, []);
 
   const handleContactSubmit = (e: React.FormEvent) => {
@@ -305,6 +350,66 @@ export default function LandingPageClient({ lang }: { lang: string }) {
               <div key={stat.label} className="text-center">
                 <div className="text-3xl font-bold text-purple-400">{stat.value}</div>
                 <div className="text-gray-500 text-sm mt-1">{stat.label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── Live Performance (Portfolio Proof) ────────────────────────────── */}
+      <section className="py-16 px-6 bg-slate-900/30 border-y border-slate-800">
+        <div className="max-w-7xl mx-auto">
+          <div className="text-center mb-10">
+            <div className="inline-flex items-center gap-2 bg-green-600/10 text-green-400 text-sm font-medium px-4 py-1.5 rounded-full border border-green-500/30 mb-4">
+              <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+              {lang === 'th' ? 'ระบบทำงานอยู่' : 'Systems Live'}
+            </div>
+            <h2 className="text-3xl font-bold mb-2">
+              {lang === 'th' ? 'ประสิทธิภาพเรียลไทม์' : 'Real-Time Performance'}
+            </h2>
+            <p className="text-gray-400">
+              {lang === 'th' ? 'ข้อมูลสดจากบอทเทรดที่กำลังทำงาน' : 'Live data from actively running trading bots'}
+            </p>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            {[
+              {
+                label: lang === 'th' ? 'Grid P&L' : 'Grid P&L',
+                value: liveStats ? `$${liveStats.paperPnl.toFixed(2)}` : '—',
+                color: liveStats && liveStats.paperPnl >= 0 ? 'text-green-400' : 'text-red-400',
+              },
+              {
+                label: lang === 'th' ? 'Grid Trades' : 'Grid Trades',
+                value: liveStats ? String(liveStats.paperTrades) : '—',
+                color: 'text-purple-400',
+              },
+              {
+                label: lang === 'th' ? 'Poly P&L' : 'Poly P&L',
+                value: liveStats ? `$${liveStats.polyPnl.toFixed(2)}` : '—',
+                color: liveStats && liveStats.polyPnl >= 0 ? 'text-green-400' : 'text-red-400',
+              },
+              {
+                label: lang === 'th' ? 'Poly Trades' : 'Poly Trades',
+                value: liveStats ? String(liveStats.polyTrades) : '—',
+                color: 'text-blue-400',
+              },
+              {
+                label: lang === 'th' ? 'Arb Scans' : 'Arb Scans',
+                value: liveStats ? String(liveStats.arbScans) : '—',
+                color: 'text-amber-400',
+              },
+              {
+                label: lang === 'th' ? 'Bots Active' : 'Bots Active',
+                value: liveStats ? `${liveStats.botsRunning}/3` : '—',
+                color: 'text-emerald-400',
+              },
+            ].map((stat) => (
+              <div
+                key={stat.label}
+                className="bg-slate-800/60 border border-slate-700 rounded-xl p-4 text-center hover:border-purple-500/40 transition"
+              >
+                <div className={`text-2xl font-bold ${stat.color}`}>{stat.value}</div>
+                <div className="text-gray-500 text-xs mt-1 uppercase tracking-wider">{stat.label}</div>
               </div>
             ))}
           </div>

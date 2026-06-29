@@ -81,6 +81,7 @@ const advancedGroups: MenuGroup[] = [
       { nameKey: 'nav.copyTrading', href: '/dashboard/copy-trading', icon: <Users className="w-5 h-5" /> },
       { nameKey: 'nav.rebalancing', href: '/dashboard/rebalancing', icon: <Landmark className="w-5 h-5" /> },
       { nameKey: 'nav.polyPaper', href: '/dashboard/polymarket', icon: <Target className="w-5 h-5" /> },
+      { nameKey: 'nav.arbPaper', href: '/dashboard/arbitrage', icon: <ArrowLeftRight className="w-5 h-5" /> },
     ],
   },
   {

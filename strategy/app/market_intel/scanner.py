@@ -16,6 +16,10 @@ from app.market_intel.sources.crypto import CryptoSource
 from app.market_intel.sources.prediction import PredictionSource
 from app.market_intel.sources.stocks import StockSource
 from app.market_intel.sources.macro import MacroSource
+from app.market_intel.sources.airdrops import AirdropSource
+from app.market_intel.sources.degen import DegenSource
+from app.market_intel.sources.binance_alpha import BinanceAlphaSource
+from app.market_intel.sources.cross_exchange_arb import CrossExchangeArbSource
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +39,7 @@ class MarketScanner:
     ):
         self.crypto_symbols = crypto_symbols or ["BTCTHB", "ETHTHB", "BTCUSDT", "ETHUSDT"]
         self.stock_symbols = stock_symbols
-        self.enabled = set(enabled_sources or ["crypto", "prediction", "stocks", "macro"])
+        self.enabled = set(enabled_sources or ["crypto", "prediction", "stocks", "macro", "airdrops", "degen", "binance_alpha", "arb"])
 
         # Initialize sources
         self.sources: Dict[str, BaseSource] = {}
@@ -50,6 +54,14 @@ class MarketScanner:
             self.sources["stocks"] = StockSource()
         if "macro" in self.enabled:
             self.sources["macro"] = MacroSource()
+        if "airdrops" in self.enabled:
+            self.sources["airdrops"] = AirdropSource()
+        if "degen" in self.enabled:
+            self.sources["degen"] = DegenSource()
+        if "binance_alpha" in self.enabled:
+            self.sources["binance_alpha"] = BinanceAlphaSource()
+        if "arb" in self.enabled:
+            self.sources["arb"] = CrossExchangeArbSource()
 
     async def scan_all(
         self,

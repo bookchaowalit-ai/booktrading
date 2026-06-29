@@ -19,25 +19,28 @@ func NewFeatureHandler(
 	metricsService *service.MetricsService,
 	backtestService *service.BacktestService,
 	auditService *service.AuditService,
+	priceAlertMonitor *service.PriceAlertMonitor,
 ) *FeatureHandler {
 	return &FeatureHandler{
-		paperEngine:    paperEngine,
-		riskManager:    riskManager,
-		alertService:   alertService,
-		metricsService: metricsService,
+		paperEngine:     paperEngine,
+		riskManager:     riskManager,
+		alertService:    alertService,
+		metricsService:  metricsService,
 		backtestService: backtestService,
-		auditService:   auditService,
+		auditService:    auditService,
+		priceAlertMon:   priceAlertMonitor,
 	}
 }
 
 // FeatureHandler handles new feature endpoints
 type FeatureHandler struct {
-	paperEngine    *service.PaperEngine
-	riskManager    *service.RiskManager
-	alertService   *service.AlertService
-	metricsService *service.MetricsService
+	paperEngine     *service.PaperEngine
+	riskManager     *service.RiskManager
+	alertService    *service.AlertService
+	metricsService  *service.MetricsService
 	backtestService *service.BacktestService
-	auditService   *service.AuditService
+	auditService    *service.AuditService
+	priceAlertMon   *service.PriceAlertMonitor
 }
 
 // RegisterRoutes registers all new feature routes
@@ -50,6 +53,8 @@ func (h *FeatureHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/paper/update-price", h.PaperUpdatePrice)
 	mux.HandleFunc("/api/paper/orders", h.PaperOpenOrders)
 	mux.HandleFunc("/api/paper/cancel", h.PaperCancelOrder)
+	mux.HandleFunc("/api/paper/seed", h.PaperSeedPosition)
+	mux.HandleFunc("/api/paper/snapshots", h.PaperSnapshots)
 
 	// Risk Management
 	mux.HandleFunc("/api/risk/config", h.RiskConfig)
@@ -60,6 +65,10 @@ func (h *FeatureHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/alerts/config", h.AlertsConfig)
 	mux.HandleFunc("/api/alerts/test", h.AlertsTest)
 	mux.HandleFunc("/api/alerts/history", h.AlertsHistory)
+
+	// Price Alerts
+	mux.HandleFunc("/api/price-alerts", h.PriceAlerts)
+	mux.HandleFunc("/api/price-alerts/reset", h.PriceAlertsReset)
 
 	// Backtesting
 	mux.HandleFunc("/api/backtest/run", h.BacktestRun)
@@ -208,6 +217,43 @@ func (h *FeatureHandler) PaperCancelOrder(w http.ResponseWriter, r *http.Request
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled", "order_id": req.OrderID})
+}
+
+// PaperSeedPosition creates an initial position for a symbol (enables SELL orders).
+type PaperSeedPositionRequest struct {
+	Symbol   string  `json:"symbol"`
+	Quantity float64 `json:"quantity"`
+	Price    float64 `json:"price"`
+}
+
+func (h *FeatureHandler) PaperSeedPosition(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req PaperSeedPositionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	if req.Symbol == "" || req.Quantity <= 0 || req.Price <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "symbol, quantity > 0, and price > 0 required"})
+		return
+	}
+
+	if err := h.paperEngine.SeedPosition(req.Symbol, req.Quantity, req.Price); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":   "seeded",
+		"symbol":   req.Symbol,
+		"quantity": req.Quantity,
+		"price":    req.Price,
+	})
 }
 
 // ── Risk Management Handlers ──
@@ -510,6 +556,79 @@ func (h *FeatureHandler) GetAuditStats(w http.ResponseWriter, r *http.Request) {
 		"recent_activity": recent,
 		"total":         len(actionCounts),
 	})
+}
+
+// ── Portfolio Snapshots ──
+
+func (h *FeatureHandler) PaperSnapshots(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	limitStr := r.URL.Query().Get("limit")
+	limit := 200
+	if limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	snapshots := h.paperEngine.GetSnapshots(limit)
+	writeJSON(w, http.StatusOK, snapshots)
+}
+
+// ── Price Alert Handlers ──
+
+func (h *FeatureHandler) PriceAlerts(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		alerts := h.priceAlertMon.GetAlerts()
+		writeJSON(w, http.StatusOK, alerts)
+
+	case http.MethodPost:
+		var req struct {
+			Symbol      string  `json:"symbol"`
+			TargetPrice float64 `json:"target_price"`
+			Direction   string  `json:"direction"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request"})
+			return
+		}
+		alert, err := h.priceAlertMon.AddAlert(req.Symbol, req.TargetPrice, req.Direction)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusCreated, alert)
+
+	case http.MethodDelete:
+		var req struct {
+			ID string `json:"id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id required"})
+			return
+		}
+		if err := h.priceAlertMon.RemoveAlert(req.ID); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (h *FeatureHandler) PriceAlertsReset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	h.priceAlertMon.ResetTriggered()
+	writeJSON(w, http.StatusOK, map[string]string{"status": "reset"})
 }
 
 // writeJSON is a helper to write JSON responses

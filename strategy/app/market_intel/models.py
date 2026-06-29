@@ -14,6 +14,8 @@ class MarketType(str, Enum):
     PREDICTION = "prediction"
     FOREX = "forex"
     COMMODITY = "commodity"
+    AIRDROP = "airdrop"
+    DEGEN = "degen"
 
 
 class OpportunityType(str, Enum):
@@ -25,6 +27,10 @@ class OpportunityType(str, Enum):
     MEAN_REVERSION = "mean_reversion"
     BREAKOUT = "breakout"
     STALE_PRICE = "stale_price"
+    AIRDROP_FREE = "airdrop_free"
+    EARLY_ALPHA = "early_alpha"
+    CROSS_EXCHANGE_ARB = "cross_exchange_arb"
+    TRENDING_DEGEN = "trending_degen"
 
 
 class Severity(str, Enum):

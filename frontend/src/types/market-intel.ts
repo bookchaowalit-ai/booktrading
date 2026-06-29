@@ -3,8 +3,8 @@
  * Type definitions for the multi-market scanner
  */
 
-export type MarketType = 'crypto' | 'stock' | 'forex' | 'commodity' | 'prediction';
-export type OpportunityType = 'momentum' | 'volume_spike' | 'mispricing' | 'liquidity_gap' | 'mean_reversion' | 'breakout';
+export type MarketType = 'crypto' | 'stock' | 'forex' | 'commodity' | 'prediction' | 'airdrop' | 'degen';
+export type OpportunityType = 'momentum' | 'volume_spike' | 'mispricing' | 'liquidity_gap' | 'mean_reversion' | 'breakout' | 'airdrop_free' | 'early_alpha' | 'cross_exchange_arb' | 'trending_degen';
 export type Severity = 'critical' | 'high' | 'medium' | 'low';
 
 export interface MarketQuote {

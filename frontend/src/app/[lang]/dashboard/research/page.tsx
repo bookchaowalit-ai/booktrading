@@ -113,6 +113,62 @@ interface MarketIntelSummary {
   opportunities: { market: string; count: number }[];
 }
 
+interface BrainLayerSignal {
+  spacing_multiplier: number;
+  pause_buys: boolean;
+  pause_sells: boolean;
+  center_offset_pct: number;
+  confidence: number;
+}
+
+interface BrainTechnicalLayer extends BrainLayerSignal {
+  atr_pct: number;
+  rsi: number;
+  bb_position: number;
+  ema_trend: string;
+}
+
+interface BrainFundingLayer extends BrainLayerSignal {
+  funding_rate: number | null;
+  open_interest: number | null;
+}
+
+interface BrainSentimentLayer extends BrainLayerSignal {
+  sentiment_score: number | null;
+  news_count: number;
+  bullish_votes: number;
+  bearish_votes: number;
+}
+
+interface BrainDirective {
+  symbol: string;
+  spacing_multiplier: number;
+  center_offset_pct: number;
+  pause_buys: boolean;
+  pause_sells: boolean;
+  confidence: number;
+  technical: BrainTechnicalLayer | null;
+  funding: BrainFundingLayer | null;
+  sentiment: BrainSentimentLayer | null;
+  updated_at: number;
+}
+
+interface CircuitBreakerState {
+  triggered: boolean;
+  last_price: number;
+  prev_price: number;
+  drop_pct: number;
+  triggered_at: number;
+  cooldown_remaining: number;
+}
+
+interface BrainStatus {
+  running: boolean;
+  directives: Record<string, BrainDirective>;
+  refresh_interval: number;
+  circuit_breaker: Record<string, CircuitBreakerState>;
+}
+
 interface HighLevelMetrics {
   gates_ready: number;
   gates_total: number;
@@ -217,6 +273,7 @@ export default function ResearchPage() {
   const [marketMood, setMarketMood] = useState<MarketMoodData | null>(null);
   const [intelSummary, setIntelSummary] = useState<MarketIntelSummary | null>(null);
   const [hlMetrics, setHlMetrics] = useState<HighLevelMetrics | null>(null);
+  const [brainStatus, setBrainStatus] = useState<BrainStatus | null>(null);
 
   const fetchData = useCallback(async (isRefresh = false) => {
     if (isRefresh) setIsRefreshing(true);
@@ -225,13 +282,14 @@ export default function ResearchPage() {
     if (result) setData(result as ResearchData);
 
     // Fetch intelligence data in parallel (all optional)
-    const [indRes, sigRes, intelOverview, intelAlerts, intelSources, ccRes] = await Promise.allSettled([
+    const [indRes, sigRes, intelOverview, intelAlerts, intelSources, ccRes, brainRes] = await Promise.allSettled([
       fetch(STRATEGY_API_URL + '/api/indicators'),
       fetch(STRATEGY_API_URL + '/api/signals'),
       fetch(STRATEGY_API_URL + '/api/market-intel/overview'),
       fetch(STRATEGY_API_URL + '/api/market-intel/alerts?limit=5'),
       fetch(STRATEGY_API_URL + '/api/market-intel/sources'),
       fetch(STRATEGY_API_URL + '/api/command-center'),
+      fetch(STRATEGY_API_URL + '/api/brain/status'),
     ]);
 
     // AI Signal from indicators
@@ -285,6 +343,14 @@ export default function ResearchPage() {
           active_positions: cc.risk_sources?.paper_bot?.active_positions ?? cc.positions?.active ?? 0,
           total_pnl: cc.paper_trial?.performance?.total_pnl ?? 0,
         });
+      } catch {}
+    }
+
+    // Brain status
+    if (brainRes.status === 'fulfilled' && brainRes.value.ok) {
+      try {
+        const bs = await brainRes.value.json();
+        setBrainStatus(bs as BrainStatus);
       } catch {}
     }
 
@@ -509,6 +575,160 @@ export default function ResearchPage() {
           </div>
         )}
       </div>
+
+      {/* ── Brain Intelligence Panel ── */}
+      {brainStatus && brainStatus.running && (
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <Brain className="w-5 h-5 text-violet-500" />
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Brain Signals</h2>
+            <span className="text-xs px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400">
+              LIVE — {Object.keys(brainStatus.directives).length} pairs
+            </span>
+            <span className="text-xs text-gray-400 ml-auto">
+              Refresh: {brainStatus.refresh_interval}s
+            </span>
+          </div>
+
+          {/* Directive summary table */}
+          <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-700">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 dark:bg-gray-800">
+                <tr>
+                  <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Symbol</th>
+                  <th className="px-3 py-2.5 text-center text-xs font-medium text-gray-500 dark:text-gray-400">Spacing</th>
+                  <th className="px-3 py-2.5 text-center text-xs font-medium text-gray-500 dark:text-gray-400">Offset</th>
+                  <th className="px-3 py-2.5 text-center text-xs font-medium text-gray-500 dark:text-gray-400">Pause</th>
+                  <th className="px-3 py-2.5 text-center text-xs font-medium text-gray-500 dark:text-gray-400">Confidence</th>
+                  <th className="px-3 py-2.5 text-center text-xs font-medium text-gray-500 dark:text-gray-400">ATR%</th>
+                  <th className="px-3 py-2.5 text-center text-xs font-medium text-gray-500 dark:text-gray-400">RSI</th>
+                  <th className="px-3 py-2.5 text-center text-xs font-medium text-gray-500 dark:text-gray-400">Funding</th>
+                  <th className="px-3 py-2.5 text-center text-xs font-medium text-gray-500 dark:text-gray-400">Trend</th>
+                  <th className="px-3 py-2.5 text-center text-xs font-medium text-gray-500 dark:text-gray-400">CB</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                {Object.entries(brainStatus.directives).map(([symbol, d]) => (
+                  <tr key={symbol} className="bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                    <td className="px-3 py-2.5 font-medium text-gray-900 dark:text-white">{symbol}</td>
+                    <td className="px-3 py-2.5 text-center">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold ${
+                        d.spacing_multiplier < 0.9 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                        : d.spacing_multiplier > 1.2 ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                        : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
+                      }`}>
+                        {d.spacing_multiplier.toFixed(2)}x
+                      </span>
+                    </td>
+                    <td className="px-3 py-2.5 text-center text-xs text-gray-600 dark:text-gray-400">
+                      {d.center_offset_pct > 0.001 ? '+' : ''}{(d.center_offset_pct).toFixed(3)}%
+                    </td>
+                    <td className="px-3 py-2.5 text-center">
+                      {d.pause_buys || d.pause_sells ? (
+                        <span className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded text-xs font-bold ${
+                          d.pause_buys && d.pause_sells ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                          : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                        }`}>
+                          {d.pause_buys && !d.pause_sells ? 'No Buys' : !d.pause_buys && d.pause_sells ? 'No Sells' : 'Paused'}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-green-600 dark:text-green-400">Active</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5 text-center">
+                      <span className={`text-xs font-bold ${
+                        d.confidence >= 0.8 ? 'text-green-600 dark:text-green-400'
+                        : d.confidence >= 0.5 ? 'text-amber-600 dark:text-amber-400'
+                        : 'text-gray-500'
+                      }`}>
+                        {(d.confidence * 100).toFixed(0)}%
+                      </span>
+                    </td>
+                    <td className="px-3 py-2.5 text-center text-xs text-gray-600 dark:text-gray-400">
+                      {d.technical ? (d.technical.atr_pct * 100).toFixed(2) + '%' : '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-center">
+                      {d.technical ? (
+                        <span className={`text-xs font-medium ${
+                          d.technical.rsi > 70 ? 'text-red-600 dark:text-red-400'
+                          : d.technical.rsi < 30 ? 'text-green-600 dark:text-green-400'
+                          : 'text-gray-600 dark:text-gray-400'
+                        }`}>
+                          {d.technical.rsi.toFixed(0)}
+                        </span>
+                      ) : '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-center text-xs text-gray-600 dark:text-gray-400">
+                      {d.funding?.funding_rate != null ? (d.funding.funding_rate * 100).toFixed(4) + '%' : '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-center">
+                      {d.technical ? (
+                        <span className={`inline-flex items-center gap-0.5 text-xs ${
+                          d.technical.ema_trend === 'bullish' ? 'text-green-600 dark:text-green-400'
+                          : d.technical.ema_trend === 'bearish' ? 'text-red-600 dark:text-red-400'
+                          : 'text-gray-500'
+                        }`}>
+                          {d.technical.ema_trend === 'bullish' ? <TrendingUp className="w-3 h-3" />
+                           : d.technical.ema_trend === 'bearish' ? <TrendingDown className="w-3 h-3" />
+                           : <Minus className="w-3 h-3" />}
+                          {d.technical.ema_trend}
+                        </span>
+                      ) : '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-center">
+                      {(() => {
+                        const cb = brainStatus.circuit_breaker?.[symbol];
+                        if (!cb) return <span className="text-xs text-gray-400">—</span>;
+                        if (cb.triggered) {
+                          return (
+                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-bold bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 animate-pulse">
+                              <ShieldAlert className="w-3 h-3" />
+                              {cb.drop_pct.toFixed(1)}%
+                            </span>
+                          );
+                        }
+                        return (
+                          <span className="text-xs text-green-600 dark:text-green-400" title={`Last: $${cb.last_price.toFixed(2)}`}>
+                            OK
+                          </span>
+                        );
+                      })()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Layer status badges */}
+          <div className="flex flex-wrap gap-2 mt-3">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400">
+              <Zap className="w-3 h-3" />
+              Layer 1: Technical (ATR + RSI + BB)
+            </span>
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+              <Activity className="w-3 h-3" />
+              Layer 2: Funding Rate (Bybit)
+            </span>
+            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
+              Object.values(brainStatus.directives).some(d => d.sentiment?.sentiment_score != null)
+                ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400'
+            }`}>
+              <Globe className="w-3 h-3" />
+              Layer 3: Sentiment {Object.values(brainStatus.directives).some(d => d.sentiment?.sentiment_score != null) ? '(Active)' : '(Disabled)'}
+            </span>
+            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
+              Object.values(brainStatus.circuit_breaker || {}).some(cb => cb.triggered)
+                ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 animate-pulse'
+                : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+            }`}>
+              <ShieldAlert className="w-3 h-3" />
+              Layer 4: Circuit Breaker {Object.values(brainStatus.circuit_breaker || {}).some(cb => cb.triggered) ? '(TRIGGERED!)' : '(Armed)'}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* ── Summary Card ── */}
       {summary && (

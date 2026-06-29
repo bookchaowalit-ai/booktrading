@@ -22,6 +22,24 @@ Notes: [what changed, why, what to watch]
 
 ## Log
 
+### 2026-06-29 — Real Trading Enabled + Kill Switch Reset
+
+- Active positions: 14 (Polymarket paper)
+- Resolved trades: 6
+- Kill switch: RESET (was stuck from 429 storm, cleared via Redis state update)
+- Real grid bot: LIVE on Binance TH mainnet — 14 open orders across 5 symbols (BTCTHB, ETHTHB, BNBTHB, SOLTHB, XRPTHB)
+- Paper grid bot: Operational across 10 symbols (THB + USDT pairs)
+- Poly bot: Operational (149 events, 757 signals, scan #387)
+- 429 errors: 0 (rate limit increased from 100 → 1000 req/min)
+- Fixes applied:
+  1. `BINANCE_TH_USE_TESTNET=false` — enabled real order placement
+  2. Rate limit 100 → 1000 req/min in `handler.go` — fixed 429 storm
+  3. Redis `poly_paper:state` kill_switch_active → false — cleared stuck kill switch
+- Monitoring: `infra/scripts/monitor.sh` created for on-demand health checks
+- Decision: OBSERVE — waiting for first real fills before evidence gate assessment
+
+---
+
 ### 2026-06-25 — Momentum Signal Disabled
 
 - Active positions: 14

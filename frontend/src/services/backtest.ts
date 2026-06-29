@@ -4,7 +4,7 @@
  */
 import type { BacktestConfig, BacktestResult, ParameterSweepResult } from '@/types/backtest';
 
-const STRATEGY_URL = process.env.NEXT_PUBLIC_STRATEGY_URL || 'http://localhost:8001';
+const STRATEGY_URL = process.env.NEXT_PUBLIC_STRATEGY_URL || '/strategy-api';
 
 export const backtestService = {
   /**

@@ -63,6 +63,10 @@ class RealGridConfig:
     compound_threshold_thb: float = 500.0  # profit threshold to trigger scaling
     compound_factor: float = 0.1        # scale factor per threshold (10% increase)
     max_compound_multiplier: float = 3.0  # cap at 3x base order size
+    # Dip catcher mode: buy-only accumulation (no sells)
+    buy_only: bool = False              # True = only place BUY orders, never SELL
+    # Exchange rules
+    tick_size: float = 1.0              # Price must be multiple of this (e.g., 1.0, 0.01, 0.001)
 
 
 @dataclass
@@ -107,68 +111,132 @@ class RealGridState:
 
 
 # ── Per-symbol default configs ────────────────────────────────────────────────
-# Tuned for each asset's price level and Binance TH min notional (100 THB)
-# Optimized via backtesting (30-day period, 1h interval)
+# Tuned for DIP CATCHER mode: buy-only accumulation at wider spacing
+# BTC excluded — user handles BTC via Binance auto-DCA
+# Bot catches dips on altcoins that DCA doesn't cover
 SYMBOL_DEFAULTS = {
     "BTCTHB": {
-        "grid_spacing_pct": 2.0,        # ~42,000 THB between levels at ~2.1M (wider = fewer fees)
-        "grid_levels": 2,               # 2 above + 2 below = 4 levels max
-        "order_size": 0.00005,          # ~105 THB per order
-        "max_position": 0.001,          # ~2,100 THB max exposure
+        # BTC handled by Binance DCA — keep config but buy_only if ever activated
+        "grid_spacing_pct": 3.0,
+        "grid_levels": 4,
+        "order_size": 0.00005,
+        "max_position": 0.001,
         "max_daily_loss_usd": 50.0,
-        "volatility_mode": "atr",       # Use ATR for dynamic spacing
-        "atr_period": 14,
-        "atr_multiplier": 1.5,
-        "min_spacing_pct": 1.0,         # Min 1% for BTC
-        "max_spacing_pct": 4.0,         # Max 4% for BTC
+        "volatility_mode": "fixed",
+        "buy_only": True,
+        "stale_threshold_pct": 15.0,
     },
+    # ── Binance TH exchange rules ──────────────────────────────────────────
+    # ETHTHB:   stepSize=0.0001, minNotional=100 THB, tickSize=1
+    # BNBTHB:   stepSize=0.01,   minNotional=100 THB, tickSize=0.01
+    # SOLTHB:   stepSize=0.01,   minNotional=100 THB, tickSize=0.01
+    # XRPTHB:   stepSize=0.01,   minNotional=100 THB, tickSize=0.01
+    # ASTERTHB: stepSize=0.01,   minNotional=100 THB, tickSize=0.01
+    # ATHTHB:   stepSize=0.001,  minNotional=100 THB, tickSize=0.001
+    # PLUMETHB: stepSize=0.01,   minNotional=100 THB, tickSize=0.001
+    # VELOTHB:  stepSize=1.0,    minNotional=100 THB, tickSize=0.0001
+    # ZENTTHB:  stepSize=1.0,    minNotional=100 THB, tickSize=0.0001
+    # Every order MUST be ≥100 THB and match stepSize multiples.
+    # ────────────────────────────────────────────────────────────────────────
     "ETHTHB": {
-        "grid_spacing_pct": 2.0,        # ~1,140 THB between levels at ~57K
-        "grid_levels": 2,               # 2 above + 2 below = 4 levels max
-        "order_size": 0.002,            # ~114 THB per order (above 100 THB min)
-        "max_position": 0.01,           # ~570 THB max exposure
+        "grid_spacing_pct": 3.0,        # 3% grid spacing
+        "grid_levels": 1,               # 1 level (capital-limited ~280 THB)
+        "order_size": 0.002,            # ~105 THB per order (step=0.0001 ✓)
+        "max_position": 0.004,          # ~210 THB max exposure
         "max_daily_loss_usd": 50.0,
-        "volatility_mode": "atr",       # Use ATR for dynamic spacing
-        "atr_period": 14,
-        "atr_multiplier": 1.5,
-        "min_spacing_pct": 1.5,         # Min 1.5% for ETH
-        "max_spacing_pct": 5.0,         # Max 5% for ETH
+        "volatility_mode": "fixed",
+        "buy_only": False,              # Full grid — buy dips + sell peaks
+        "stale_threshold_pct": 15.0,
+        "tick_size": 1.0,               # Price must be multiple of 1
     },
     "BNBTHB": {
-        "grid_spacing_pct": 2.5,        # ~300 THB between levels at ~12K
-        "grid_levels": 2,               # 2 above + 2 below = 4 levels max
-        "order_size": 0.009,            # ~108 THB per order (above 100 THB min)
-        "max_position": 0.05,           # ~600 THB max exposure
+        "grid_spacing_pct": 3.0,
+        "grid_levels": 1,
+        "order_size": 0.01,             # ~184 THB per order (step=0.01 ✓)
+        "max_position": 0.02,           # ~368 THB max exposure
         "max_daily_loss_usd": 40.0,
-        "volatility_mode": "atr",       # Use ATR for dynamic spacing
-        "atr_period": 14,
-        "atr_multiplier": 1.5,
-        "min_spacing_pct": 1.5,
-        "max_spacing_pct": 5.0,
+        "volatility_mode": "fixed",
+        "buy_only": False,              # Full grid — buy dips + sell peaks
+        "stale_threshold_pct": 15.0,
+        "tick_size": 0.01,              # Price must be multiple of 0.01
     },
     "SOLTHB": {
-        "grid_spacing_pct": 3.0,        # ~45 THB between levels at ~5K (wider for volatility)
-        "grid_levels": 2,               # 2 above + 2 below = 4 levels max
-        "order_size": 0.05,             # ~115 THB per order (step=0.01, min notional=100 THB)
-        "max_position": 0.5,            # ~2,500 THB max exposure
+        "grid_spacing_pct": 4.0,        # 4% for SOL volatility
+        "grid_levels": 1,
+        "order_size": 0.05,             # ~120 THB per order (step=0.01 ✓)
+        "max_position": 0.10,           # ~240 THB max exposure
         "max_daily_loss_usd": 30.0,
-        "volatility_mode": "atr",       # Use ATR for dynamic spacing (SOL is volatile)
-        "atr_period": 14,
-        "atr_multiplier": 2.0,          # Higher multiplier for SOL volatility
-        "min_spacing_pct": 2.0,
-        "max_spacing_pct": 6.0,
+        "volatility_mode": "fixed",
+        "buy_only": False,              # Full grid — buy dips + sell peaks
+        "stale_threshold_pct": 20.0,
+        "tick_size": 0.01,              # Price must be multiple of 0.01
     },
     "XRPTHB": {
-        "grid_spacing_pct": 2.5,        # ~12.5 THB between levels at ~25
-        "grid_levels": 2,               # 2 above + 2 below = 4 levels max
-        "order_size": 4.0,              # ~100 THB per order
-        "max_position": 40.0,           # ~1,000 THB max exposure
+        "grid_spacing_pct": 3.0,
+        "grid_levels": 1,
+        "order_size": 3.0,              # ~102 THB per order (step=0.01 ✓)
+        "max_position": 6.0,            # ~204 THB max exposure
         "max_daily_loss_usd": 25.0,
-        "volatility_mode": "atr",       # Use ATR for dynamic spacing
-        "atr_period": 14,
-        "atr_multiplier": 1.5,
-        "min_spacing_pct": 1.5,
-        "max_spacing_pct": 5.0,
+        "volatility_mode": "fixed",
+        "buy_only": False,              # Full grid — buy dips + sell peaks
+        "stale_threshold_pct": 15.0,
+        "tick_size": 0.01,              # Price must be multiple of 0.01
+    },
+    # ── Micro-cap altcoins (Binance TH only) ─────────────────────────────────
+    "ASTERTHB": {
+        "grid_spacing_pct": 5.0,        # 5% — high volatility micro-cap
+        "grid_levels": 1,
+        "order_size": 5.0,              # ~103 THB per order (step=0.01 ✓)
+        "max_position": 10.0,
+        "max_daily_loss_usd": 20.0,
+        "volatility_mode": "fixed",
+        "buy_only": False,
+        "stale_threshold_pct": 25.0,
+        "tick_size": 0.01,              # Price must be multiple of 0.01
+    },
+    "ATHTHB": {
+        "grid_spacing_pct": 4.0,        # 4% — mid volatility
+        "grid_levels": 1,
+        "order_size": 725.0,            # ~100 THB per order (step=0.001 ✓)
+        "max_position": 1500.0,
+        "max_daily_loss_usd": 15.0,
+        "volatility_mode": "fixed",
+        "buy_only": False,
+        "stale_threshold_pct": 20.0,
+        "tick_size": 0.001,             # Price must be multiple of 0.001
+    },
+    "PLUMETHB": {
+        "grid_spacing_pct": 5.0,        # 5% — RWA narrative, volatile
+        "grid_levels": 1,
+        "order_size": 325.0,            # ~100 THB per order (step=0.01 ✓)
+        "max_position": 650.0,
+        "max_daily_loss_usd": 15.0,
+        "volatility_mode": "fixed",
+        "buy_only": False,
+        "stale_threshold_pct": 25.0,
+        "tick_size": 0.001,             # Price must be multiple of 0.001
+    },
+    "VELOTHB": {
+        "grid_spacing_pct": 5.0,        # 5% — micro-cap, volatile
+        "grid_levels": 1,
+        "order_size": 936.0,            # ~100 THB per order (step=1.0 ✓)
+        "max_position": 2000.0,
+        "max_daily_loss_usd": 10.0,
+        "volatility_mode": "fixed",
+        "buy_only": False,
+        "stale_threshold_pct": 25.0,
+        "tick_size": 0.0001,            # Price must be multiple of 0.0001
+    },
+    "ZENTTHB": {
+        "grid_spacing_pct": 5.0,        # 5% — micro-cap, volatile
+        "grid_levels": 1,
+        "order_size": 1287.0,           # ~100 THB per order (step=1.0 ✓)
+        "max_position": 2600.0,
+        "max_daily_loss_usd": 10.0,
+        "volatility_mode": "fixed",
+        "buy_only": False,
+        "stale_threshold_pct": 25.0,
+        "tick_size": 0.0001,            # Price must be multiple of 0.0001
     },
 }
 
@@ -577,8 +645,8 @@ class RealGridBot:
         spacing = price * (spacing_pct / 100.0)
         
         logger.info(
-            "[RealGrid %s] price=%d spacing=%d (%.1f%%) mode=%s regime=%s alloc=%.1f buys=%d sells=%d pnl=$%.2f",
-            cfg.symbol, int(price), int(spacing), spacing_pct, cfg.volatility_mode,
+            "[RealGrid %s] price=%.6g spacing=%.6g (%.1f%%) mode=%s regime=%s alloc=%.1f buys=%d sells=%d pnl=$%.2f",
+            cfg.symbol, price, spacing, spacing_pct, cfg.volatility_mode,
             state.regime, state.allocation_weight,
             len(state.active_buys), len(state.active_sells),
             state.daily_pnl,
@@ -599,9 +667,11 @@ class RealGridBot:
             return
 
         for level in range(1, cfg.grid_levels + 1):
-            # Binance TH THB pairs require integer prices (tickSize=1.0)
-            buy_price = int(price - (spacing * level))
-            sell_price = int(price + (spacing * level))
+            # Round price to tick_size (Binance TH requires prices to be multiples of tickSize)
+            tick = cfg.tick_size
+            buy_price = round((price - (spacing * level)) / tick) * tick
+            # Format price to avoid floating point issues
+            buy_price = float(f"{buy_price:.10g}")
 
             total_orders = len(state.active_buys) + len(state.active_sells)
             if total_orders >= cfg.max_open_orders:
@@ -611,9 +681,12 @@ class RealGridBot:
             if buy_price not in state.active_buys:
                 await self._place_grid_order(cfg, state, "BUY", buy_price)
 
-            # Place LIMIT sell if not already active at this price
-            if sell_price not in state.active_sells:
-                await self._place_grid_order(cfg, state, "SELL", sell_price)
+            # Place LIMIT sell only if NOT in buy-only (dip catcher) mode
+            if not cfg.buy_only:
+                sell_price = round((price + (spacing * level)) / tick) * tick
+                sell_price = float(f"{sell_price:.10g}")
+                if sell_price not in state.active_sells:
+                    await self._place_grid_order(cfg, state, "SELL", sell_price)
 
         # Persist state to Redis after each tick
         await self._save_state(cfg.symbol)

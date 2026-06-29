@@ -573,6 +573,20 @@ export const api = {
     }
   },
 
+  // ── Paper Grid Bot (Geometric + DGT + Confluence) ─────────────────────────────
+
+  async getPaperGridStatus() {
+    try {
+      const response = await apiFetch(`${STRATEGY_API_URL}/api/grid/status`, {
+        headers: authHeaders(),
+      });
+      if (!response.ok) return null;
+      return response.json();
+    } catch {
+      return null;
+    }
+  },
+
   // ── Polymarket Paper Trading ──────────────────────────────────────────────────
 
   async getPolyPaperStatus() {
@@ -644,6 +658,44 @@ export const api = {
       return response.json();
     } catch {
       return [];
+    }
+  },
+
+  // ── Arbitrage Paper Trading ──────────────────────────────────────────────────
+
+  async getArbPaperStatus() {
+    try {
+      const response = await apiFetch(`${STRATEGY_API_URL}/api/arb-paper/status`, {
+        headers: authHeaders(),
+      });
+      if (!response.ok) return null;
+      return response.json();
+    } catch {
+      return null;
+    }
+  },
+
+  async resetArbPaper() {
+    try {
+      const response = await apiFetch(`${STRATEGY_API_URL}/api/arb-paper/reset`, {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  },
+
+  async resetPolyKillSwitch() {
+    try {
+      const response = await apiFetch(`${STRATEGY_API_URL}/api/poly-paper/reset-kill-switch`, {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      return response.ok;
+    } catch {
+      return false;
     }
   },
 
@@ -841,6 +893,65 @@ export const api = {
       return response.json();
     } catch {
       return [];
+    }
+  },
+
+  async getPaperSnapshots(limit = 200) {
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/api/paper/snapshots?limit=${limit}`);
+      if (!response.ok) return [];
+      return response.json();
+    } catch {
+      return [];
+    }
+  },
+
+  async getPriceAlerts() {
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/api/price-alerts`);
+      if (!response.ok) return [];
+      return response.json();
+    } catch {
+      return [];
+    }
+  },
+
+  async createPriceAlert(symbol: string, targetPrice: number, direction: 'ABOVE' | 'BELOW') {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/price-alerts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol, target_price: targetPrice, direction }),
+      });
+      if (!response.ok) return null;
+      return response.json();
+    } catch {
+      return null;
+    }
+  },
+
+  async deletePriceAlert(id: string) {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/price-alerts`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  },
+
+  async resetPriceAlerts() {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/price-alerts/reset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      return response.ok;
+    } catch {
+      return false;
     }
   },
 };

@@ -22,8 +22,13 @@ import {
   BarChart3,
   Clock,
   Zap,
+  Layers,
+  Target,
+  Cpu,
+  Globe,
 } from 'lucide-react';
 import { tradeJournalService } from '@/services/trade-journal';
+import { api } from '@/services/api';
 import type { DailyReport } from '@/types/trade-journal';
 import Card from '@/components/ui/Card';
 
@@ -35,6 +40,53 @@ export default function DailyReportPage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedSymbol, setSelectedSymbol] = useState(REAL_SYMBOLS[0]);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+
+  // Multi-engine summary state
+  const [engineSummary, setEngineSummary] = useState<{
+    paperPortfolio?: { total_pnl: number; total_trades: number; win_trades: number; loss_trades: number; current_balance: number; total_pnl_percent: number };
+    paperGrid?: { running: boolean; symbols: Record<string, any> };
+    polyPaper?: { running: boolean; total_pnl?: number; total_trades?: number };
+    arbPaper?: { running: boolean; total_pnl?: number; total_trades?: number };
+    realGrid?: { running: boolean; halted: boolean; daily_pnl?: number };
+    commandCenter?: { kill_switch?: { active: boolean }; current_decision?: string };
+  }>({});
+
+  const fetchEngineSummary = useCallback(async () => {
+    const [paperRes, gridRes, polyRes, arbRes, realGridRes, ccRes] = await Promise.allSettled([
+      api.getPaperPortfolio(),
+      api.getPaperGridStatus(),
+      api.getPolyPaperStatus(),
+      api.getArbPaperStatus(),
+      api.getRealGridStatus(),
+      api.getCommandCenter(),
+    ]);
+    const summary: any = {};
+    if (paperRes.status === 'fulfilled' && paperRes.value) {
+      const p = paperRes.value as any;
+      summary.paperPortfolio = { total_pnl: p.total_pnl, total_trades: p.total_trades, win_trades: p.win_trades, loss_trades: p.loss_trades, current_balance: p.current_balance, total_pnl_percent: p.total_pnl_percent };
+    }
+    if (gridRes.status === 'fulfilled' && gridRes.value) {
+      const g = gridRes.value as any;
+      summary.paperGrid = { running: g.running, symbols: g.symbols || {} };
+    }
+    if (polyRes.status === 'fulfilled' && polyRes.value) {
+      const pp = polyRes.value as any;
+      summary.polyPaper = { running: pp.running, total_pnl: pp.total_pnl, total_trades: pp.total_trades };
+    }
+    if (arbRes.status === 'fulfilled' && arbRes.value) {
+      const a = arbRes.value as any;
+      summary.arbPaper = { running: a.running, total_pnl: a.total_pnl, total_trades: a.total_trades };
+    }
+    if (realGridRes.status === 'fulfilled' && realGridRes.value) {
+      const rg = realGridRes.value as any;
+      summary.realGrid = { running: rg.running, halted: rg.halted, daily_pnl: rg.daily_pnl };
+    }
+    if (ccRes.status === 'fulfilled' && ccRes.value) {
+      const cc = ccRes.value as any;
+      summary.commandCenter = { kill_switch: cc.kill_switch, current_decision: cc.current_decision };
+    }
+    setEngineSummary(summary);
+  }, []);
 
   const fetchReport = useCallback(async () => {
     try {
@@ -54,9 +106,10 @@ export default function DailyReportPage() {
 
   useEffect(() => {
     fetchReport();
-    const interval = setInterval(fetchReport, 30000);
+    fetchEngineSummary();
+    const interval = setInterval(() => { fetchReport(); fetchEngineSummary(); }, 30000);
     return () => clearInterval(interval);
-  }, [fetchReport]);
+  }, [fetchReport, fetchEngineSummary]);
 
   const report = reports.find(r => r.symbol === selectedSymbol);
 
@@ -110,7 +163,7 @@ export default function DailyReportPage() {
             </select>
           )}
           <button
-            onClick={() => { setLoading(true); fetchReport(); }}
+            onClick={() => { setLoading(true); fetchReport(); fetchEngineSummary(); }}
             className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
           >
             <RefreshCw className={`w-5 h-5 text-gray-500 ${loading ? 'animate-spin' : ''}`} />
@@ -123,6 +176,146 @@ export default function DailyReportPage() {
           {error}
         </div>
       )}
+
+      {/* Multi-Engine Summary */}
+      <Card>
+        <div className="flex items-center gap-2 mb-4">
+          <Globe className="w-5 h-5 text-indigo-500" />
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Multi-Engine Summary</h3>
+          {engineSummary.commandCenter?.kill_switch?.active && (
+            <span className="ml-auto flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">
+              <AlertTriangle className="w-3 h-3" /> KILL SWITCH ACTIVE
+            </span>
+          )}
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          {/* Paper Trading Engine */}
+          <div className="p-3 rounded-lg border border-purple-200 dark:border-purple-800/50 bg-purple-50/50 dark:bg-purple-900/10">
+            <div className="flex items-center gap-1.5 mb-2">
+              <Cpu className="w-3.5 h-3.5 text-purple-500" />
+              <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Paper Trading</span>
+            </div>
+            {engineSummary.paperPortfolio ? (
+              <div className="space-y-1">
+                <div className={`text-sm font-bold ${engineSummary.paperPortfolio.total_pnl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                  {engineSummary.paperPortfolio.total_pnl >= 0 ? '+' : ''}${engineSummary.paperPortfolio.total_pnl.toFixed(2)}
+                </div>
+                <div className="text-[10px] text-gray-500">{engineSummary.paperPortfolio.total_trades} trades ({engineSummary.paperPortfolio.win_trades}W/{engineSummary.paperPortfolio.loss_trades}L)</div>
+                <div className="text-[10px] text-gray-500">Bal: ${engineSummary.paperPortfolio.current_balance.toFixed(2)}</div>
+              </div>
+            ) : <span className="text-xs text-gray-400">No data</span>}
+          </div>
+
+          {/* Paper Grid Bot */}
+          <div className="p-3 rounded-lg border border-blue-200 dark:border-blue-800/50 bg-blue-50/50 dark:bg-blue-900/10">
+            <div className="flex items-center gap-1.5 mb-2">
+              <Layers className="w-3.5 h-3.5 text-blue-500" />
+              <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Paper Grid</span>
+              {engineSummary.paperGrid?.running ? (
+                <span className="ml-auto w-1.5 h-1.5 rounded-full bg-green-500" />
+              ) : (
+                <span className="ml-auto w-1.5 h-1.5 rounded-full bg-red-500" />
+              )}
+            </div>
+            {engineSummary.paperGrid ? (
+              <div className="space-y-1">
+                <div className="text-[10px] text-gray-500">
+                  {Object.keys(engineSummary.paperGrid.symbols).length} pairs
+                </div>
+                <div className="text-[10px] text-gray-500">
+                  {Object.values(engineSummary.paperGrid.symbols).reduce((s: number, d: any) => s + (d.trades_executed || 0), 0)} total trades
+                </div>
+                <div className={`text-xs font-medium ${engineSummary.paperGrid.running ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                  {engineSummary.paperGrid.running ? 'RUNNING' : 'STOPPED'}
+                </div>
+              </div>
+            ) : <span className="text-xs text-gray-400">No data</span>}
+          </div>
+
+          {/* Polymarket Paper */}
+          <div className="p-3 rounded-lg border border-emerald-200 dark:border-emerald-800/50 bg-emerald-50/50 dark:bg-emerald-900/10">
+            <div className="flex items-center gap-1.5 mb-2">
+              <Target className="w-3.5 h-3.5 text-emerald-500" />
+              <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Polymarket</span>
+              {engineSummary.polyPaper?.running ? (
+                <span className="ml-auto w-1.5 h-1.5 rounded-full bg-green-500" />
+              ) : (
+                <span className="ml-auto w-1.5 h-1.5 rounded-full bg-red-500" />
+              )}
+            </div>
+            {engineSummary.polyPaper ? (
+              <div className="space-y-1">
+                {engineSummary.polyPaper.total_pnl != null && (
+                  <div className={`text-sm font-bold ${engineSummary.polyPaper.total_pnl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                    {engineSummary.polyPaper.total_pnl >= 0 ? '+' : ''}${engineSummary.polyPaper.total_pnl.toFixed(2)}
+                  </div>
+                )}
+                <div className="text-[10px] text-gray-500">{engineSummary.polyPaper.total_trades || 0} trades</div>
+                <div className={`text-xs font-medium ${engineSummary.polyPaper.running ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                  {engineSummary.polyPaper.running ? 'RUNNING' : 'STOPPED'}
+                </div>
+              </div>
+            ) : <span className="text-xs text-gray-400">No data</span>}
+          </div>
+
+          {/* Arbitrage Paper */}
+          <div className="p-3 rounded-lg border border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-900/10">
+            <div className="flex items-center gap-1.5 mb-2">
+              <Zap className="w-3.5 h-3.5 text-amber-500" />
+              <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Arbitrage</span>
+              {engineSummary.arbPaper?.running ? (
+                <span className="ml-auto w-1.5 h-1.5 rounded-full bg-green-500" />
+              ) : (
+                <span className="ml-auto w-1.5 h-1.5 rounded-full bg-red-500" />
+              )}
+            </div>
+            {engineSummary.arbPaper ? (
+              <div className="space-y-1">
+                {engineSummary.arbPaper.total_pnl != null && (
+                  <div className={`text-sm font-bold ${engineSummary.arbPaper.total_pnl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                    {engineSummary.arbPaper.total_pnl >= 0 ? '+' : ''}${engineSummary.arbPaper.total_pnl.toFixed(2)}
+                  </div>
+                )}
+                <div className="text-[10px] text-gray-500">{engineSummary.arbPaper.total_trades || 0} trades</div>
+                <div className={`text-xs font-medium ${engineSummary.arbPaper.running ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                  {engineSummary.arbPaper.running ? 'RUNNING' : 'STOPPED'}
+                </div>
+              </div>
+            ) : <span className="text-xs text-gray-400">No data</span>}
+          </div>
+
+          {/* Real Grid */}
+          <div className="p-3 rounded-lg border border-cyan-200 dark:border-cyan-800/50 bg-cyan-50/50 dark:bg-cyan-900/10">
+            <div className="flex items-center gap-1.5 mb-2">
+              <Activity className="w-3.5 h-3.5 text-cyan-500" />
+              <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Real Grid</span>
+              {engineSummary.realGrid?.running ? (
+                <span className="ml-auto w-1.5 h-1.5 rounded-full bg-green-500" />
+              ) : (
+                <span className="ml-auto w-1.5 h-1.5 rounded-full bg-red-500" />
+              )}
+            </div>
+            {engineSummary.realGrid ? (
+              <div className="space-y-1">
+                {engineSummary.realGrid.daily_pnl != null && (
+                  <div className={`text-sm font-bold ${engineSummary.realGrid.daily_pnl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                    {engineSummary.realGrid.daily_pnl >= 0 ? '+' : ''}${engineSummary.realGrid.daily_pnl.toFixed(2)}
+                  </div>
+                )}
+                <div className={`text-xs font-medium ${engineSummary.realGrid.halted ? 'text-red-600 dark:text-red-400' : engineSummary.realGrid.running ? 'text-green-600 dark:text-green-400' : 'text-gray-500'}`}>
+                  {engineSummary.realGrid.halted ? 'HALTED' : engineSummary.realGrid.running ? 'RUNNING' : 'STOPPED'}
+                </div>
+              </div>
+            ) : <span className="text-xs text-gray-400">No data</span>}
+          </div>
+        </div>
+        {engineSummary.commandCenter?.current_decision && (
+          <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-700">
+            <span className="text-xs text-gray-500 dark:text-gray-400">Decision: </span>
+            <span className="text-sm font-bold text-gray-900 dark:text-white">{engineSummary.commandCenter.current_decision}</span>
+          </div>
+        )}
+      </Card>
 
       {report && (
         <>

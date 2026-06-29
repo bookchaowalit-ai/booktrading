@@ -116,6 +116,96 @@ class WebhookNotifier:
         text = f"⚠️ Grid Bot Error\n{error[:500]}"  # Truncate long errors
         await self._queue.put(text)
 
+    # ── Market Intelligence Alerts ─────────────────────────────────────────
+
+    async def send_market_opportunity(
+        self,
+        symbol: str,
+        market: str,
+        severity: str,
+        title: str,
+        description: str,
+        confidence: float,
+        price: float = 0.0,
+        opp_type: str = "",
+    ):
+        """Send market intelligence opportunity alert."""
+        if not self._enabled:
+            return
+
+        severity_emoji = {
+            "critical": "🔴",
+            "high": "🟠",
+            "medium": "🟡",
+            "low": "🔵",
+        }.get(severity, "⚪")
+
+        market_emoji = {
+            "crypto": "💰",
+            "airdrop": "🎁",
+            "degen": "🔥",
+            "prediction": "🎯",
+            "stock": "📈",
+            "forex": "💱",
+        }.get(market, "📊")
+
+        price_str = f"\n💵 Price: `${price:,.2f}`" if price > 0 else ""
+        opp_label = opp_type.replace("_", " ").title() if opp_type else ""
+
+        text = (
+            f"{severity_emoji} *Market Intel: {market.title()}*\n"
+            f"\n"
+            f"{market_emoji} *{symbol}* — {title}\n"
+            f"📝 {description[:200]}\n"
+            f"🎯 Confidence: `{confidence * 100:.0f}%`{price_str}"
+        )
+        if opp_label:
+            text += f"\n🏷️ Type: `{opp_label}`"
+
+        await self._queue.put(text)
+
+    async def send_market_scan_summary(
+        self,
+        total_opps: int,
+        by_severity: dict,
+        by_market: dict,
+        top_opps: list,
+    ):
+        """Send periodic market scan summary."""
+        if not self._enabled:
+            return
+
+        critical = by_severity.get("critical", 0)
+        high = by_severity.get("high", 0)
+
+        # Only send if there's something noteworthy
+        if total_opps == 0:
+            return
+
+        lines = [
+            f"📊 *Market Scan Summary*\n",
+            f"🔍 Total Opportunities: `{total_opps}`",
+            f"🔴 Critical: `{critical}`  🟠 High: `{high}`\n",
+        ]
+
+        # Market breakdown
+        if by_market:
+            lines.append("*By Market:*")
+            for market, count in sorted(by_market.items(), key=lambda x: -x[1])[:5]:
+                lines.append(f"  • {market.title()}: {count}")
+            lines.append("")
+
+        # Top opportunities
+        if top_opps:
+            lines.append("*Top Picks:*")
+            for opp in top_opps[:3]:
+                symbol = opp.get("symbol", "?")
+                title = opp.get("title", "")[:50]
+                conf = opp.get("confidence", 0) * 100
+                lines.append(f"  • `{symbol}` — {title} ({conf:.0f}%)")
+
+        await self._queue.put("\n".join(lines))
+
     async def _send(self, text: str):
         """Send message to configured webhooks."""
         if self._telegram_token and self._telegram_chat_id:

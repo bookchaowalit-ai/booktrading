@@ -4,7 +4,7 @@
  */
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
   TestTube,
@@ -20,8 +20,10 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock,
+  GitCompare,
 } from 'lucide-react';
 import { backtestService } from '@/services/backtest';
+import { api } from '@/services/api';
 import type { BacktestConfig, BacktestResult } from '@/types/backtest';
 import { DEFAULT_BACKTEST_CONFIG } from '@/types/backtest';
 import Card from '@/components/ui/Card';
@@ -35,13 +37,34 @@ const INTERVALS = [
   { value: '1d', label: '1 Day' },
 ];
 
-const SYMBOLS = ['BTCTHB', 'ETHTHB'];
+const SYMBOLS = ['BTCTHB', 'ETHTHB', 'SOLTHB', 'XRPTHB', 'BNBTHB', 'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'BNBUSDT'];
 
 export default function BacktestPage() {
   const [config, setConfig] = useState<BacktestConfig>(DEFAULT_BACKTEST_CONFIG);
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [paperData, setPaperData] = useState<{
+    total_pnl: number;
+    total_pnl_percent: number;
+    total_trades: number;
+    win_trades: number;
+    loss_trades: number;
+    max_drawdown: number;
+    initial_balance: number;
+    total_value: number;
+  } | null>(null);
+
+  // Fetch paper trading data for comparison
+  useEffect(() => {
+    const fetchPaper = async () => {
+      try {
+        const portfolio = await api.getPaperPortfolio();
+        if (portfolio) setPaperData(portfolio);
+      } catch { /* ignore */ }
+    };
+    fetchPaper();
+  }, []);
 
   const handleRunBacktest = async () => {
     setLoading(true);
@@ -358,6 +381,90 @@ export default function BacktestPage() {
                   </div>
                 </Card>
               )}
+
+              {/* Backtest vs Paper Comparison */}
+              {paperData && (
+                <Card>
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+                    <GitCompare className="w-5 h-5 text-violet-500" />
+                    Backtest vs Paper Trading
+                  </h3>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left border-b border-gray-200 dark:border-gray-700">
+                          <th className="pb-3 font-medium text-gray-500 dark:text-gray-400">Metric</th>
+                          <th className="pb-3 font-medium text-center">
+                            <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 text-xs font-medium">
+                              <TestTube className="w-3 h-3" /> Backtest
+                            </span>
+                          </th>
+                          <th className="pb-3 font-medium text-center">
+                            <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 text-xs font-medium">
+                              <Activity className="w-3 h-3" /> Paper (Live)
+                            </span>
+                          </th>
+                          <th className="pb-3 font-medium text-center text-gray-500 dark:text-gray-400">Delta</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                        <ComparisonRow
+                          label="Total P&L"
+                          backtest={formatPnl(result.net_pnl)}
+                          paper={formatPnl(paperData.total_pnl)}
+                          backtestVal={result.net_pnl}
+                          paperVal={paperData.total_pnl}
+                          highlight
+                        />
+                        <ComparisonRow
+                          label="P&L %"
+                          backtest={`${((result.net_pnl / (result.config.initial_capital_thb as number || 10000)) * 100).toFixed(2)}%`}
+                          paper={`${(paperData.total_pnl_percent ?? 0).toFixed(2)}%`}
+                          backtestVal={(result.net_pnl / (result.config.initial_capital_thb as number || 10000)) * 100}
+                          paperVal={paperData.total_pnl_percent ?? 0}
+                        />
+                        <ComparisonRow
+                          label="Total Trades"
+                          backtest={String(result.total_trades)}
+                          paper={String(paperData.total_trades)}
+                          backtestVal={result.total_trades}
+                          paperVal={paperData.total_trades}
+                        />
+                        <ComparisonRow
+                          label="Win Rate"
+                          backtest={`${result.win_rate.toFixed(1)}%`}
+                          paper={paperData.total_trades > 0 ? `${((paperData.win_trades / paperData.total_trades) * 100).toFixed(1)}%` : '—'}
+                          backtestVal={result.win_rate}
+                          paperVal={paperData.total_trades > 0 ? (paperData.win_trades / paperData.total_trades) * 100 : 0}
+                        />
+                        <ComparisonRow
+                          label="Max Drawdown"
+                          backtest={`${result.max_drawdown_pct.toFixed(2)}%`}
+                          paper="—"
+                          backtestVal={result.max_drawdown_pct}
+                          paperVal={0}
+                        />
+                        <ComparisonRow
+                          label="Trades/Day"
+                          backtest={result.trades_per_day.toFixed(1)}
+                          paper="—"
+                          backtestVal={result.trades_per_day}
+                          paperVal={0}
+                        />
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="mt-4 p-3 bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/50 rounded-lg">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+                      <p className="text-xs text-amber-700 dark:text-amber-300">
+                        Backtest uses historical data; paper trading reflects live market conditions.
+                        Differences are expected due to slippage, timing, and market regime changes.
+                      </p>
+                    </div>
+                  </div>
+                </Card>
+              )}
             </>
           )}
         </div>
@@ -412,6 +519,34 @@ function DetailRow({ label, value, highlight }: { label: string; value: string; 
         {value}
       </span>
     </div>
+  );
+}
+
+function ComparisonRow({ label, backtest, paper, backtestVal, paperVal, highlight }: {
+  label: string;
+  backtest: string;
+  paper: string;
+  backtestVal: number;
+  paperVal: number;
+  highlight?: boolean;
+}) {
+  const delta = paperVal - backtestVal;
+  const deltaStr = delta === 0 ? '—' : `${delta > 0 ? '+' : ''}${delta.toFixed(2)}`;
+  const deltaColor = delta > 0 ? 'text-green-600 dark:text-green-400' : delta < 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-400';
+
+  return (
+    <tr className="text-gray-900 dark:text-gray-100">
+      <td className="py-2.5 text-gray-600 dark:text-gray-400">{label}</td>
+      <td className={`py-2.5 text-center font-mono text-sm ${highlight && backtestVal >= 0 ? 'text-green-600 dark:text-green-400' : ''}`}>
+        {backtest}
+      </td>
+      <td className={`py-2.5 text-center font-mono text-sm ${highlight && paperVal >= 0 ? 'text-green-600 dark:text-green-400' : ''}`}>
+        {paper}
+      </td>
+      <td className={`py-2.5 text-center font-mono text-xs ${deltaColor}`}>
+        {deltaStr}
+      </td>
+    </tr>
   );
 }
 

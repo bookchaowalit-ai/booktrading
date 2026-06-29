@@ -18,9 +18,6 @@ logger = logging.getLogger(__name__)
 
 # Yahoo Finance v8 chart API (public, no key needed)
 YF_BASE = "https://query1.finance.yahoo.com"
-# Alternative: v10 for quotes
-YF_QUOTE_URL = "https://query1.finance.yahoo.com/v7/finance/quote"
-# Fallback: use the download endpoint
 YF_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 
 
@@ -55,69 +52,20 @@ class StockSource(BaseSource):
             ]
 
         quotes = []
+        headers = {"User-Agent": "Mozilla/5.0"}
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
-                # Use Yahoo Finance v7 quote API (batch)
-                symbols_str = ",".join(symbols)
-                headers = {"User-Agent": "Mozilla/5.0"}
-                resp = await client.get(
-                    YF_QUOTE_URL,
-                    params={"symbols": symbols_str},
-                    headers=headers,
-                )
-
-                if resp.status_code != 200:
-                    # Fallback: fetch individually via chart endpoint
-                    logger.warning(f"Yahoo v7 quote returned {resp.status_code}, falling back to chart API")
-                    quotes = await self._fetch_individual(client, symbols, headers)
-                else:
-                    data = resp.json()
-                    results = data.get("quoteResponse", {}).get("result", [])
-                    for r in results:
-                        symbol = r.get("symbol", "")
-                        price = r.get("regularMarketPrice", 0) or 0
-                        change = r.get("regularMarketChange", 0) or 0
-                        change_pct = r.get("regularMarketChangePercent", 0) or 0
-                        volume = r.get("regularMarketVolume", 0) or 0
-                        prev_close = r.get("regularMarketPreviousClose", 0) or 0
-                        day_high = r.get("regularMarketDayHigh", 0) or 0
-                        day_low = r.get("regularMarketDayLow", 0) or 0
-                        market_cap = r.get("marketCap", 0) or 0
-                        market_state = r.get("marketState", "")
-
-                        # Determine if Thai or US
-                        sym_type = MarketType.STOCK
-
-                        quotes.append(MarketQuote(
-                            symbol=symbol,
-                            market_type=sym_type,
-                            source=self.source_name,
-                            price=price,
-                            change_24h=change,
-                            change_pct_24h=change_pct,
-                            volume_24h=volume,
-                            metadata={
-                                "previous_close": prev_close,
-                                "day_high": day_high,
-                                "day_low": day_low,
-                                "market_cap": market_cap,
-                                "market_state": market_state,
-                                "exchange": r.get("fullExchangeName", ""),
-                                "currency": r.get("currency", "USD"),
-                                "52w_high": r.get("fiftyTwoWeekHigh", 0),
-                                "52w_low": r.get("fiftyTwoWeekLow", 0),
-                                "pe_ratio": r.get("trailingPE", 0),
-                            },
-                        ))
+                # Use v8 chart API directly (v7 quote API requires auth since 2024)
+                quotes = await self._fetch_via_chart(client, symbols, headers)
         except Exception as e:
             logger.error(f"Failed to fetch stock quotes: {e}")
 
         return quotes
 
-    async def _fetch_individual(
+    async def _fetch_via_chart(
         self, client: httpx.AsyncClient, symbols: List[str], headers: Dict
     ) -> List[MarketQuote]:
-        """Fallback: fetch each symbol via chart endpoint."""
+        """Fetch each symbol via v8 chart endpoint."""
         quotes = []
         for symbol in symbols:
             try:

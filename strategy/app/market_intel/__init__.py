@@ -1,7 +1,8 @@
 """
 Market Intelligence — unified multi-market analysis.
 
-Covers: Crypto, Stocks (US + Thai), Prediction Markets (Polymarket), Forex, Commodities.
+Covers: Crypto, Stocks (US + Thai), Prediction Markets (Polymarket), Forex, Commodities,
+        Airdrops, Degen/Meme coins, Binance Alpha, Cross-exchange Arbitrage.
 """
 from app.market_intel.models import (
     MarketType,
@@ -19,6 +20,10 @@ from app.market_intel.sources import (
     PredictionSource,
     StockSource,
     MacroSource,
+    AirdropSource,
+    DegenSource,
+    BinanceAlphaSource,
+    CrossExchangeArbSource,
 )
 
 __all__ = [
@@ -39,4 +44,8 @@ __all__ = [
     "PredictionSource",
     "StockSource",
     "MacroSource",
+    "AirdropSource",
+    "DegenSource",
+    "BinanceAlphaSource",
+    "CrossExchangeArbSource",
 ]

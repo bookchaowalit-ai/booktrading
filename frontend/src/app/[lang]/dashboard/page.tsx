@@ -86,6 +86,30 @@ interface CommandCenterData {
     grid_running: boolean;
     grid_daily_pnl: number;
   };
+  risk_sources: {
+    paper_bot: {
+      drawdown_pct: number;
+      bankroll: number;
+      peak_bankroll: number;
+      kill_switch_active: boolean;
+      kill_reason: string;
+      active_positions: number;
+    };
+    grid_bot: {
+      drawdown_pct: number;
+      halted: boolean;
+      running: boolean;
+      daily_pnl: number;
+    };
+    arb_paper_bot?: {
+      running: boolean;
+      capital_thb: number;
+      pnl_thb: number;
+      total_trades: number;
+      win_rate: number;
+      opportunities_found: number;
+    };
+  };
 }
 
 const decisionMeta = {
@@ -425,6 +449,119 @@ export default function CommandCenter() {
                       {t('today.killSwitchOff')}
                     </span>
                   )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Active Bots — live paper trading metrics */}
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        {/* Polymarket Paper Bot */}
+        <div className="relative overflow-hidden rounded-xl border border-violet-200/60 bg-gradient-to-br from-violet-50 via-white to-purple-50 dark:border-violet-800/40 dark:from-violet-950/30 dark:via-gray-900 dark:to-purple-950/20">
+          <div className="flex items-center gap-2 border-b border-violet-100 px-4 py-2.5 dark:border-violet-900/50">
+            <FlaskConical className="h-3.5 w-3.5 text-violet-600 dark:text-violet-400" />
+            <span className="text-xs font-semibold text-violet-700 dark:text-violet-300">Polymarket Paper</span>
+            <span className={`ml-auto inline-flex h-2 w-2 rounded-full ${data.capital.kill_switch_active ? 'bg-red-500' : 'bg-emerald-500'}`} />
+          </div>
+          <div className="p-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <div className="text-[10px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Bankroll</div>
+                <div className="mt-0.5 text-lg font-semibold text-gray-950 dark:text-white">${data.capital.paper_bankroll.toFixed(2)}</div>
+              </div>
+              <div>
+                <div className="text-[10px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">P&L</div>
+                <div className={`mt-0.5 text-lg font-semibold ${data.capital.bankroll_pnl >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                  {data.capital.bankroll_pnl >= 0 ? '+' : ''}${data.capital.bankroll_pnl.toFixed(2)}
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Positions</div>
+                <div className="mt-0.5 text-sm font-semibold text-gray-950 dark:text-white">
+                  {data.capital.active_positions}<span className="ml-0.5 text-xs font-normal text-gray-500 dark:text-gray-400">/{data.capital.max_positions}</span>
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Drawdown</div>
+                <div className={`mt-0.5 text-sm font-semibold ${data.capital.drawdown_pct > data.capital.max_drawdown_pct ? 'text-red-600 dark:text-red-400' : 'text-gray-950 dark:text-white'}`}>
+                  {data.capital.drawdown_pct.toFixed(1)}%
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Arbitrage Paper Bot */}
+        <div className="relative overflow-hidden rounded-xl border border-sky-200/60 bg-gradient-to-br from-sky-50 via-white to-cyan-50 dark:border-sky-800/40 dark:from-sky-950/30 dark:via-gray-900 dark:to-cyan-950/20">
+          <div className="flex items-center gap-2 border-b border-sky-100 px-4 py-2.5 dark:border-sky-900/50">
+            <Zap className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
+            <span className="text-xs font-semibold text-sky-700 dark:text-sky-300">Arbitrage Paper</span>
+            <span className={`ml-auto inline-flex h-2 w-2 rounded-full ${data.risk_sources?.arb_paper_bot?.running ? 'bg-emerald-500' : 'bg-gray-400'}`} />
+          </div>
+          <div className="p-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <div className="text-[10px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Capital</div>
+                <div className="mt-0.5 text-lg font-semibold text-gray-950 dark:text-white">
+                  {data.risk_sources?.arb_paper_bot ? `฿${data.risk_sources.arb_paper_bot.capital_thb.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">P&L</div>
+                <div className={`mt-0.5 text-lg font-semibold ${(data.risk_sources?.arb_paper_bot?.pnl_thb ?? 0) >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                  {data.risk_sources?.arb_paper_bot ? `${(data.risk_sources.arb_paper_bot.pnl_thb ?? 0) >= 0 ? '+' : ''}฿${data.risk_sources.arb_paper_bot.pnl_thb.toFixed(0)}` : '—'}
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Trades</div>
+                <div className="mt-0.5 text-sm font-semibold text-gray-950 dark:text-white">
+                  {data.risk_sources?.arb_paper_bot?.total_trades ?? 0}
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Win Rate</div>
+                <div className="mt-0.5 text-sm font-semibold text-gray-950 dark:text-white">
+                  {data.risk_sources?.arb_paper_bot ? `${data.risk_sources.arb_paper_bot.win_rate.toFixed(0)}%` : '—'}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Paper Grid Bot */}
+        <div className="relative overflow-hidden rounded-xl border border-teal-200/60 bg-gradient-to-br from-teal-50 via-white to-emerald-50 dark:border-teal-800/40 dark:from-teal-950/30 dark:via-gray-900 dark:to-emerald-950/20">
+          <div className="flex items-center gap-2 border-b border-teal-100 px-4 py-2.5 dark:border-teal-900/50">
+            <Activity className="h-3.5 w-3.5 text-teal-600 dark:text-teal-400" />
+            <span className="text-xs font-semibold text-teal-700 dark:text-teal-300">Paper Grid</span>
+            <span className={`ml-auto inline-flex h-2 w-2 rounded-full ${data.grid.running ? 'bg-emerald-500' : 'bg-gray-400'}`} />
+          </div>
+          <div className="p-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <div className="text-[10px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Status</div>
+                <div className="mt-0.5">
+                  {data.grid.running ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-sm font-semibold text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-200">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                      Running
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-sm font-semibold text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+                      Idle
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Daily Fills</div>
+                <div className="mt-0.5 text-lg font-semibold text-gray-950 dark:text-white">{data.grid.daily_fills}</div>
+              </div>
+              <div className="col-span-2">
+                <div className="text-[10px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Daily PnL</div>
+                <div className={`mt-0.5 text-lg font-semibold ${data.grid.daily_pnl >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                  {data.grid.daily_pnl >= 0 ? '+' : ''}{formatTHB(data.grid.daily_pnl)}
                 </div>
               </div>
             </div>

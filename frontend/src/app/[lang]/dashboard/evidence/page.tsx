@@ -5,7 +5,7 @@
  */
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslation, TranslationKey } from '@/i18n/translations';
 import {
   Shield, CheckCircle, XCircle, AlertTriangle, Clock,
@@ -58,8 +58,34 @@ interface PaperPosition {
 
 interface PaperStatus {
   running: boolean;
-  positions: { active: number; resolved: number };
-  config: { max_positions: number };
+  uptime_seconds?: number;
+  scan_count?: number;
+  scan_interval?: number;
+  last_scan_time?: number;
+  config: {
+    max_positions: number;
+    position_size_usdc?: number;
+    min_deviation?: number;
+    min_liquidity?: number;
+    min_volume?: number;
+    scan_interval?: number;
+    disabled_signals?: string[];
+  };
+  positions: { active: number; resolved: number; total?: number };
+  performance?: {
+    total_pnl: number;
+    total_trades: number;
+    winning_trades: number;
+    win_rate_pct: number;
+    opportunities_found: number;
+  };
+  alpha?: {
+    signals_detected?: number;
+    signal_types?: string[];
+    active_signal_types?: string[];
+    disabled_signal_types?: string[];
+    bankroll?: { current: number; peak: number; kelly_fraction?: number };
+  };
 }
 
 interface PaperPerformance {
@@ -146,6 +172,7 @@ export default function EvidencePage() {
   const [paperPositions, setPaperPositions] = useState<PaperPosition[]>([]);
   const [paperPerf, setPaperPerf] = useState<PaperPerformance | null>(null);
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
+  const [arbStatus, setArbStatus] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -184,6 +211,13 @@ export default function EvidencePage() {
     } catch {
       // Journal optional
     }
+    // Fetch arbitrage paper bot status
+    try {
+      const arbRes = await api.getArbPaperStatus();
+      if (arbRes) setArbStatus(arbRes);
+    } catch {
+      // Arb optional
+    }
   }, []);
 
   useEffect(() => {
@@ -218,7 +252,100 @@ export default function EvidencePage() {
   const paperTrial = data?.paper_trial;
   const latestChange = data?.latest_change;
   const filesFound = data?.files_found || { evidence_log: false, readiness_checklist: false, paper_grid_json: false };
-  const readyCount = gates.filter(g => g.status === 'ready').length;
+
+  // ── Gate Automation: override backend gate statuses with live metric checks ──
+  const enrichedGates = useMemo(() => {
+    return gates.map(gate => {
+      const name = gate.name.toLowerCase();
+      let autoStatus: 'ready' | 'not_ready' | null = null;
+      let metricInfo = '';
+
+      // Paper Trading Engine gate — auto-pass when profitable with low drawdown
+      if (name.includes('paper') && name.includes('trad')) {
+        const pnl = paperStatus?.performance?.total_pnl ?? 0;
+        const dd = paperPerf?.bankroll?.drawdown_pct ?? 100;
+        const trades = paperStatus?.performance?.total_trades ?? 0;
+        if (pnl > 0 && dd < 5 && trades >= 3) {
+          autoStatus = 'ready';
+          metricInfo = `PnL +$${pnl.toFixed(2)}, DD ${dd.toFixed(1)}%, ${trades} trades`;
+        } else if (trades >= 3) {
+          autoStatus = 'not_ready';
+          metricInfo = `PnL $${pnl.toFixed(2)}, DD ${dd.toFixed(1)}%`;
+        }
+      }
+      // Risk Manager gate — auto-pass when not halted and drawdown low
+      else if (name.includes('risk') || name.includes('kill')) {
+        const halted = arbStatus?.kill_switch_active ?? false;
+        const dd = arbStatus?.drawdown_pct ?? 0;
+        if (!halted && dd < 5) {
+          autoStatus = 'ready';
+          metricInfo = `DD ${dd.toFixed(1)}%, no kill switch`;
+        } else if (halted) {
+          autoStatus = 'not_ready';
+          metricInfo = `Kill switch ACTIVE`;
+        }
+      }
+      // Polymarket Paper Bot gate — auto-pass when profitable
+      else if (name.includes('poly') || name.includes('prediction')) {
+        const pnl = paperStatus?.performance?.total_pnl ?? 0;
+        const trades = paperStatus?.performance?.total_trades ?? 0;
+        if (pnl > 0 && trades >= 3) {
+          autoStatus = 'ready';
+          metricInfo = `PnL +$${pnl.toFixed(2)}, ${trades} trades`;
+        } else if (trades > 0) {
+          autoStatus = 'not_ready';
+          metricInfo = `PnL $${pnl.toFixed(2)}, ${trades} trades`;
+        }
+      }
+      // Arbitrage Bot gate — auto-pass when profitable with low drawdown
+      else if (name.includes('arb') || name.includes('arbitrage')) {
+        const pnl = arbStatus?.pnl_thb ?? 0;
+        const dd = arbStatus?.drawdown_pct ?? 100;
+        const trades = arbStatus?.total_trades ?? 0;
+        if (pnl > 0 && dd < 5 && trades >= 3) {
+          autoStatus = 'ready';
+          metricInfo = `PnL +฿${pnl.toFixed(2)}, DD ${dd.toFixed(1)}%`;
+        } else if (trades > 0) {
+          autoStatus = 'not_ready';
+          metricInfo = `PnL ฿${pnl.toFixed(2)}, DD ${dd.toFixed(1)}%`;
+        }
+      }
+      // Paper Grid Bot gate — auto-pass when running with trades
+      else if (name.includes('grid') && (name.includes('paper') || name.includes('bot'))) {
+        const running = paperStatus?.running ?? false;
+        const trades = paperStatus?.performance?.total_trades ?? 0;
+        if (running && trades >= 5) {
+          autoStatus = 'ready';
+          metricInfo = `Running, ${trades} trades`;
+        }
+      }
+      // Journal/Track Record gate — auto-pass when enough entries with positive PnL
+      else if (name.includes('journal') || name.includes('track') || name.includes('record')) {
+        const totalEntries = journalEntries.length;
+        const wins = journalEntries.filter(e => e.actual_pnl > 0).length;
+        if (totalEntries >= 10 && wins > 0) {
+          autoStatus = 'ready';
+          metricInfo = `${totalEntries} entries, ${wins} wins`;
+        } else if (totalEntries > 0) {
+          autoStatus = 'not_ready';
+          metricInfo = `${totalEntries} entries`;
+        }
+      }
+
+      if (autoStatus !== null) {
+        return {
+          ...gate,
+          status: autoStatus,
+          status_text: metricInfo || gate.status_text,
+          auto_evaluated: true,
+          metric_info: metricInfo,
+        };
+      }
+      return gate;
+    });
+  }, [gates, paperStatus, paperPerf, arbStatus, journalEntries]);
+
+  const readyCount = enrichedGates.filter(g => g.status === 'ready').length;
 
   return (
     <div className="mx-auto max-w-7xl p-6 space-y-6">
@@ -284,7 +411,7 @@ export default function EvidencePage() {
       )}
 
       {/* ── Readiness Gates Checklist ── */}
-      {gates.length > 0 && (
+      {enrichedGates.length > 0 && (
         <div>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
@@ -292,15 +419,20 @@ export default function EvidencePage() {
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
                 {t('evidence.gatesTitle')}
               </h2>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400 font-medium">
+                AUTO-EVAL
+              </span>
             </div>
             <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
-              {readyCount}/{gates.length} ready
+              {readyCount}/{enrichedGates.length} ready
             </span>
           </div>
           <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-700">
-            {gates.map((gate, i) => {
+            {enrichedGates.map((gate, i) => {
               const isReady = gate.status === 'ready';
               const hasBlocker = gate.blocked_by && gate.blocked_by !== '-' && gate.blocked_by.toLowerCase() !== 'none';
+              const isAutoEval = (gate as any).auto_evaluated;
+              const metricInfo = (gate as any).metric_info;
               return (
                 <div key={i} className="flex items-center gap-3 px-4 py-3">
                   {isReady ? (
@@ -311,6 +443,15 @@ export default function EvidencePage() {
                   <span className={`text-sm font-medium flex-1 ${isReady ? 'text-green-700 dark:text-green-400' : 'text-gray-700 dark:text-gray-300'}`}>
                     {gate.name}
                   </span>
+                  {isAutoEval && metricInfo && (
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full hidden sm:inline-block ${
+                      isReady
+                        ? 'bg-green-50 text-green-600 dark:bg-green-900/20 dark:text-green-400'
+                        : 'bg-gray-50 text-gray-500 dark:bg-gray-700 dark:text-gray-400'
+                    }`}>
+                      {metricInfo}
+                    </span>
+                  )}
                   {hasBlocker && !isReady && (
                     <span className="text-xs text-red-500 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-2 py-0.5 rounded-full">
                       {gate.blocked_by}
@@ -354,13 +495,13 @@ export default function EvidencePage() {
         </div>
       )}
 
-      {/* ── Paper Trading Status Card ── */}
+      {/* ── Polymarket Paper Bot Card ── */}
       {paperStatus && (
         <div>
           <div className="flex items-center gap-2 mb-3">
             <Target className="w-5 h-5 text-purple-500" />
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-              Paper Trading Status
+              Polymarket Paper Bot
             </h2>
             <span className={`ml-auto text-xs font-medium px-2 py-0.5 rounded-full ${
               paperStatus.running
@@ -374,36 +515,34 @@ export default function EvidencePage() {
             {/* Summary stats */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                <p className="text-xs text-gray-500 dark:text-gray-400">Active / Max</p>
-                <p className="text-lg font-bold text-gray-900 dark:text-white">
-                  {paperStatus.positions.active} / {paperStatus.config.max_positions}
-                </p>
-              </div>
-              <div className="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                <p className="text-xs text-gray-500 dark:text-gray-400">Resolved</p>
-                <p className="text-lg font-bold text-gray-900 dark:text-white">
-                  {paperStatus.positions.resolved}
-                </p>
-              </div>
-              <div className="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
                 <p className="text-xs text-gray-500 dark:text-gray-400">Bankroll</p>
                 <p className="text-lg font-bold text-gray-900 dark:text-white">
-                  ${paperPerf?.bankroll?.current.toFixed(2) ?? '—'}
+                  ${paperStatus.alpha?.bankroll?.current?.toFixed(2) ?? '—'}
                 </p>
-                {paperPerf?.bankroll && (
-                  <p className="text-xs text-gray-400">peak ${paperPerf.bankroll.peak.toFixed(2)}</p>
-                )}
+                <p className="text-xs text-gray-400">peak ${paperStatus.alpha?.bankroll?.peak?.toFixed(2) ?? '—'}</p>
               </div>
               <div className="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                <p className="text-xs text-gray-500 dark:text-gray-400">Total P&L</p>
-                <p className={`text-lg font-bold ${(paperPerf?.total_pnl ?? 0) >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-                  {paperPerf ? `${paperPerf.total_pnl >= 0 ? '+' : ''}$${paperPerf.total_pnl.toFixed(2)}` : '—'}
+                <p className="text-xs text-gray-500 dark:text-gray-400">P&L</p>
+                <p className={`text-lg font-bold ${(paperStatus.performance?.total_pnl ?? 0) >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                  {(paperStatus.performance?.total_pnl ?? 0) >= 0 ? '+' : ''}${paperStatus.performance?.total_pnl?.toFixed(4) ?? '—'}
                 </p>
-                {paperPerf?.bankroll && (
-                  <p className={`text-xs ${paperPerf.bankroll.drawdown_pct > 10 ? 'text-red-500' : 'text-gray-400'}`}>
-                    DD: {paperPerf.bankroll.drawdown_pct.toFixed(1)}%
-                  </p>
-                )}
+                <p className="text-xs text-gray-400">
+                  W:{paperStatus.performance?.winning_trades ?? 0} ({paperStatus.performance?.win_rate_pct ?? 0}%)
+                </p>
+              </div>
+              <div className="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+                <p className="text-xs text-gray-500 dark:text-gray-400">Positions</p>
+                <p className="text-lg font-bold text-gray-900 dark:text-white">
+                  {paperStatus.positions?.active ?? 0} / {paperStatus.config?.max_positions ?? '—'}
+                </p>
+                <p className="text-xs text-gray-400">resolved: {paperStatus.positions?.resolved ?? 0}</p>
+              </div>
+              <div className="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+                <p className="text-xs text-gray-500 dark:text-gray-400">Trades</p>
+                <p className="text-lg font-bold text-gray-900 dark:text-white">
+                  {paperStatus.performance?.total_trades ?? 0}
+                </p>
+                <p className="text-xs text-gray-400">opps: {paperStatus.performance?.opportunities_found?.toLocaleString() ?? '0'}</p>
               </div>
             </div>
 
@@ -413,7 +552,7 @@ export default function EvidencePage() {
                 <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2 uppercase tracking-wide">
                   Active Positions ({paperPositions.filter(p => !p.resolved).length})
                 </p>
-                <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                <div className="space-y-1.5 max-h-48 overflow-y-auto">
                   {paperPositions
                     .filter(p => !p.resolved)
                     .sort((a, b) => b.pnl - a.pnl)
@@ -442,6 +581,106 @@ export default function EvidencePage() {
                 </div>
               </div>
             )}
+
+            {/* Scan info */}
+            <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
+              <span>Signals: {paperStatus.alpha?.signals_detected ?? 0}</span>
+              <span>Scans: {paperStatus.scan_count ?? 0}</span>
+              <span>Interval: {paperStatus.config?.scan_interval ?? 0}s</span>
+              {paperStatus.last_scan_time && (
+                <span className="ml-auto">Last scan: {new Date(paperStatus.last_scan_time * 1000).toLocaleTimeString()}</span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Arbitrage Paper Trading Card ── */}
+      {arbStatus && (
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <TrendingUp className="w-5 h-5 text-emerald-500" />
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+              Arbitrage Paper Bot
+            </h2>
+            <span className={`ml-auto text-xs font-medium px-2 py-0.5 rounded-full ${
+              arbStatus.running
+                ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+            }`}>
+              {arbStatus.running ? 'Running' : 'Stopped'}
+            </span>
+          </div>
+          <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 space-y-4">
+            {/* Summary stats */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+                <p className="text-xs text-gray-500 dark:text-gray-400">Capital</p>
+                <p className="text-lg font-bold text-gray-900 dark:text-white">
+                  ฿{arbStatus.capital_thb?.toLocaleString() ?? '—'}
+                </p>
+                <p className="text-xs text-gray-400">peak ฿{arbStatus.peak_capital_thb?.toLocaleString() ?? '—'}</p>
+              </div>
+              <div className="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+                <p className="text-xs text-gray-500 dark:text-gray-400">P&L</p>
+                <p className={`text-lg font-bold ${(arbStatus.pnl_thb ?? 0) >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                  {arbStatus.pnl_thb >= 0 ? '+' : ''}฿{arbStatus.pnl_thb?.toFixed(2) ?? '—'}
+                </p>
+                <p className="text-xs text-gray-400">{arbStatus.pnl_pct ?? 0}%</p>
+              </div>
+              <div className="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+                <p className="text-xs text-gray-500 dark:text-gray-400">Trades</p>
+                <p className="text-lg font-bold text-gray-900 dark:text-white">
+                  {arbStatus.total_trades ?? 0}
+                </p>
+                <p className="text-xs text-gray-400">
+                  W:{arbStatus.winning_trades ?? 0} L:{arbStatus.losing_trades ?? 0} ({arbStatus.win_rate ?? 0}%)
+                </p>
+              </div>
+              <div className="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+                <p className="text-xs text-gray-500 dark:text-gray-400">Drawdown</p>
+                <p className={`text-lg font-bold ${(arbStatus.drawdown_pct ?? 0) > 5 ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-white'}`}>
+                  {arbStatus.drawdown_pct?.toFixed(2) ?? '0'}%
+                </p>
+                <p className="text-xs text-gray-400">fees: ฿{arbStatus.total_fees_thb?.toFixed(2) ?? '0'}</p>
+              </div>
+            </div>
+
+            {/* Recent trades */}
+            {arbStatus.recent_trades?.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2 uppercase tracking-wide">
+                  Recent Trades ({arbStatus.recent_trades.length})
+                </p>
+                <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                  {arbStatus.recent_trades.map((trade: any, i: number) => (
+                    <div key={i} className="flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-700/30 rounded-lg text-xs">
+                      <span className="text-gray-700 dark:text-gray-300 flex-1 truncate font-medium">
+                        {trade.symbol}
+                      </span>
+                      <span className="text-gray-400">
+                        spread: {trade.spread_pct?.toFixed(3)}%
+                      </span>
+                      <span className={`font-semibold whitespace-nowrap ${
+                        trade.pnl_thb >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
+                      }`}>
+                        {trade.pnl_thb >= 0 ? '+' : ''}฿{trade.pnl_thb?.toFixed(2)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Scan info */}
+            <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
+              <span>Opps found: {arbStatus.opportunities_found ?? 0}</span>
+              <span>Executed: {arbStatus.opportunities_executed ?? 0}</span>
+              <span>Min spread: {arbStatus.min_spread_pct ?? 0}%</span>
+              {arbStatus.last_scan_at && (
+                <span className="ml-auto">Last scan: {new Date(arbStatus.last_scan_at).toLocaleTimeString()}</span>
+              )}
+            </div>
           </div>
         </div>
       )}

@@ -1288,12 +1288,14 @@ class PolymarketPaperBot:
             self._notify(f"KILL SWITCH: {reason}", level="critical")
 
     def reset_kill_switch(self):
-        """Manual reset of kill switch (via API)."""
+        """Manual reset of kill switch (via API). Also resets peak bankroll to current to clear drawdown."""
         self._kill_switch_active = False
         self._kill_reason = ""
         self._consecutive_losses = 0
         self._daily_pnl = 0.0
-        logger.info("Kill switch manually reset")
+        # Reset peak to current so drawdown is 0% — prevents immediate re-trigger
+        self.peak_bankroll = self.bankroll
+        logger.info("Kill switch manually reset (peak_bankroll=%.2f, current=%.2f)", self.peak_bankroll, self.bankroll)
 
     # ── Market Filtering ───────────────────────────────────────────────────────
 

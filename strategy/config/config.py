@@ -72,7 +72,7 @@ class ServiceConfig(BaseModel):
 
     # Market Intelligence Configuration
     market_intel_enabled: bool = Field(default=True, env="MARKET_INTEL_ENABLED")
-    market_intel_sources: str = Field(default="crypto,prediction,stocks,macro", env="MARKET_INTEL_SOURCES")
+    market_intel_sources: str = Field(default="crypto,prediction,stocks,macro,airdrops,degen,binance_alpha,arb", env="MARKET_INTEL_SOURCES")
     market_intel_crypto_symbols: str = Field(default="BTCTHB,ETHTHB,BTCUSDT,ETHUSDT", env="MARKET_INTEL_CRYPTO_SYMBOLS")
     market_intel_stock_symbols: str = Field(
         default="SPY,QQQ,AAPL,MSFT,GOOGL,AMZN,NVDA,TSLA,META,PTT.BK,AOT.BK,SCB.BK",

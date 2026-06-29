@@ -75,4 +75,29 @@ export const marketIntelService = {
     if (!res.ok) throw new Error('Last scan fetch failed');
     return res.json();
   },
+
+  /**
+   * Get portfolio holdings cross-referenced with market intel signals
+   */
+  async getPortfolio(): Promise<{
+    holdings: PortfolioHolding[];
+    total_value_thb: number;
+    signal_count: number;
+    pairs_tracked: number;
+  }> {
+    const res = await fetch(`${STRATEGY_URL}/api/market-intel/portfolio`);
+    if (!res.ok) throw new Error('Portfolio fetch failed');
+    return res.json();
+  },
 };
+
+export interface PortfolioHolding {
+  currency: string;
+  symbol: string;
+  amount: number;
+  free: number;
+  locked: number;
+  price_thb: number;
+  value_thb: number;
+  signals: { title: string; severity: string; confidence: number; type: string }[];
+}

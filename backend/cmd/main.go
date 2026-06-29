@@ -203,8 +203,8 @@ func main() {
 	)
 
 	// Initialize new feature services
-	paperEngine := service.NewPaperEngine(10000.0, 0.001, db.Pool) // $10k initial, 0.1% fee, persisted to PostgreSQL
-	riskManager := service.NewRiskManager(nil, 10000.0)
+	paperEngine := service.NewPaperEngine(50000.0, 0.001, db.Pool) // $50k initial, 0.1% fee, persisted to PostgreSQL
+	riskManager := service.NewRiskManager(nil, 50000.0)
 	alertService := service.NewAlertService(nil)
 	metricsService := service.NewMetricsService()
 	backtestService := service.NewBacktestService()
@@ -218,8 +218,14 @@ func main() {
 	// Audit logging
 	auditService := service.NewAuditService(db.Pool, 1000)
 
+	// Price alert monitor
+	priceAlertMonitor := service.NewPriceAlertMonitor(db.Pool, alertService)
+
 	// Event bus for decoupled alert wiring
 	eventBus := service.NewEventBus()
+
+	// Wire paper engine to event bus so fills publish events
+	paperEngine.SetEventBus(eventBus)
 
 	// Wire alert service to events
 	eventBus.Subscribe(service.EventBotStart, func(ctx context.Context, event service.Event) {
@@ -250,6 +256,15 @@ func main() {
 		contextVal, _ := event.Data["context"].(string)
 		alertService.SendErrorAlert(ctx, fmt.Errorf("%s", errMsg), contextVal)
 	})
+	// Wire paper trade events to alert service
+	eventBus.Subscribe(service.EventPaperTrade, func(ctx context.Context, event service.Event) {
+		symbol, _ := event.Data["symbol"].(string)
+		side, _ := event.Data["side"].(string)
+		qty, _ := event.Data["quantity"].(float64)
+		price, _ := event.Data["price"].(float64)
+		pnl, _ := event.Data["pnl"].(float64)
+		alertService.SendTradeAlert(ctx, symbol, side, qty, price, pnl)
+	})
 
 	// DCA Bot service (created here but handler wired after authHandler below)
 	dcaService := service.NewDCABotService(db.Pool)
@@ -262,6 +277,7 @@ func main() {
 		metricsService,
 		backtestService,
 		auditService,
+		priceAlertMonitor,
 	)
 
 	// Telegram Bot (if configured)
@@ -475,6 +491,9 @@ func main() {
 					if err := redisAdapter.PublishMarketData(ctx, marketData); err != nil {
 						logger.Info("Price poller: failed to publish to Redis", "symbol", symbol, "error", err)
 					}
+					// Feed paper engine + price alert monitor
+					paperEngine.UpdatePrice(symbol, tickerInfo.LastPrice)
+					priceAlertMonitor.CheckPrice(symbol, tickerInfo.LastPrice)
 				}
 			}
 		}

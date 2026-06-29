@@ -53,6 +53,7 @@ export const th = {
   'nav.settings': 'ตั้งค่า',
   'nav.dex': 'DEX Trading',
   'nav.polyPaper': 'Polymarket',
+  'nav.arbPaper': 'Arbitrage',
   'nav.docs': 'เอกสาร',
   'nav.logout': 'ออกจากระบบ',
   
