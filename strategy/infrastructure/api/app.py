@@ -403,6 +403,8 @@ async def consume_market_data_safe():
 _market_alerts: list = []
 _MAX_ALERTS = 100
 _last_scan_result: dict = {}
+_prev_gate_states: dict = {}  # Track gate status transitions for notifications
+_notified_milestones: set = set()  # Track which milestones we've already notified
 
 
 async def _background_market_scan(app_instance):
@@ -410,7 +412,7 @@ async def _background_market_scan(app_instance):
     Periodically scan markets for opportunities and store high-severity alerts.
     Runs every 5 minutes.
     """
-    global _market_alerts, _last_scan_result
+    global _market_alerts, _last_scan_result, _prev_gate_states, _notified_milestones
     await asyncio.sleep(30)  # Wait for startup to complete
 
     while True:
@@ -475,6 +477,56 @@ async def _background_market_scan(app_instance):
                         await notifier.send_signal_evaluation(eval_result)
                     except Exception as notify_err:
                         logger.debug(f"Failed to send signal evaluation notification: {notify_err}")
+
+                # ── Gate progression + milestone notifications ──
+                try:
+                    from app.webhook_notifier import get_webhook_notifier
+                    notifier = get_webhook_notifier()
+                    perf_stats = await signal_logger.get_performance_stats()
+
+                    # Compute current gate states from live metrics
+                    _total = perf_stats.get("total_signals", 0)
+                    _sources = len(perf_stats.get("by_source", {}))
+                    _acc_24h = (perf_stats.get("accuracy_24h") or {}).get("rate", 0) or 0
+                    _eval_24h = perf_stats.get("evaluated_24h", 0)
+
+                    current_gates = {}
+                    # Gate 0: Signal Performance
+                    if _total >= 100 and _sources >= 3 and _eval_24h > 0 and _acc_24h > 45:
+                        current_gates["Signal Performance"] = "passed"
+                    elif _total > 0:
+                        current_gates["Signal Performance"] = "waiting"
+                    else:
+                        current_gates["Signal Performance"] = "locked"
+
+                    # Check for gate transitions
+                    for gate_name, new_status in current_gates.items():
+                        old_status = _prev_gate_states.get(gate_name)
+                        if old_status is not None and old_status != new_status:
+                            detail = f"Signals: {_total}, Sources: {_sources}, 24h accuracy: {_acc_24h:.1f}%"
+                            await notifier.send_gate_progression(gate_name, new_status, detail)
+                            logger.info(f"Gate '{gate_name}' transitioned: {old_status} → {new_status}")
+                        _prev_gate_states[gate_name] = new_status
+
+                    # ── Milestone notifications ──
+                    _milestone_thresholds = [10, 25, 50, 100, 250, 500, 1000]
+                    for threshold in _milestone_thresholds:
+                        ms_key = f"signals_{threshold}"
+                        if _total >= threshold and ms_key not in _notified_milestones:
+                            _notified_milestones.add(ms_key)
+                            await notifier.send_evidence_loop_milestone(
+                                f"Reached {threshold} signals logged!",
+                                {
+                                    "Total signals": _total,
+                                    "Sources active": _sources,
+                                    "24h evaluated": _eval_24h,
+                                    "24h accuracy %": round(_acc_24h, 1),
+                                },
+                            )
+                            logger.info(f"Milestone reached: {threshold} signals")
+                except Exception as ms_err:
+                    logger.debug(f"Gate/milestone notification skipped: {ms_err}")
+
             except Exception as e:
                 logger.warning(f"Failed to log/evaluate signals: {e}")
 
