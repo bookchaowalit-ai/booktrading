@@ -116,6 +116,75 @@ class WebhookNotifier:
         text = f"⚠️ Grid Bot Error\n{error[:500]}"  # Truncate long errors
         await self._queue.put(text)
 
+    # ── Evidence Loop Notifications ──────────────────────────────────────────
+
+    async def send_signal_evaluation(self, stats: dict):
+        """Send signal evaluation summary when signals are evaluated."""
+        if not self._enabled:
+            return
+        
+        evaluated_24h = stats.get("evaluated_24h", 0)
+        evaluated_7d = stats.get("evaluated_7d", 0)
+        total = stats.get("total_signals", 0)
+        correct_24h = stats.get("correct_24h", 0)
+        correct_7d = stats.get("correct_7d", 0)
+        
+        # Calculate accuracy
+        accuracy_24h = (correct_24h / evaluated_24h * 100) if evaluated_24h > 0 else 0
+        accuracy_7d = (correct_7d / evaluated_7d * 100) if evaluated_7d > 0 else 0
+        
+        text = (
+            f"📊 *Signal Evaluation Update*\n"
+            f"\n"
+            f"🔍 Total Signals: `{total}`\n"
+            f"⏱️ 24h Evaluated: `{evaluated_24h}` (Accuracy: `{accuracy_24h:.1f}%`)\n"
+            f"📅 7d Evaluated: `{evaluated_7d}` (Accuracy: `{accuracy_7d:.1f}%`)\n"
+            f"\n"
+            f"✅ Correct 24h: `{correct_24h}`\n"
+            f"✅ Correct 7d: `{correct_7d}`"
+        )
+        await self._queue.put(text)
+
+    async def send_gate_progression(self, gate_name: str, gate_status: str, details: str = ""):
+        """Send notification when a gate unlocks or status changes."""
+        if not self._enabled:
+            return
+        
+        status_emoji = {
+            "unlocked": "🔓",
+            "locked": "🔒",
+            "waiting": "⏳",
+            "passed": "✅",
+            "failed": "❌",
+        }.get(gate_status.lower(), "⚪")
+        
+        text = (
+            f"{status_emoji} *Gate {gate_name}*\n"
+            f"\n"
+            f"Status: `{gate_status.upper()}`\n"
+        )
+        if details:
+            text += f"\n{details}"
+        
+        await self._queue.put(text)
+
+    async def send_evidence_loop_milestone(self, milestone: str, metrics: dict):
+        """Send milestone notification (e.g., first 100 signals evaluated)."""
+        if not self._enabled:
+            return
+        
+        text = f"🎯 *Evidence Loop Milestone*\n\n{milestone}\n"
+        
+        if metrics:
+            text += "\n*Metrics:*\n"
+            for key, value in metrics.items():
+                if isinstance(value, float):
+                    text += f"  • {key}: `{value:.2f}`\n"
+                else:
+                    text += f"  • {key}: `{value}`\n"
+        
+        await self._queue.put(text)
+
     # ── Market Intelligence Alerts ─────────────────────────────────────────
 
     async def send_market_opportunity(

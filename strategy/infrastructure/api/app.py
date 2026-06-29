@@ -468,6 +468,13 @@ async def _background_market_scan(app_instance):
                 eval_result = await signal_logger.evaluate_signals(current_prices)
                 if eval_result.get("evaluated", 0) > 0:
                     logger.info(f"Signal evaluation: {eval_result['evaluated']} signals evaluated, {eval_result['total_signals']} total")
+                    # Send Telegram notification for signal evaluation
+                    try:
+                        from app.webhook_notifier import get_webhook_notifier
+                        notifier = get_webhook_notifier()
+                        await notifier.send_signal_evaluation(eval_result)
+                    except Exception as notify_err:
+                        logger.debug(f"Failed to send signal evaluation notification: {notify_err}")
             except Exception as e:
                 logger.warning(f"Failed to log/evaluate signals: {e}")
 
