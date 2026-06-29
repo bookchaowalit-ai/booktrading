@@ -2667,6 +2667,16 @@ def register_routes(app: FastAPI):
             except Exception:
                 pass
 
+        # ── 5b. Signal Performance Stats (for Gate 0) ──
+        signal_stats = None
+        try:
+            from app.market_intel.signal_logger import get_signal_logger
+            redis_client = redis_adapter.redis if redis_adapter and redis_adapter.redis else None
+            sig_logger = get_signal_logger(redis_client=redis_client)
+            signal_stats = await sig_logger.get_performance_stats()
+        except Exception:
+            pass
+
         # ── 6. Research counts ──
         crypto_pairs = 0
         crypto_file = docs_dir / "CRYPTO_WATCHLIST.md"
@@ -2784,6 +2794,7 @@ def register_routes(app: FastAPI):
         # ── 12. Dynamic gates — compute blocked_by from live state ──
         dynamic_gates = []
         _gate_defs = [
+            ('Signal Performance', []),
             ('Enable Dry-Run', []),
             ('Reset Kill Switch', ['Need dry-run evidence first']),
             ('Micro-Live', ['Need kill switch reset first']),
@@ -2792,6 +2803,29 @@ def register_routes(app: FastAPI):
         for _gi, (_gname, _gdefault_block) in enumerate(_gate_defs):
             _blockers = []
             if _gi == 0:
+                # Gate 0: Signal Performance — auto-evaluate from signal stats
+                _sig_blockers = []
+                if signal_stats:
+                    _total = signal_stats.get('total_signals', 0)
+                    _sources = signal_stats.get('by_source', {})
+                    _acc_24h = (signal_stats.get('accuracy_24h') or {}).get('rate', 0) or 0
+                    _acc_7d = (signal_stats.get('accuracy_7d') or {}).get('rate', 0) or 0
+                    _eval_24h = signal_stats.get('evaluated_24h', 0)
+                    _eval_7d = signal_stats.get('evaluated_7d', 0)
+                    if _total < 100:
+                        _sig_blockers.append(f'Only {_total}/100 signals logged')
+                    if len(_sources) < 3:
+                        _sig_blockers.append(f'Only {len(_sources)}/3 sources active')
+                    if _eval_24h > 0 and _acc_24h <= 45:
+                        _sig_blockers.append(f'24h accuracy {_acc_24h:.1f}% ≤ 45%')
+                    if _eval_24h == 0:
+                        _sig_blockers.append('Awaiting 24h signal maturation')
+                    if _eval_7d > 0 and _acc_7d <= 40:
+                        _sig_blockers.append(f'7d accuracy {_acc_7d:.1f}% ≤ 40%')
+                else:
+                    _sig_blockers.append('Signal stats unavailable')
+                _blockers = _sig_blockers
+            elif _gi == 1:
                 # Gate 1: check live conditions
                 if poly_kill_switch:
                     _blockers.append(f'Kill switch active ({poly_kill_reason})' if poly_kill_reason else 'Kill switch active')
@@ -2935,6 +2969,7 @@ def register_routes(app: FastAPI):
                 'gates_ready': gates_ready,
                 'gates_total': gates_total,
                 'gates': dynamic_gates,
+                'signal_stats': signal_stats,
             },
             'research': {
                 'crypto_pairs': crypto_pairs,

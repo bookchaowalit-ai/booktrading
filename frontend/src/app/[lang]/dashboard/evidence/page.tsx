@@ -12,6 +12,7 @@ import {
   FileText, RefreshCw, Cpu,
   Zap, Eye, Lock, CheckCircle2, Circle, Target, DollarSign,
   TrendingUp, TrendingDown, BookOpen, Bell, ScrollText,
+  Activity, BarChart3,
 } from 'lucide-react';
 import { api } from '@/services/api';
 
@@ -173,6 +174,7 @@ export default function EvidencePage() {
   const [paperPerf, setPaperPerf] = useState<PaperPerformance | null>(null);
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
   const [arbStatus, setArbStatus] = useState<any>(null);
+  const [signalStats, setSignalStats] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -218,6 +220,17 @@ export default function EvidencePage() {
     } catch {
       // Arb optional
     }
+    // Fetch signal performance stats
+    try {
+      const STRATEGY_URL = process.env.NEXT_PUBLIC_STRATEGY_URL || '/strategy-api';
+      const sigRes = await fetch(`${STRATEGY_URL}/api/signal-tracker/stats`);
+      if (sigRes.ok) {
+        const sigData = await sigRes.json();
+        setSignalStats(sigData);
+      }
+    } catch {
+      // Signal stats optional
+    }
   }, []);
 
   useEffect(() => {
@@ -260,8 +273,25 @@ export default function EvidencePage() {
       let autoStatus: 'ready' | 'not_ready' | null = null;
       let metricInfo = '';
 
+      // Signal Performance gate — auto-pass when accuracy thresholds met
+      if (name.includes('signal') && name.includes('performance')) {
+        const total = signalStats?.total_signals ?? 0;
+        const sources = Object.keys(signalStats?.by_source || {}).length;
+        const acc24h = signalStats?.accuracy_24h?.rate ?? 0;
+        const acc7d = signalStats?.accuracy_7d?.rate ?? 0;
+        const eval24h = signalStats?.evaluated_24h ?? 0;
+        if (total >= 100 && sources >= 3 && eval24h > 0 && acc24h > 45) {
+          autoStatus = 'ready';
+          metricInfo = `${total} signals, 24h: ${acc24h}%, sources: ${sources}`;
+        } else if (total > 0) {
+          autoStatus = 'not_ready';
+          metricInfo = eval24h > 0
+            ? `${total} signals, 24h: ${acc24h}%`
+            : `${total} signals, awaiting maturation`;
+        }
+      }
       // Paper Trading Engine gate — auto-pass when profitable with low drawdown
-      if (name.includes('paper') && name.includes('trad')) {
+      else if (name.includes('paper') && name.includes('trad')) {
         const pnl = paperStatus?.performance?.total_pnl ?? 0;
         const dd = paperPerf?.bankroll?.drawdown_pct ?? 100;
         const trades = paperStatus?.performance?.total_trades ?? 0;
@@ -343,7 +373,7 @@ export default function EvidencePage() {
       }
       return gate;
     });
-  }, [gates, paperStatus, paperPerf, arbStatus, journalEntries]);
+  }, [gates, paperStatus, paperPerf, arbStatus, journalEntries, signalStats]);
 
   const readyCount = enrichedGates.filter(g => g.status === 'ready').length;
 
@@ -680,6 +710,133 @@ export default function EvidencePage() {
               {arbStatus.last_scan_at && (
                 <span className="ml-auto">Last scan: {new Date(arbStatus.last_scan_at).toLocaleTimeString()}</span>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Signal Performance Tracker Card ── */}
+      {signalStats && signalStats.total_signals > 0 && (
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <BarChart3 className="w-5 h-5 text-cyan-500" />
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+              Signal Performance Tracker
+            </h2>
+            <span className="ml-auto text-xs font-medium px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400">
+              {signalStats.total_signals} signals
+            </span>
+          </div>
+          <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 space-y-4">
+            {/* Summary stats */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+                <p className="text-xs text-gray-500 dark:text-gray-400">Total Signals</p>
+                <p className="text-lg font-bold text-gray-900 dark:text-white">
+                  {signalStats.total_signals}
+                </p>
+                <p className="text-xs text-gray-400">{Object.keys(signalStats.by_source || {}).length} sources</p>
+              </div>
+              <div className="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+                <p className="text-xs text-gray-500 dark:text-gray-400">24h Accuracy</p>
+                <p className={`text-lg font-bold ${
+                  (signalStats.accuracy_24h?.rate ?? 0) > 45
+                    ? 'text-green-600 dark:text-green-400'
+                    : 'text-gray-900 dark:text-white'
+                }`}>
+                  {signalStats.accuracy_24h?.rate ?? 0}%
+                </p>
+                <p className="text-xs text-gray-400">
+                  {signalStats.accuracy_24h?.correct ?? 0}/{signalStats.evaluated_24h ?? 0} correct
+                </p>
+              </div>
+              <div className="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+                <p className="text-xs text-gray-500 dark:text-gray-400">7d Accuracy</p>
+                <p className={`text-lg font-bold ${
+                  (signalStats.accuracy_7d?.rate ?? 0) > 40
+                    ? 'text-green-600 dark:text-green-400'
+                    : 'text-gray-900 dark:text-white'
+                }`}>
+                  {signalStats.accuracy_7d?.rate ?? 0}%
+                </p>
+                <p className="text-xs text-gray-400">
+                  {signalStats.accuracy_7d?.correct ?? 0}/{signalStats.evaluated_7d ?? 0} correct
+                </p>
+              </div>
+              <div className="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+                <p className="text-xs text-gray-500 dark:text-gray-400">Gate Status</p>
+                <p className={`text-lg font-bold ${
+                  signalStats.total_signals >= 100 && (signalStats.accuracy_24h?.rate ?? 0) > 45
+                    ? 'text-green-600 dark:text-green-400'
+                    : 'text-amber-600 dark:text-amber-400'
+                }`}>
+                  {signalStats.total_signals >= 100 && (signalStats.accuracy_24h?.rate ?? 0) > 45
+                    ? 'PASS'
+                    : 'COLLECTING'}
+                </p>
+                <p className="text-xs text-gray-400">need 100+ signals, &gt;45% acc</p>
+              </div>
+            </div>
+
+            {/* Per-source breakdown */}
+            {signalStats.by_source && Object.keys(signalStats.by_source).length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2 uppercase tracking-wide">
+                  By Source
+                </p>
+                <div className="space-y-1.5">
+                  {Object.entries(signalStats.by_source)
+                    .sort(([, a]: any, [, b]: any) => (b.total || 0) - (a.total || 0))
+                    .map(([source, data]: [string, any]) => {
+                      const pct = Math.round((data.total / signalStats.total_signals) * 100);
+                      const acc = data.correct_24h + data.incorrect_24h > 0
+                        ? Math.round((data.correct_24h / (data.correct_24h + data.incorrect_24h)) * 100)
+                        : null;
+                      return (
+                        <div key={source} className="flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-700/30 rounded-lg">
+                          <span className="text-xs font-medium text-gray-700 dark:text-gray-300 w-24 truncate">
+                            {source}
+                          </span>
+                          <div className="flex-1 h-2 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-cyan-500 rounded-full transition-all"
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                          <span className="text-xs text-gray-500 dark:text-gray-400 w-12 text-right">
+                            {data.total}
+                          </span>
+                          {acc !== null && (
+                            <span className={`text-xs font-semibold w-12 text-right ${
+                              acc > 50 ? 'text-green-600 dark:text-green-400' : 'text-gray-500'
+                            }`}>
+                              {acc}% acc
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
+
+            {/* Gate 0 criteria */}
+            <div className="p-3 bg-cyan-50 dark:bg-cyan-900/10 rounded-lg border border-cyan-200 dark:border-cyan-800">
+              <p className="text-xs font-medium text-cyan-700 dark:text-cyan-400 mb-1">Gate 0 Criteria</p>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                <span className={signalStats.total_signals >= 100 ? 'text-green-600' : 'text-gray-500'}>
+                  {signalStats.total_signals >= 100 ? '✓' : '○'} 100+ signals ({signalStats.total_signals})
+                </span>
+                <span className={Object.keys(signalStats.by_source || {}).length >= 3 ? 'text-green-600' : 'text-gray-500'}>
+                  {Object.keys(signalStats.by_source || {}).length >= 3 ? '✓' : '○'} 3+ sources ({Object.keys(signalStats.by_source || {}).length})
+                </span>
+                <span className={(signalStats.accuracy_24h?.rate ?? 0) > 45 ? 'text-green-600' : 'text-gray-500'}>
+                  {(signalStats.accuracy_24h?.rate ?? 0) > 45 ? '✓' : '○'} 24h acc &gt; 45% ({signalStats.accuracy_24h?.rate ?? 0}%)
+                </span>
+                <span className={(signalStats.evaluated_24h ?? 0) > 0 ? 'text-green-600' : 'text-gray-500'}>
+                  {(signalStats.evaluated_24h ?? 0) > 0 ? '✓' : '○'} Signals maturing ({signalStats.evaluated_24h ?? 0} evaluated)
+                </span>
+              </div>
             </div>
           </div>
         </div>
