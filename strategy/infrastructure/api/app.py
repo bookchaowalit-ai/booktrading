@@ -495,7 +495,14 @@ async def _background_market_scan(app_instance):
                     )
                 
                 # Auto-evaluate mature signals (24h/7d) against current prices
-                current_prices = {q.symbol.split("THB")[0]: q.current_price for q in result.opportunities if hasattr(q, 'current_price')}
+                current_prices = {}
+                for q in result.opportunities:
+                    if hasattr(q, 'current_price') and q.current_price:
+                        current_prices[q.symbol] = q.current_price  # raw pair (BTCTHB)
+                        # Also store base asset (BTC)
+                        base = q.symbol.replace("THB", "").replace("USDT", "").replace("BUSD", "")
+                        if base != q.symbol:
+                            current_prices[base] = q.current_price
                 # Also fetch crypto prices from quotes
                 from app.market_intel.sources.crypto import CryptoSource
                 try:
@@ -504,6 +511,7 @@ async def _background_market_scan(app_instance):
                     for q in quotes:
                         base = q.symbol.replace("THB", "").replace("USDT", "")
                         current_prices[base] = q.price
+                        current_prices[q.symbol] = q.price
                 except Exception:
                     pass
                 eval_result = await signal_logger.evaluate_signals(current_prices)

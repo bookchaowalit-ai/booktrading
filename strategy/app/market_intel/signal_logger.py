@@ -23,6 +23,28 @@ EVAL_7D = timedelta(days=7)
 # Max signals to store (prevent memory bloat)
 MAX_SIGNALS = 5000
 
+# Quote suffixes to strip when resolving base asset
+_QUOTE_SUFFIXES = ("USDT", "THB", "BUSD", "BTC", "ETH", "BNB")
+
+# Signal types considered bullish (price going up = correct)
+_BULLISH_SIGNAL_TYPES = {"buy", "long", "opportunity", "momentum", "volume_spike", "trending_degen", "airdrop_free"}
+# Signal types considered bearish (price going down = correct)
+_BEARISH_SIGNAL_TYPES = {"sell", "short"}
+# Neutral/unresolvable types (evaluated as correct if any movement > 1%)
+_NEUTRAL_SIGNAL_TYPES = {"liquidity_gap"}
+
+
+def _extract_base_asset(symbol: str) -> str:
+    """Extract the base asset from a trading pair symbol.
+    E.g. 'BTCTHB' -> 'BTC', 'ETHUSDT' -> 'ETH', 'AAPL' -> 'AAPL'.
+    Returns the original symbol if no quote suffix matches.
+    """
+    upper = symbol.upper()
+    for suffix in _QUOTE_SUFFIXES:
+        if upper.endswith(suffix) and len(upper) > len(suffix):
+            return upper[: -len(suffix)]
+    return upper
+
 
 class SignalLogger:
     """Logs market signals and tracks their performance over time."""
@@ -100,6 +122,8 @@ class SignalLogger:
         data = await self._load_log()
         now = datetime.now(timezone.utc)
         evaluated_count = 0
+        mature_count = 0
+        matched_count = 0
         
         for signal_id, signal in data.items():
             ts = signal.get("timestamp", "")
@@ -118,12 +142,36 @@ class SignalLogger:
             if price_at_signal <= 0:
                 continue
             
+            # Check if signal needs evaluation (skip if already evaluated or not mature enough)
+            needs_24h = age >= EVAL_24H and signal.get("eval_24h") is None
+            needs_7d = age >= EVAL_7D and signal.get("eval_7d") is None
+            if not needs_24h and not needs_7d:
+                continue
+            
+            mature_count += 1
+            
+            # Try raw symbol first, then base asset (e.g. BTCTHB -> BTC)
             current_price = current_prices.get(symbol, 0)
+            if current_price <= 0:
+                base = _extract_base_asset(symbol)
+                current_price = current_prices.get(base, 0)
             if current_price <= 0:
                 continue
             
+            matched_count += 1
+            
             # Calculate % change
             pct_change = ((current_price - price_at_signal) / price_at_signal) * 100
+            
+            # Determine signal direction
+            sig_type = signal.get("signal_type", "")
+            if sig_type in _BULLISH_SIGNAL_TYPES:
+                correct = pct_change > 0
+            elif sig_type in _BEARISH_SIGNAL_TYPES:
+                correct = pct_change < 0
+            else:
+                # Neutral signals: correct if any meaningful movement (>1%)
+                correct = abs(pct_change) > 1.0
             
             # Evaluate 24h
             if age >= EVAL_24H and signal.get("eval_24h") is None:
@@ -131,7 +179,7 @@ class SignalLogger:
                     "price_at_eval": current_price,
                     "pct_change": round(pct_change, 2),
                     "evaluated_at": now.isoformat(),
-                    "correct": pct_change > 0 if signal.get("signal_type") in ["buy", "long", "opportunity"] else pct_change < 0,
+                    "correct": correct,
                 }
                 evaluated_count += 1
             
@@ -141,12 +189,16 @@ class SignalLogger:
                     "price_at_eval": current_price,
                     "pct_change": round(pct_change, 2),
                     "evaluated_at": now.isoformat(),
-                    "correct": pct_change > 0 if signal.get("signal_type") in ["buy", "long", "opportunity"] else pct_change < 0,
+                    "correct": correct,
                 }
                 evaluated_count += 1
         
         if evaluated_count > 0:
             await self._save_log(data)
+        
+        # Log evaluation stats
+        if mature_count > 0:
+            logger.info(f"Signal evaluation: {mature_count} mature, {matched_count} matched prices, {evaluated_count} evaluated")
         
         return {"evaluated": evaluated_count, "total_signals": len(data)}
 
