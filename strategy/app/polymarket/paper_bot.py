@@ -37,7 +37,7 @@ CLOB_API = "https://clob.polymarket.com"
 
 # Paper trading defaults — tuned for alpha
 DEFAULT_SCAN_INTERVAL = 120  # 2 minutes (faster = catch moves quicker)
-DEFAULT_MAX_POSITIONS = 8  # reduced from 15 — lower exposure while tuning
+DEFAULT_MAX_POSITIONS = 15  # paper-mode cap — bot finds 600+ opps/scan with good edge
 DEFAULT_POSITION_SIZE_USDC = 5.0  # $5 per position (paper)
 DEFAULT_MIN_DEVIATION = 0.002  # 0.2% mispricing threshold (Polymarket is efficient)
 DEFAULT_MIN_LIQUIDITY = 200  # min $200 liquidity (was $500)
@@ -82,6 +82,7 @@ LOW_LIQUIDITY_THRESHOLD = 500  # $500 — below this, those signals are suppress
 TAKE_PROFIT_PCT = 0.20  # 20% gain → close
 STOP_LOSS_PCT = -0.15  # 15% loss → close
 MAX_HOLD_DAYS = 14  # force close after 14 days if no edge
+MIN_EDGE_PCT = 0.05  # min 5% max possible gain to enter (prevents dead positions)
 
 # ── Real Trading Readiness Layer ──────────────────────────────────────────────
 # Kill switch thresholds (env-overridable)
@@ -487,6 +488,26 @@ class PolymarketPaperBot:
                 for sig in pos.signals:
                     signal_type_counts[sig] = signal_type_counts.get(sig, 0) + 1
 
+        # Debug: show top scored confidence values
+        if scored:
+            top3 = scored[:3]
+            for t in top3:
+                logger.info(
+                    "Top opp: %s/%s conf=%.4f signals=%s price=%.3f",
+                    t["side"], t["market_id"][:30], t["confidence"],
+                    t["signals"], t["price"],
+                )
+            passing = [o for o in scored if o["confidence"] >= MIN_ENTRY_CONFIDENCE]
+            logger.info(
+                "Entry filter: %d/%d opps pass confidence >= %.2f (top=%.4f)",
+                len(passing), len(scored), MIN_ENTRY_CONFIDENCE,
+                scored[0]["confidence"] if scored else 0,
+            )
+
+        # Update existing positions with latest prices & check exits FIRST
+        # so freed slots are available for new entries
+        await self._update_positions(events)
+
         for opp in scored:
             if opp["confidence"] >= MIN_ENTRY_CONFIDENCE:
                 # Check diversity cap: don't over-concentrate on one signal type
@@ -497,9 +518,6 @@ class PolymarketPaperBot:
                 if success:
                     entered += 1
                     signal_type_counts[primary_signal] = signal_type_counts.get(primary_signal, 0) + 1
-
-        # Update existing positions with latest prices
-        await self._update_positions(events)
 
         # Update price/volume history
         self._update_history(events)
@@ -938,6 +956,7 @@ class PolymarketPaperBot:
         # Check if we already have a position in this market
         for pos in self.positions.values():
             if pos.market_id == opp["market_id"] and not pos.resolved:
+                logger.debug("Already have position in %s, skipping", opp["market_id"][:12])
                 return False
 
         # Check loss cooldown: skip re-entry for 48h after a stop-loss on this market
@@ -950,10 +969,12 @@ class PolymarketPaperBot:
         # Check max positions
         active_positions = sum(1 for p in self.positions.values() if not p.resolved)
         if active_positions >= self.max_positions:
+            logger.info("Max positions reached (%d/%d), skipping entry", active_positions, self.max_positions)
             return False
 
         # ── Dry-run mode: log but don't execute ──
         if DRY_RUN_MODE:
+            logger.info("DRY RUN: would enter %s/%s conf=%.3f price=%.3f", opp["side"], opp["market_id"][:20], opp["confidence"], opp["price"])
             signal = AlphaSignal(
                 market_id=opp["market_id"],
                 question=opp["question"],
@@ -966,7 +987,24 @@ class PolymarketPaperBot:
             self._log_dry_run_trade(signal, opp["confidence"])
             return False
 
+        # Check min edge: skip positions with no realistic profit potential
+        entry_price = opp["price"]
+        if entry_price > 0:
+            max_gain_pct = 0.0 if entry_price >= 1.0 else (1.0 - entry_price) / entry_price
+            if max_gain_pct < MIN_EDGE_PCT:
+                logger.info(
+                    "Insufficient edge: %s/%s price=%.4f max_gain=%.2f%% < %.0f%%",
+                    opp["side"], opp["market_id"][:20], entry_price,
+                    max_gain_pct * 100, MIN_EDGE_PCT * 100,
+                )
+                return False
+
         # Create paper position — Kelly criterion sizing
+        logger.info(
+            "ENTERING: %s/%s conf=%.3f price=%.3f signals=%s bankroll=$%.2f",
+            opp["side"], opp["market_id"][:30], opp["confidence"],
+            opp["price"], opp["signals"], self.bankroll,
+        )
         position_id = f"poly_{uuid.uuid4().hex[:12]}"
         entry_price = opp["price"]
         size = self._kelly_size(opp["confidence"], entry_price)
@@ -1021,7 +1059,7 @@ class PolymarketPaperBot:
         )
 
         logger.info(
-            "Alpha OPEN: %s %s @ %.3f conf=%.0%% signals=%s | %s",
+            "Alpha OPEN: %s %s @ %.3f conf=%.0f%% signals=%s | %s",
             opp["side"], opp["market_id"][:12], entry_price,
             opp["confidence"] * 100, "+".join(opp["signals"]),
             opp["question"][:50],
@@ -1099,6 +1137,12 @@ class PolymarketPaperBot:
         # Max hold time exceeded
         elif (time.time() - position.entry_time) > MAX_HOLD_DAYS * 86400:
             reason = f"MAX HOLD: {MAX_HOLD_DAYS}d exceeded, closing stale position"
+
+        # No edge: position can never reach take-profit threshold
+        elif position.entry_price > 0:
+            max_gain_pct = 0.0 if position.entry_price >= 1.0 else (1.0 - position.entry_price) / position.entry_price
+            if max_gain_pct < MIN_EDGE_PCT:
+                reason = f"NO EDGE: max possible gain {max_gain_pct*100:.1f}% < {MIN_EDGE_PCT*100:.0f}% threshold"
 
         if reason:
             await self._close_position(position, reason)

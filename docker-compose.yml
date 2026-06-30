@@ -209,6 +209,8 @@ services:
 networks:
   trading-bot-network:
     driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: "1280"
 
 volumes:
   redis_data:
