@@ -230,8 +230,8 @@ def safe_paper_defaults() -> List[GridConfig]:
             symbol="SOLUSDT",
             grid_spacing_pct=0.3,
             grid_levels=5,
-            order_size=1.4,           # ~$99 per order at SOL ~$70
-            max_position=6.9,         # ~$496 max exposure (6.9 × $72)
+            order_size=1.4,           # ~$91 per order at SOL ~$65
+            max_position=6.5,         # ~$481 max exposure (6.5 × $74) — buffer for price drift
             max_notional=500.0,
             price_decimals=2,
             min_notional=10.0,        # Binance Global $10 minimum
