@@ -797,6 +797,12 @@ class RealGridBot:
                     price=buy_price,
                     quantity=state.current_order_size if state.current_order_size > 0 else cfg.order_size,
                 )
+                # Close the journal entry for this order (position opened;
+                # PnL is realized when the matching SELL fills)
+                try:
+                    await self._journal.record_exit(oid, buy_price, "FILLED_BUY", 0.0)
+                except Exception as e:
+                    logger.warning("Journal exit (BUY fill) failed: %s", e)
                 del state.active_buys[buy_price]
                 state.order_times.pop(oid, None)
 
@@ -860,6 +866,15 @@ class RealGridBot:
                 # Record in risk manager
                 self._risk.record_trade_result(cfg.symbol, net_profit, is_win=(net_profit > 0))
                 self._risk.update_drawdown(state.cumulative_pnl)
+
+                # Close the journal entry with realized round-trip PnL —
+                # this is what makes win_rate/total_pnl/profit_factor real
+                try:
+                    await self._journal.record_exit(
+                        oid, sell_price, "FILLED_SELL", net_profit, total_fee
+                    )
+                except Exception as e:
+                    logger.warning("Journal exit (SELL fill) failed: %s", e)
 
                 logger.info(
                     "[RealGrid %s] SELL filled @ %d qty=%.6f buy@%.0f gross=%.2f fee=%.2f net=%.2f THB",
@@ -999,6 +1014,14 @@ class RealGridBot:
             )
             if resp.status_code != 200:
                 logger.warning("Failed to cancel order %s: %s", order_id, resp.text)
+            else:
+                # Close the journal entry so cancelled orders don't sit
+                # in the journal as OPEN forever (they'd otherwise dominate
+                # open_entries and make the stats meaningless)
+                try:
+                    await self._journal.record_exit(order_id, 0.0, "CANCELLED", 0.0)
+                except Exception as e:
+                    logger.warning("Journal exit (cancel) failed: %s", e)
         except Exception as e:
             logger.warning("Cancel order failed: %s", e)
 

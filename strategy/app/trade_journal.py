@@ -121,7 +121,22 @@ class TradeJournal:
         fee: float = 0.0,
         drawdown_impact_pct: float = 0.0,
     ) -> bool:
-        """Record trade exit (when order is filled/closed)."""
+        """Record trade exit (when order is filled/closed).
+
+        Status mapping keeps get_stats() meaningful:
+        - CANCELLED orders are excluded from win/loss stats entirely.
+        - FILLED_BUY ends the order's lifecycle but realizes no PnL yet (the
+          round trip completes on the matching SELL), so it must not count
+          as a losing trade just because actual_pnl == 0.
+        - Everything else (sell round trips, stop-loss) is CLOSED.
+        """
+        if exit_reason == "CANCELLED":
+            new_status = "CANCELLED"
+        elif exit_reason == "FILLED_BUY":
+            new_status = "FILLED"
+        else:
+            new_status = "CLOSED"
+
         # Update local entry
         for entry in reversed(self._entries):
             if entry.exchange_order_id == exchange_order_id:
@@ -130,7 +145,7 @@ class TradeJournal:
                 entry.actual_pnl = actual_pnl
                 entry.fee = fee
                 entry.drawdown_impact_pct = drawdown_impact_pct
-                entry.status = "CLOSED"
+                entry.status = new_status
                 entry.closed_at = time.time()
                 break
 
