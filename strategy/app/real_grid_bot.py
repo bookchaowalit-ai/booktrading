@@ -99,8 +99,8 @@ class RealGridState:
     last_fill_timestamp: float = 0.0  # epoch of last fill
     performance_start_time: float = 0.0  # when metrics tracking began
     # ── Actual PnL tracking (buy-sell matching) ──
-    buy_fill_prices: Dict[int, float] = field(default_factory=dict)    # orderId_int -> actual buy fill price
-    filled_buy_prices: Dict[int, float] = field(default_factory=dict)  # buy_price -> sell_price (matched pairs)
+    buy_fill_prices: Dict[int, float] = field(default_factory=dict)    # buy_price -> fill timestamp (unmatched open lots; FIFO fallback ordering)
+    filled_buy_prices: Dict[int, float] = field(default_factory=dict)  # buy_price -> 0 until matched (keys = levels holding an open position)
     # ── Sharpe/Sortino tracking ──
     trade_returns: List[float] = field(default_factory=list)  # per-trade return % for risk-adjusted metrics
     daily_pnl_history: List[float] = field(default_factory=list)  # daily PnL snapshots for auto-tune
@@ -781,7 +781,7 @@ class RealGridBot:
 
             for buy_price, oid in filled_buy_prices:
                 # Record buy fill price for later SELL PnL matching
-                state.buy_fill_prices[buy_price] = buy_price
+                state.buy_fill_prices[buy_price] = time.time()  # fill time — used for FIFO fallback matching
                 state.filled_buy_prices[buy_price] = 0  # SELL price unknown yet
                 state.orders_filled += 1
                 state.last_fill_timestamp = time.time()
@@ -822,17 +822,18 @@ class RealGridBot:
 
             for sell_price, oid in filled_sell_prices:
                 qty = state.current_order_size if state.current_order_size > 0 else cfg.order_size
-                # Estimate fees: 0.1% on buy side + 0.1% on sell side
-                buy_fee = sell_price * qty * fee_pct
+
+                # Match this sell against the correct open buy lot
+                actual_buy_price = self._match_buy_for_sell(state, sell_price)
+
+                # Fees: 0.1% per side, each on its own notional (the old code
+                # charged the buy-side fee on the sell price, overstating it)
+                if actual_buy_price > 0:
+                    buy_fee = actual_buy_price * qty * fee_pct
+                else:
+                    buy_fee = sell_price * qty * fee_pct  # estimate when unmatched
                 sell_fee = sell_price * qty * fee_pct
                 total_fee = buy_fee + sell_fee
-
-                # Match with oldest unmatched buy fill for PnL
-                actual_buy_price = 0.0
-                if state.buy_fill_prices:
-                    oldest_key = min(state.buy_fill_prices.keys())
-                    actual_buy_price = state.buy_fill_prices.pop(oldest_key)
-                    state.filled_buy_prices.pop(oldest_key, None)
 
                 if actual_buy_price > 0:
                     gross_profit = (sell_price - actual_buy_price) * qty
@@ -1398,6 +1399,43 @@ class RealGridBot:
             state.trend_paused = False
         
         return False  # Continue normal operation
+
+    def _match_buy_for_sell(self, state: RealGridState, sell_price: float) -> float:
+        """Pick the open buy lot a filled SELL closes, and consume it.
+
+        Priority (replaces the old `min(prices)` rule, which grabbed the
+        LOWEST-priced buy regardless of pairing and overstated per-trade PnL):
+        1. Stop-loss exact match — we know exactly which buy a stop sell exits.
+        2. Grid pair — the highest buy strictly below the sell price
+           (a grid sell sits one spacing above the buy it exits).
+        3. FIFO fallback — the oldest open lot by fill time (covers stop-loss
+           sells whose tracking was lost and pre-upgrade legacy state).
+
+        Returns the matched buy price, or 0.0 when no open lot exists.
+        """
+        matched: float | None = None
+
+        for buy, placed_sell in state.stop_loss_orders.items():
+            if placed_sell == sell_price and buy in state.buy_fill_prices:
+                matched = buy
+                break
+
+        if matched is None and state.buy_fill_prices:
+            below = [p for p in state.buy_fill_prices if p < sell_price]
+            if below:
+                matched = max(below)
+            else:
+                matched = min(state.buy_fill_prices, key=state.buy_fill_prices.get)
+
+        if matched is None:
+            return 0.0
+
+        state.buy_fill_prices.pop(matched, None)
+        state.filled_buy_prices.pop(matched, None)
+        # Position closed — drop any stop-loss bookkeeping for this lot
+        state.stop_loss_triggered.pop(matched, None)
+        state.stop_loss_orders.pop(matched, None)
+        return matched
 
     # Re-place an unfilled stop-loss sell when price falls this % below its
     # limit price. Below this, the limit is still near price and can fill on
