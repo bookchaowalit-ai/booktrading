@@ -43,6 +43,7 @@ import {
   AlertTriangle,
   Newspaper,
   TrendingUp,
+  DollarSign,
 } from 'lucide-react';
 import { useTranslation, TranslationKey } from '@/i18n/translations';
 
@@ -82,6 +83,7 @@ const advancedGroups: MenuGroup[] = [
       { nameKey: 'nav.rebalancing', href: '/dashboard/rebalancing', icon: <Landmark className="w-5 h-5" /> },
       { nameKey: 'nav.polyPaper', href: '/dashboard/polymarket', icon: <Target className="w-5 h-5" /> },
       { nameKey: 'nav.arbPaper', href: '/dashboard/arbitrage', icon: <ArrowLeftRight className="w-5 h-5" /> },
+      { nameKey: 'nav.money', href: '/dashboard/money', icon: <DollarSign className="w-5 h-5" /> },
     ],
   },
   {

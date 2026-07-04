@@ -353,6 +353,7 @@ type BinanceOrderExecutor struct {
 	apiKey     string
 	apiSecret  string
 	baseURL    string
+	orderPath  string // /api/v3/order for Global, /api/v1/order for TH
 	httpClient *http.Client
 	useTestnet bool
 }
@@ -370,6 +371,18 @@ func NewBinanceOrderExecutor(apiKey, apiSecret string, useTestnet bool) *Binance
 		baseURL:    baseURL,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 		useTestnet: useTestnet,
+	}
+}
+
+// NewBinanceOrderExecutorWithBaseURL creates a new Binance order executor with a custom base URL
+func NewBinanceOrderExecutorWithBaseURL(apiKey, apiSecret, baseURL string) *BinanceOrderExecutor {
+	return &BinanceOrderExecutor{
+		apiKey:     apiKey,
+		apiSecret:  apiSecret,
+		baseURL:    baseURL,
+		orderPath:  "/api/v1/order", // Binance TH uses v1
+		httpClient: &http.Client{Timeout: 30 * time.Second},
+		useTestnet: false,
 	}
 }
 
@@ -434,8 +447,14 @@ func (b *BinanceOrderExecutor) PlaceOrder(ctx context.Context, order *model.Orde
 	// Generate signature
 	signature := b.generateSignature(params)
 
+	// Determine order path: Binance TH uses /api/v1, Global uses /api/v3
+	orderPath := b.orderPath
+	if orderPath == "" {
+		orderPath = "/api/v3/order"
+	}
+
 	// Create request
-	reqURL := fmt.Sprintf("%s/api/v3/order?%s&signature=%s", b.baseURL, params, signature)
+	reqURL := fmt.Sprintf("%s%s?%s&signature=%s", b.baseURL, orderPath, params, signature)
 	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
