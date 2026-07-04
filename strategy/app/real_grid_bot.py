@@ -280,7 +280,12 @@ class RealGridBot:
     5. Calculates PnL from actual filled trades
     6. Enforces safety controls (max position, daily loss, kill switch)
     """
-    MAX_ORDER_AGE_SECONDS = 30 * 60  # 30 minutes — auto-cancel unfilled orders
+    # 4 hours — auto-cancel unfilled orders. Was 30 min, which caused constant
+    # churn in low-vol markets: grid orders sit ~1% from price, price rarely
+    # moves 1% in 30 min, so orders expired before ever filling (132 placed,
+    # ~1 fill on 2026-07-04). Price-drift cancellation still removes orders
+    # that move too far away, so this doesn't loosen risk control.
+    MAX_ORDER_AGE_SECONDS = 4 * 60 * 60
 
     def __init__(self, configs: Optional[List[RealGridConfig]] = None):
         # Read REAL_SYMBOLS from env (e.g., "BTCTHB" or "BTCTHB,ETHTHB")
