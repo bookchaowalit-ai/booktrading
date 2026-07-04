@@ -780,6 +780,28 @@ class RealGridBot:
                     filled_buy_prices.append((price, oid))
 
             for buy_price, oid in filled_buy_prices:
+                # Verify against the exchange: a disappeared order is NOT
+                # necessarily filled (manual cancel in the app, exchange purge)
+                verdict = await self._verify_fill(cfg.symbol, oid)
+                if verdict == "open":
+                    continue  # open-orders snapshot raced; still on the book
+                if verdict == "cancelled":
+                    logger.info(
+                        "[RealGrid %s] BUY @ %d was cancelled externally (not filled) — no position booked",
+                        cfg.symbol, buy_price,
+                    )
+                    try:
+                        await self._journal.record_exit(oid, 0.0, "CANCELLED", 0.0)
+                    except Exception as e:
+                        logger.warning("Journal exit (external cancel) failed: %s", e)
+                    del state.active_buys[buy_price]
+                    state.order_times.pop(oid, None)
+                    continue
+                if verdict == "unknown":
+                    logger.warning(
+                        "[RealGrid %s] Could not verify BUY @ %d (order %s) — assuming filled (legacy behavior)",
+                        cfg.symbol, buy_price, oid,
+                    )
                 # Record buy fill price for later SELL PnL matching
                 state.buy_fill_prices[buy_price] = time.time()  # fill time — used for FIFO fallback matching
                 state.filled_buy_prices[buy_price] = 0  # SELL price unknown yet
@@ -821,6 +843,29 @@ class RealGridBot:
                     filled_sell_prices.append((price, oid))
 
             for sell_price, oid in filled_sell_prices:
+                # Verify against the exchange before booking profit — an
+                # externally-cancelled sell booked as a fill would fabricate PnL
+                verdict = await self._verify_fill(cfg.symbol, oid)
+                if verdict == "open":
+                    continue  # open-orders snapshot raced; still on the book
+                if verdict == "cancelled":
+                    logger.info(
+                        "[RealGrid %s] SELL @ %d was cancelled externally (not filled) — no PnL booked",
+                        cfg.symbol, sell_price,
+                    )
+                    try:
+                        await self._journal.record_exit(oid, 0.0, "CANCELLED", 0.0)
+                    except Exception as e:
+                        logger.warning("Journal exit (external cancel) failed: %s", e)
+                    del state.active_sells[sell_price]
+                    state.order_times.pop(oid, None)
+                    continue
+                if verdict == "unknown":
+                    logger.warning(
+                        "[RealGrid %s] Could not verify SELL @ %d (order %s) — assuming filled (legacy behavior)",
+                        cfg.symbol, sell_price, oid,
+                    )
+
                 qty = state.current_order_size if state.current_order_size > 0 else cfg.order_size
 
                 # Match this sell against the correct open buy lot
@@ -1399,6 +1444,35 @@ class RealGridBot:
             state.trend_paused = False
         
         return False  # Continue normal operation
+
+    async def _verify_fill(self, symbol: str, order_id: str) -> str:
+        """Ask the exchange what actually happened to an order that vanished
+        from the open-orders list.
+
+        Returns:
+            "filled"    — exchange confirms FILLED; safe to book PnL
+            "cancelled" — CANCELED/EXPIRED/REJECTED (e.g. manual cancel in the
+                          Binance app); must NOT be booked as a fill
+            "open"      — still on the book (open-orders snapshot raced);
+                          skip processing this tick
+            "unknown"   — status query failed; caller decides the fallback
+        """
+        try:
+            resp = await self._http.get(
+                f"{BACKEND_API_BASE}/api/trade/order-status",
+                params={"symbol": symbol, "orderId": order_id},
+            )
+            if resp.status_code == 200:
+                status = (resp.json().get("status") or "").upper()
+                if status == "FILLED":
+                    return "filled"
+                if status in ("CANCELED", "CANCELLED", "EXPIRED", "REJECTED"):
+                    return "cancelled"
+                if status in ("NEW", "PARTIALLY_FILLED"):
+                    return "open"
+        except Exception as e:
+            logger.debug("[%s] order-status query failed for %s: %s", symbol, order_id, e)
+        return "unknown"
 
     def _match_buy_for_sell(self, state: RealGridState, sell_price: float) -> float:
         """Pick the open buy lot a filled SELL closes, and consume it.

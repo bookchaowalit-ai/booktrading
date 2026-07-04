@@ -357,6 +357,52 @@ func (b *BinanceTHAdapter) GetOpenOrders(ctx context.Context, symbol string) ([]
 	return orders, nil
 }
 
+// GetOrderStatus queries the current status of a single order (FILLED,
+// CANCELED, EXPIRED, NEW, PARTIALLY_FILLED, ...). Used to verify what
+// actually happened to an order that disappeared from the open-orders list,
+// instead of assuming every disappearance is a fill.
+func (b *BinanceTHAdapter) GetOrderStatus(ctx context.Context, symbol string, orderID int64) (*Order, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	path := "/api/v1/order"
+	timestamp := strconv.FormatInt(time.Now().UnixMilli(), 10)
+
+	queryString := fmt.Sprintf("symbol=%s&orderId=%d&timestamp=%s", symbol, orderID, timestamp)
+	signature := b.generateSignature(queryString)
+
+	reqURL := fmt.Sprintf("%s%s?%s&signature=%s", b.baseURL, path, queryString, signature)
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("X-MBX-APIKEY", b.apiKey)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Binance TH API returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var order Order
+	if err := json.Unmarshal(body, &order); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w, body: %s", err, string(body))
+	}
+
+	return &order, nil
+}
+
 // CancelOrder cancels an existing order
 func (b *BinanceTHAdapter) CancelOrder(ctx context.Context, symbol string, orderID int64) error {
 	b.mu.RLock()

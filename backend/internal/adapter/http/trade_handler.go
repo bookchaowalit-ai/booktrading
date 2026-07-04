@@ -33,6 +33,7 @@ func (h *TradeHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/trade/status", h.TradeStatus)
 	mux.HandleFunc("/api/trade/history", h.TradeHistory)
 	mux.HandleFunc("/api/trade/open-orders", h.GetOpenOrders)
+	mux.HandleFunc("/api/trade/order-status", h.GetOrderStatus)
 	mux.HandleFunc("/api/trade/cancel-order", h.CancelOrder)
 	// Journal endpoints
 	mux.HandleFunc("/api/journal/entry", h.JournalEntry)
@@ -324,6 +325,38 @@ func (h *TradeHandler) GetOpenOrders(w http.ResponseWriter, r *http.Request) {
 		"symbol": symbol,
 		"orders": orders,
 	})
+}
+
+// GetOrderStatus handles GET /api/trade/order-status?symbol=BTCTHB&orderId=123
+// Lets the strategy verify what happened to an order that vanished from the
+// open-orders list (FILLED vs CANCELED/EXPIRED) before booking PnL for it.
+func (h *TradeHandler) GetOrderStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	symbol := r.URL.Query().Get("symbol")
+	orderIDStr := r.URL.Query().Get("orderId")
+	if symbol == "" || orderIDStr == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "symbol and orderId are required"})
+		return
+	}
+
+	var orderID int64
+	if _, err := fmt.Sscanf(orderIDStr, "%d", &orderID); err != nil || orderID <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "orderId must be a positive integer"})
+		return
+	}
+
+	order, err := h.manager.GetOrderStatus(r.Context(), symbol, orderID)
+	if err != nil {
+		logger.Error("Failed to get order status", "error", err, "symbol", symbol, "orderId", orderID)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, order)
 }
 
 // CancelOrder handles POST /api/trade/cancel-order
