@@ -149,12 +149,14 @@ SYMBOL_DEFAULTS = {
     # Every order MUST be ≥100 THB and match stepSize multiples.
     # ────────────────────────────────────────────────────────────────────────
     "ETHTHB": {
-        "grid_spacing_pct": 2.0,        # 2% grid spacing (tighter for capital efficiency)
-        "grid_levels": 1,               # 1 level (capital-limited ~280 THB)
+        "grid_spacing_pct": 2.0,        # fallback spacing when ATR data unavailable
+        "grid_levels": 2,               # matches backtested atr-dynamic config
         "order_size": 0.002,            # ~110 THB per order (step=0.0001 ✓) — must be ≥100 THB min notional
         "max_position": 0.004,          # ~210 THB max exposure
         "max_daily_loss_usd": 50.0,
-        "volatility_mode": "fixed",
+        # 30d backtest (2026-07-04): atr-dynamic 62% win / +61.8 THB / 1.0% maxDD
+        # vs fixed 2% at 50% win / +60.6 THB / 7.4% maxDD — same profit, 7x less drawdown
+        "volatility_mode": "atr",
         "buy_only": False,              # Full grid — buy dips + sell peaks
         "stale_threshold_pct": 2.5,     # Cancel if >2.5% from market (auto-reprice quickly)
         "tick_size": 1.0,               # Price must be multiple of 1
@@ -171,12 +173,14 @@ SYMBOL_DEFAULTS = {
         "tick_size": 0.01,              # Price must be multiple of 0.01
     },
     "SOLTHB": {
-        "grid_spacing_pct": 3.0,        # 3% for SOL volatility
-        "grid_levels": 1,
+        "grid_spacing_pct": 3.0,        # fallback spacing when ATR data unavailable
+        "grid_levels": 2,               # matches backtested atr-dynamic config
         "order_size": 0.05,             # ~120 THB per order (step=0.01 ✓)
         "max_position": 0.10,           # ~240 THB max exposure
         "max_daily_loss_usd": 30.0,
-        "volatility_mode": "fixed",
+        # 30d backtest (2026-07-04): atr-dynamic +130.8 THB / 3.0% maxDD
+        # vs fixed 3% at +92.8 THB / 3.2% maxDD — 40% more profit, same drawdown
+        "volatility_mode": "atr",
         "buy_only": False,              # Full grid — buy dips + sell peaks
         "stale_threshold_pct": 3.5,     # Cancel if >3.5% from market (auto-reprice quickly)
         "tick_size": 0.01,              # Price must be multiple of 0.01
