@@ -117,6 +117,7 @@ class RealGridState:
     trend_paused: bool = False  # True when bearish trend detected, stops new buy orders
     # ── Stop-loss tracking ──
     stop_loss_triggered: Dict[int, bool] = field(default_factory=dict)  # buy_price -> True if stop-loss sell placed
+    stop_loss_orders: Dict[float, float] = field(default_factory=dict)  # buy_price -> limit price of the placed stop sell (for chase/re-place)
 
 
 # ── Per-symbol default configs ────────────────────────────────────────────────
@@ -352,6 +353,7 @@ class RealGridBot:
                 "daily_pnl_history": state.daily_pnl_history[-90:],
                 "order_times": {str(k): v for k, v in state.order_times.items()},
                 "stop_loss_triggered": {str(k): v for k, v in state.stop_loss_triggered.items()},
+                "stop_loss_orders": {str(k): v for k, v in state.stop_loss_orders.items()},
             }
             await self._redis.set(f"real_grid:{symbol}:state", json.dumps(data))
         except Exception as e:
@@ -398,6 +400,7 @@ class RealGridBot:
             state.order_times = {str(k): v for k, v in data.get("order_times", {}).items()}
             # Restore stop-loss tracking
             state.stop_loss_triggered = {float(k): v for k, v in data.get("stop_loss_triggered", {}).items()}
+            state.stop_loss_orders = {float(k): v for k, v in data.get("stop_loss_orders", {}).items()}
             logger.info(
                 "Restored state for %s from Redis: buys=%d sells=%d pnl=%.2f cum_pnl=%.2f order_size=%.6f",
                 symbol, len(state.active_buys), len(state.active_sells), state.daily_pnl,
@@ -1396,43 +1399,81 @@ class RealGridBot:
         
         return False  # Continue normal operation
 
+    # Re-place an unfilled stop-loss sell when price falls this % below its
+    # limit price. Below this, the limit is still near price and can fill on
+    # a bounce; chasing too eagerly just locks in worse exits.
+    STOP_LOSS_CHASE_PCT = 1.0
+
     async def _check_stop_loss(self, cfg: RealGridConfig, state: RealGridState, price: float):
         """Check if any filled buy positions have dropped below stop-loss threshold.
-        
-        When price drops > stop_loss_pct below a filled buy price:
-        1. Place a LIMIT SELL at current price to cut the loss
-        2. Track that stop-loss was triggered for this buy
-        3. Log and notify the stop-loss event
+
+        When price drops > stop_loss_pct below a filled buy price, place a
+        LIMIT SELL at current price to cut the loss. Unlike the original
+        fire-and-forget version, this:
+        1. Only marks the stop as triggered if the exchange ACCEPTED the order
+           (placement can fail: rate limiter, insufficient balance, API error).
+           Failed placements retry automatically on the next tick.
+        2. Chases a falling market: if the placed stop sell is still unfilled
+           and price has dropped a further STOP_LOSS_CHASE_PCT below its limit
+           price, cancels and re-places it at the new current price.
         """
         if not state.filled_buy_prices or cfg.buy_only:
             return
-        
+
         stop_threshold = cfg.stop_loss_pct / 100.0
-        
+        tick = cfg.tick_size
+
         for buy_price in list(state.filled_buy_prices.keys()):
-            # Skip if stop-loss already triggered for this buy
             if state.stop_loss_triggered.get(buy_price, False):
-                continue
-            
-            # Check if price has dropped below stop-loss threshold
+                # Stop already placed — verify it's still working, chase if stale
+                placed_price = state.stop_loss_orders.get(buy_price)
+                if placed_price is None:
+                    continue  # legacy state from before chase tracking existed
+                if placed_price not in state.active_sells:
+                    # Order left the book (filled or cancelled) — fill detection
+                    # handles the accounting; stop tracking it here
+                    state.stop_loss_orders.pop(buy_price, None)
+                    continue
+                # Chase: price fell well below our resting limit — it won't fill
+                if price < placed_price * (1 - self.STOP_LOSS_CHASE_PCT / 100.0):
+                    old_oid = state.active_sells.get(placed_price)
+                    logger.warning(
+                        "[RealGrid %s] STOP-LOSS chase: limit@%d unfilled, price now %d — re-placing",
+                        cfg.symbol, int(placed_price), int(price),
+                    )
+                    if old_oid:
+                        await self._cancel_order(cfg.symbol, old_oid)
+                        state.order_times.pop(old_oid, None)
+                    state.active_sells.pop(placed_price, None)
+                    state.stop_loss_orders.pop(buy_price, None)
+                    # Reset so the placement path below runs fresh this tick
+                    state.stop_loss_triggered[buy_price] = False
+                else:
+                    continue
+
             drop_pct = (buy_price - price) / buy_price
             if drop_pct >= stop_threshold:
-                # Place stop-loss SELL order at current price
-                tick = cfg.tick_size
-                sell_price = round(price / tick) * tick
-                sell_price = int(sell_price)
-                
+                sell_price = int(round(price / tick) * tick)
+
                 logger.warning(
                     "[RealGrid %s] STOP-LOSS triggered: bought@%d, now@%d (drop=%.1f%%, threshold=%.1f%%)",
                     cfg.symbol, buy_price, sell_price, drop_pct * 100, cfg.stop_loss_pct
                 )
-                
-                # Place the stop-loss sell order
-                await self._place_grid_order(cfg, state, "SELL", sell_price)
-                
-                # Mark this buy as stop-loss triggered
+
+                placed = await self._place_grid_order(cfg, state, "SELL", sell_price)
+                if not placed:
+                    # Do NOT mark triggered — the position is still unprotected.
+                    # Next tick retries. This was the original bug: a rate-limited
+                    # or rejected stop order was marked "handled" forever.
+                    logger.warning(
+                        "[RealGrid %s] STOP-LOSS placement FAILED for buy@%d — will retry next tick",
+                        cfg.symbol, buy_price,
+                    )
+                    continue
+
                 state.stop_loss_triggered[buy_price] = True
-                
+                state.stop_loss_orders[buy_price] = float(sell_price)
+
                 self._notifications.append({
                     "type": "stop_loss",
                     "side": "SELL",
@@ -1707,28 +1748,32 @@ class RealGridBot:
         )
         return True
 
-    async def _place_grid_order(self, cfg: RealGridConfig, state: RealGridState, side: str, price: float):
-        """Place a real LIMIT order at a grid level via Go backend."""
+    async def _place_grid_order(self, cfg: RealGridConfig, state: RealGridState, side: str, price: float) -> bool:
+        """Place a real LIMIT order at a grid level via Go backend.
+
+        Returns True only when the exchange accepted the order — callers that
+        must know the order exists (e.g. stop-loss) depend on this.
+        """
         # ── Testnet safety: block ALL real order placement ──
         if not BINANCE_TH_MAINNET:
             logger.info(
                 "[RealGrid %s] Order SKIPPED (testnet mode): %s @ %.2f",
                 cfg.symbol, side, price,
             )
-            return
+            return False
 
         # Use dynamic order size from auto-compounding if available, else base config size
         order_size = state.current_order_size if state.current_order_size > 0 else cfg.order_size
-        
+
         # ── Balance pre-checks ──
         if side == "SELL":
             if not await self._can_place_sell(cfg.symbol, order_size):
                 logger.info("[RealGrid %s] SELL skipped: insufficient base balance", cfg.symbol)
-                return
+                return False
         elif side == "BUY":
             if not await self._can_place_buy(cfg.symbol, order_size, price):
                 logger.info("[RealGrid %s] BUY skipped: insufficient quote balance", cfg.symbol)
-                return
+                return False
 
         # ── Risk check before order ──
         allowed, reason = self._risk.check_order_allowed(
@@ -1739,7 +1784,7 @@ class RealGridBot:
         )
         if not allowed:
             logger.info("[RealGrid %s] Order blocked by risk: %s", cfg.symbol, reason)
-            return
+            return False
 
         try:
             resp = await self._http.post(
@@ -1792,6 +1837,7 @@ class RealGridBot:
                     "[RealGrid %s] %s LIMIT @ %.2f placed (id=%s)",
                     cfg.symbol, side, price, order_id[:16] if order_id else "?",
                 )
+                return True
             elif resp.status_code == 400:
                 # Insufficient balance or exchange rejection — log once then skip silently
                 err = resp.json().get("error", "unknown")
@@ -1808,6 +1854,7 @@ class RealGridBot:
                 logger.info("Order rejected @ %.2f (HTTP %d): %s", price, resp.status_code, err)
         except Exception as e:
             logger.info("Failed to place %s @ %.2f: %s", side, price, e)
+        return False
 
     def get_status(self) -> Dict:
         """Get current real grid bot status (includes risk metrics and auto-compound info)."""
