@@ -262,6 +262,11 @@ BINANCE_TH_FEE_PCT = 0.1              # 0.1% per side
 ROUND_TRIP_FEE_PCT = BINANCE_TH_FEE_PCT * 2  # 0.2% round trip
 MIN_PROFITABLE_SPACING_PCT = 0.5      # spacing must be > 0.5% to profit after fees
 
+# Account capital base (THB) used as the equity denominator for drawdown
+# tracking. Cumulative PnL alone is NOT a valid equity curve: early on the
+# peak is a few THB, so tiny dips register as huge percentage drawdowns.
+GRID_CAPITAL_BASE_THB = float(os.getenv("GRID_CAPITAL_BASE_THB", "3000"))
+
 # Regime detection thresholds (ATR percentile)
 REGIME_THRESHOLDS = {
     "low_vol": 25,     # ATR < 25th percentile
@@ -923,7 +928,12 @@ class RealGridBot:
 
                 # Record in risk manager
                 self._risk.record_trade_result(cfg.symbol, net_profit, is_win=(net_profit > 0))
-                self._risk.update_drawdown(state.cumulative_pnl)
+                # Drawdown must be measured against account equity, not peak
+                # profit. Passing raw cumulative_pnl here made a 4 THB dip on
+                # a ~9 THB profit peak read as "42% drawdown" and halt the bot
+                # (2026-07-06), when the real account impact was ~0.1%.
+                total_pnl = sum(s.cumulative_pnl for s in self.states.values())
+                self._risk.update_drawdown(GRID_CAPITAL_BASE_THB + total_pnl)
 
                 # Close the journal entry with realized round-trip PnL —
                 # this is what makes win_rate/total_pnl/profit_factor real
