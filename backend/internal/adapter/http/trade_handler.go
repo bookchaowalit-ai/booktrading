@@ -264,11 +264,18 @@ func (h *TradeHandler) persistTrade(ctx context.Context, req RealOrderRequest, r
 
 	tradeID := fmt.Sprintf("real_%d", time.Now().UnixNano())
 
-	// Try to extract exchange order ID from result
+	// Extract exchange order ID from result. The concrete type varies by
+	// provider (*exchange.Order, *model.Order, ...), so round-trip through
+	// JSON instead of a type assertion — a direct assertion to
+	// map[string]interface{} always fails here since PlaceOrder returns a
+	// typed struct pointer, never a map.
 	var exchangeOrderID *string
-	if m, ok := result.(map[string]interface{}); ok {
-		if oid, exists := m["orderId"]; exists {
-			s := fmt.Sprintf("%v", oid)
+	if raw, err := json.Marshal(result); err == nil {
+		var parsed struct {
+			OrderID json.Number `json:"orderId"`
+		}
+		if json.Unmarshal(raw, &parsed) == nil && parsed.OrderID != "" {
+			s := parsed.OrderID.String()
 			exchangeOrderID = &s
 		}
 	}
@@ -284,12 +291,24 @@ func (h *TradeHandler) persistTrade(ctx context.Context, req RealOrderRequest, r
 		status = "NEW"
 	}
 
+	// Look up the real testnet flag for the active provider instead of
+	// hardcoding — this table must reflect whether the order actually went
+	// to mainnet or testnet.
+	testnet := true
+	provider := string(h.manager.GetCurrentProvider())
+	for _, ex := range h.manager.GetSupportedExchanges() {
+		if ex.Provider == provider {
+			testnet = ex.Testnet
+			break
+		}
+	}
+
 	_, err := h.db.Exec(pctx,
 		`INSERT INTO real_trades (id, exchange_order_id, symbol, side, type, quantity, price, status, exchange, testnet, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
 		 ON CONFLICT (id) DO NOTHING`,
 		tradeID, exchangeOrderID, req.Symbol, req.Side, orderType,
-		req.Quantity, req.Price, status, string(h.manager.GetCurrentProvider()), true,
+		req.Quantity, req.Price, status, provider, testnet,
 	)
 	if err != nil {
 		logger.Error("Failed to persist real trade", "id", tradeID, "error", err)
