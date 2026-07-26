@@ -1,0 +1,193 @@
+{
+  "generated_at": "2026-07-04T16:49:14.631556+00:00",
+  "days": 30,
+  "interval": "1h",
+  "results": {
+    "ETHTHB": {
+      "live": {
+        "trades": 23,
+        "win_rate": 50.0,
+        "net_pnl": 60.62,
+        "total_fees": 0.86,
+        "max_drawdown_pct": 7.43,
+        "trades_per_day": 0.27,
+        "profit_factor": 0.78,
+        "config": {
+          "spacing": 2.0,
+          "levels": 1,
+          "mode": "fixed",
+          "confluence": false
+        }
+      },
+      "tight-0.7%": {
+        "trades": 174,
+        "win_rate": 52.4390243902439,
+        "net_pnl": 94.34,
+        "total_fees": 8.93,
+        "max_drawdown_pct": 8.03,
+        "trades_per_day": 2.74,
+        "profit_factor": 0.94,
+        "config": {
+          "spacing": 0.7,
+          "levels": 2,
+          "mode": "fixed",
+          "confluence": false
+        }
+      },
+      "atr-dynamic": {
+        "trades": 51,
+        "win_rate": 62.5,
+        "net_pnl": 61.8,
+        "total_fees": 2.68,
+        "max_drawdown_pct": 1.0,
+        "trades_per_day": 0.8,
+        "profit_factor": 2.58,
+        "config": {
+          "spacing": 2.0,
+          "levels": 2,
+          "mode": "atr",
+          "confluence": false
+        }
+      },
+      "tight+confluence": {
+        "trades": 40,
+        "win_rate": 65.0,
+        "net_pnl": -2.41,
+        "total_fees": 2.13,
+        "max_drawdown_pct": 1.58,
+        "trades_per_day": 0.67,
+        "profit_factor": 0.49,
+        "config": {
+          "spacing": 0.7,
+          "levels": 2,
+          "mode": "fixed",
+          "confluence": true
+        }
+      }
+    },
+    "SOLTHB": {
+      "live": {
+        "trades": 21,
+        "win_rate": 77.77777777777779,
+        "net_pnl": 92.81,
+        "total_fees": 1.03,
+        "max_drawdown_pct": 3.25,
+        "trades_per_day": 0.3,
+        "profit_factor": 1.42,
+        "config": {
+          "spacing": 3.0,
+          "levels": 1,
+          "mode": "fixed",
+          "confluence": false
+        }
+      },
+      "tight-0.7%": {
+        "trades": 184,
+        "win_rate": 54.54545454545454,
+        "net_pnl": 167.59,
+        "total_fees": 9.67,
+        "max_drawdown_pct": 7.76,
+        "trades_per_day": 2.94,
+        "profit_factor": 1.5,
+        "config": {
+          "spacing": 0.7,
+          "levels": 2,
+          "mode": "fixed",
+          "confluence": false
+        }
+      },
+      "atr-dynamic": {
+        "trades": 53,
+        "win_rate": 46.15384615384615,
+        "net_pnl": 130.79,
+        "total_fees": 2.84,
+        "max_drawdown_pct": 2.99,
+        "trades_per_day": 0.87,
+        "profit_factor": 4.95,
+        "config": {
+          "spacing": 3.0,
+          "levels": 2,
+          "mode": "atr",
+          "confluence": false
+        }
+      },
+      "tight+confluence": {
+        "trades": 46,
+        "win_rate": 45.83333333333333,
+        "net_pnl": -25.86,
+        "total_fees": 2.36,
+        "max_drawdown_pct": 7.98,
+        "trades_per_day": 0.8,
+        "profit_factor": 0.61,
+        "config": {
+          "spacing": 0.7,
+          "levels": 2,
+          "mode": "fixed",
+          "confluence": true
+        }
+      }
+    },
+    "XRPTHB": {
+      "live": {
+        "trades": 8,
+        "win_rate": 50.0,
+        "net_pnl": 8.54,
+        "total_fees": 0.46,
+        "max_drawdown_pct": 0.33,
+        "trades_per_day": 0.13,
+        "profit_factor": 38.95,
+        "config": {
+          "spacing": 2.0,
+          "levels": 1,
+          "mode": "fixed",
+          "confluence": false
+        }
+      },
+      "tight-0.7%": {
+        "trades": 34,
+        "win_rate": 11.76470588235294,
+        "net_pnl": -19.88,
+        "total_fees": 1.88,
+        "max_drawdown_pct": 1.54,
+        "trades_per_day": 0.57,
+        "profit_factor": 1.69,
+        "config": {
+          "spacing": 0.7,
+          "levels": 2,
+          "mode": "fixed",
+          "confluence": false
+        }
+      },
+      "atr-dynamic": {
+        "trades": 17,
+        "win_rate": 37.5,
+        "net_pnl": 9.98,
+        "total_fees": 0.92,
+        "max_drawdown_pct": 0.98,
+        "trades_per_day": 0.27,
+        "profit_factor": 2.03,
+        "config": {
+          "spacing": 2.0,
+          "levels": 2,
+          "mode": "atr",
+          "confluence": false
+        }
+      },
+      "tight+confluence": {
+        "trades": 8,
+        "win_rate": 0.0,
+        "net_pnl": -9.42,
+        "total_fees": 0.42,
+        "max_drawdown_pct": 0.75,
+        "trades_per_day": 0.13,
+        "profit_factor": 0.0,
+        "config": {
+          "spacing": 0.7,
+          "levels": 2,
+          "mode": "fixed",
+          "confluence": true
+        }
+      }
+    }
+  }
+}

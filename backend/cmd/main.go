@@ -95,11 +95,14 @@ func main() {
 	exchangeManager := exchange.NewExchangeManager(&cfg.Exchange, apiKeyRepo)
 
 	// Initialize exchange adapters (get credentials from APIKeys map)
+	// Try Binance Global first, then fall back to Binance TH
 	binanceKey := cfg.Exchange.APIKeys[string(config.ExchangeBinance)]
+	binanceTHKey := cfg.Exchange.APIKeys[string(config.ExchangeBinanceTH)]
 	var binanceStream *exchange.BinanceAdapter
 	var binanceExecutor *exchange.BinanceOrderExecutor
 
 	if binanceKey != nil && binanceKey.Enabled {
+		// Use Binance Global credentials
 		binanceStream = exchange.NewBinanceAdapter(
 			binanceKey.APIKey,
 			binanceKey.APISecret,
@@ -110,10 +113,25 @@ func main() {
 			binanceKey.APISecret,
 			binanceKey.UseTestnet,
 		)
+		logger.Info("Using Binance Global credentials for order execution")
+	} else if binanceTHKey != nil && binanceTHKey.Enabled {
+		// Fall back to Binance TH credentials
+		binanceStream = exchange.NewBinanceAdapter(
+			binanceTHKey.APIKey,
+			binanceTHKey.APISecret,
+			false,
+		)
+		binanceExecutor = exchange.NewBinanceOrderExecutorWithBaseURL(
+			binanceTHKey.APIKey,
+			binanceTHKey.APISecret,
+			"https://api.binance.th",
+		)
+		logger.Info("Using Binance TH credentials for order execution (fallback)")
 	} else {
-		// Create with empty credentials (will fail gracefully)
+		// No credentials available
 		binanceStream = exchange.NewBinanceAdapter("", "", true)
 		binanceExecutor = exchange.NewBinanceOrderExecutor("", "", true)
+		logger.Warn("No exchange credentials configured — order execution will fail")
 	}
 
 	// Initialize WebSocket broadcaster
@@ -419,6 +437,11 @@ func main() {
 	dexHandler := httpadapter.NewDexHandler(dexService, walletService, authHandler)
 	dexHandler.RegisterRoutes(router.Mux())
 	logger.Info("DEX/AMM trading initialized", "enabled", cfg.Dex.Enabled, "default_dex", cfg.Dex.DefaultDEX)
+
+	// Money Dashboard (aggregates PnL from all bots)
+	moneyHandler := httpadapter.NewMoneyDashboardHandler(redisAdapter, paperEngine)
+	moneyHandler.RegisterRoutes(router.Mux())
+	logger.Info("Money dashboard endpoint registered at /api/dashboard/money")
 
 	// Wrap with audit middleware
 	auditMiddleware := httpadapter.NewAuditMiddleware(auditService, authHandler)

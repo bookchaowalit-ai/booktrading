@@ -969,6 +969,7 @@ var publicRoutes = []string{
 	"/api/poly-paper",
 	"/api/command-center",
 	"/api/real-grid",
+	"/api/dashboard",
 }
 
 // isPublicRoute checks if the path matches any public route (exact or prefix)

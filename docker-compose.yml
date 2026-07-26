@@ -44,6 +44,7 @@ services:
       retries: 5
     networks:
       - trading-bot-network
+    restart: unless-stopped
 
   # Backend (Go) - Execution & Data Hub
   backend:
@@ -51,6 +52,9 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: trading-bot-backend
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     ports:
       - "8080:8080"  # HTTP API
       - "8081:8081"  # WebSocket

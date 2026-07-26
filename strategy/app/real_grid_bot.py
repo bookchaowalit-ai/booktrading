@@ -67,6 +67,8 @@ class RealGridConfig:
     buy_only: bool = False              # True = only place BUY orders, never SELL
     # Exchange rules
     tick_size: float = 1.0              # Price must be multiple of this (e.g., 1.0, 0.01, 0.001)
+    # Stop-loss protection
+    stop_loss_pct: float = 3.0          # sell if price drops this % below filled buy price
 
 
 @dataclass
@@ -97,8 +99,8 @@ class RealGridState:
     last_fill_timestamp: float = 0.0  # epoch of last fill
     performance_start_time: float = 0.0  # when metrics tracking began
     # ── Actual PnL tracking (buy-sell matching) ──
-    buy_fill_prices: Dict[int, float] = field(default_factory=dict)    # orderId_int -> actual buy fill price
-    filled_buy_prices: Dict[int, float] = field(default_factory=dict)  # buy_price -> sell_price (matched pairs)
+    buy_fill_prices: Dict[int, float] = field(default_factory=dict)    # buy_price -> fill timestamp (unmatched open lots; FIFO fallback ordering)
+    filled_buy_prices: Dict[int, float] = field(default_factory=dict)  # buy_price -> 0 until matched (keys = levels holding an open position)
     # ── Sharpe/Sortino tracking ──
     trade_returns: List[float] = field(default_factory=list)  # per-trade return % for risk-adjusted metrics
     daily_pnl_history: List[float] = field(default_factory=list)  # daily PnL snapshots for auto-tune
@@ -108,6 +110,14 @@ class RealGridState:
     atr_percentile: float = 50.0        # current ATR percentile (0-100)
     allocation_score: float = 0.0       # composite score for capital allocation ranking
     regime_history: List[str] = field(default_factory=list)  # last N regime classifications
+    # ── Time-based stale order tracking ──
+    order_times: Dict[str, float] = field(default_factory=dict)  # order_id -> placement epoch
+    # ── Trend detection (bear market protection) ──
+    trend: str = "neutral"  # "bullish", "neutral", "bearish"
+    trend_paused: bool = False  # True when bearish trend detected, stops new buy orders
+    # ── Stop-loss tracking ──
+    stop_loss_triggered: Dict[int, bool] = field(default_factory=dict)  # buy_price -> True if stop-loss sell placed
+    stop_loss_orders: Dict[float, float] = field(default_factory=dict)  # buy_price -> limit price of the placed stop sell (for chase/re-place)
 
 
 # ── Per-symbol default configs ────────────────────────────────────────────────
@@ -139,103 +149,107 @@ SYMBOL_DEFAULTS = {
     # Every order MUST be ≥100 THB and match stepSize multiples.
     # ────────────────────────────────────────────────────────────────────────
     "ETHTHB": {
-        "grid_spacing_pct": 3.0,        # 3% grid spacing
-        "grid_levels": 1,               # 1 level (capital-limited ~280 THB)
-        "order_size": 0.002,            # ~105 THB per order (step=0.0001 ✓)
+        "grid_spacing_pct": 2.0,        # fallback spacing when ATR data unavailable
+        "grid_levels": 2,               # matches backtested atr-dynamic config
+        "order_size": 0.002,            # ~110 THB per order (step=0.0001 ✓) — must be ≥100 THB min notional
         "max_position": 0.004,          # ~210 THB max exposure
         "max_daily_loss_usd": 50.0,
-        "volatility_mode": "fixed",
+        # 30d backtest (2026-07-04): atr-dynamic 62% win / +61.8 THB / 1.0% maxDD
+        # vs fixed 2% at 50% win / +60.6 THB / 7.4% maxDD — same profit, 7x less drawdown
+        "volatility_mode": "atr",
         "buy_only": False,              # Full grid — buy dips + sell peaks
-        "stale_threshold_pct": 15.0,
+        "stale_threshold_pct": 2.5,     # Cancel if >2.5% from market (auto-reprice quickly)
         "tick_size": 1.0,               # Price must be multiple of 1
     },
     "BNBTHB": {
-        "grid_spacing_pct": 3.0,
+        "grid_spacing_pct": 2.0,        # 2% tighter spacing
         "grid_levels": 1,
         "order_size": 0.01,             # ~184 THB per order (step=0.01 ✓)
         "max_position": 0.02,           # ~368 THB max exposure
         "max_daily_loss_usd": 40.0,
         "volatility_mode": "fixed",
         "buy_only": False,              # Full grid — buy dips + sell peaks
-        "stale_threshold_pct": 15.0,
+        "stale_threshold_pct": 2.5,     # Cancel if >2.5% from market (auto-reprice quickly)
         "tick_size": 0.01,              # Price must be multiple of 0.01
     },
     "SOLTHB": {
-        "grid_spacing_pct": 4.0,        # 4% for SOL volatility
-        "grid_levels": 1,
+        "grid_spacing_pct": 3.0,        # fallback spacing when ATR data unavailable
+        "grid_levels": 2,               # matches backtested atr-dynamic config
         "order_size": 0.05,             # ~120 THB per order (step=0.01 ✓)
         "max_position": 0.10,           # ~240 THB max exposure
         "max_daily_loss_usd": 30.0,
-        "volatility_mode": "fixed",
+        # 30d backtest (2026-07-04): atr-dynamic +130.8 THB / 3.0% maxDD
+        # vs fixed 3% at +92.8 THB / 3.2% maxDD — 40% more profit, same drawdown
+        "volatility_mode": "atr",
         "buy_only": False,              # Full grid — buy dips + sell peaks
-        "stale_threshold_pct": 20.0,
+        "stale_threshold_pct": 3.5,     # Cancel if >3.5% from market (auto-reprice quickly)
         "tick_size": 0.01,              # Price must be multiple of 0.01
     },
     "XRPTHB": {
-        "grid_spacing_pct": 3.0,
+        "grid_spacing_pct": 2.0,        # 2% tighter spacing
         "grid_levels": 1,
         "order_size": 3.0,              # ~102 THB per order (step=0.01 ✓)
         "max_position": 6.0,            # ~204 THB max exposure
         "max_daily_loss_usd": 25.0,
         "volatility_mode": "fixed",
         "buy_only": False,              # Full grid — buy dips + sell peaks
-        "stale_threshold_pct": 15.0,
+        "stale_threshold_pct": 2.5,     # Cancel if >2.5% from market (auto-reprice quickly)
         "tick_size": 0.01,              # Price must be multiple of 0.01
     },
     # ── Micro-cap altcoins (Binance TH only) ─────────────────────────────────
     "ASTERTHB": {
-        "grid_spacing_pct": 5.0,        # 5% — high volatility micro-cap
+        "grid_spacing_pct": 4.0,        # 4% — high volatility micro-cap
         "grid_levels": 1,
         "order_size": 5.0,              # ~103 THB per order (step=0.01 ✓)
         "max_position": 10.0,
         "max_daily_loss_usd": 20.0,
         "volatility_mode": "fixed",
         "buy_only": False,
-        "stale_threshold_pct": 25.0,
+        "stale_threshold_pct": 4.5,     # Cancel if >4.5% from market (auto-reprice quickly)
         "tick_size": 0.01,              # Price must be multiple of 0.01
     },
     "ATHTHB": {
-        "grid_spacing_pct": 4.0,        # 4% — mid volatility
+        "grid_spacing_pct": 3.0,        # 3% — mid volatility
         "grid_levels": 1,
         "order_size": 725.0,            # ~100 THB per order (step=0.001 ✓)
         "max_position": 1500.0,
         "max_daily_loss_usd": 15.0,
         "volatility_mode": "fixed",
         "buy_only": False,
-        "stale_threshold_pct": 20.0,
+        "stale_threshold_pct": 3.5,     # Cancel if >3.5% from market (auto-reprice quickly)
         "tick_size": 0.001,             # Price must be multiple of 0.001
     },
     "PLUMETHB": {
-        "grid_spacing_pct": 5.0,        # 5% — RWA narrative, volatile
+        "grid_spacing_pct": 4.0,        # 4% — RWA narrative, volatile
         "grid_levels": 1,
         "order_size": 325.0,            # ~100 THB per order (step=0.01 ✓)
         "max_position": 650.0,
         "max_daily_loss_usd": 15.0,
         "volatility_mode": "fixed",
         "buy_only": False,
-        "stale_threshold_pct": 25.0,
+        "stale_threshold_pct": 4.5,     # Cancel if >4.5% from market (auto-reprice quickly)
         "tick_size": 0.001,             # Price must be multiple of 0.001
     },
     "VELOTHB": {
-        "grid_spacing_pct": 5.0,        # 5% — micro-cap, volatile
+        "grid_spacing_pct": 4.0,        # 4% — micro-cap, volatile
         "grid_levels": 1,
         "order_size": 936.0,            # ~100 THB per order (step=1.0 ✓)
         "max_position": 2000.0,
         "max_daily_loss_usd": 10.0,
         "volatility_mode": "fixed",
         "buy_only": False,
-        "stale_threshold_pct": 25.0,
+        "stale_threshold_pct": 4.5,     # Cancel if >4.5% from market (auto-reprice quickly)
         "tick_size": 0.0001,            # Price must be multiple of 0.0001
     },
     "ZENTTHB": {
-        "grid_spacing_pct": 5.0,        # 5% — micro-cap, volatile
+        "grid_spacing_pct": 4.0,        # 4% — micro-cap, volatile
         "grid_levels": 1,
         "order_size": 1287.0,           # ~100 THB per order (step=1.0 ✓)
         "max_position": 2600.0,
         "max_daily_loss_usd": 10.0,
         "volatility_mode": "fixed",
         "buy_only": False,
-        "stale_threshold_pct": 25.0,
+        "stale_threshold_pct": 4.5,     # Cancel if >4.5% from market (auto-reprice quickly)
         "tick_size": 0.0001,            # Price must be multiple of 0.0001
     },
 }
@@ -247,6 +261,11 @@ SYMBOL_DEFAULTS = {
 BINANCE_TH_FEE_PCT = 0.1              # 0.1% per side
 ROUND_TRIP_FEE_PCT = BINANCE_TH_FEE_PCT * 2  # 0.2% round trip
 MIN_PROFITABLE_SPACING_PCT = 0.5      # spacing must be > 0.5% to profit after fees
+
+# Account capital base (THB) used as the equity denominator for drawdown
+# tracking. Cumulative PnL alone is NOT a valid equity curve: early on the
+# peak is a few THB, so tiny dips register as huge percentage drawdowns.
+GRID_CAPITAL_BASE_THB = float(os.getenv("GRID_CAPITAL_BASE_THB", "3000"))
 
 # Regime detection thresholds (ATR percentile)
 REGIME_THRESHOLDS = {
@@ -271,6 +290,12 @@ class RealGridBot:
     5. Calculates PnL from actual filled trades
     6. Enforces safety controls (max position, daily loss, kill switch)
     """
+    # 4 hours — auto-cancel unfilled orders. Was 30 min, which caused constant
+    # churn in low-vol markets: grid orders sit ~1% from price, price rarely
+    # moves 1% in 30 min, so orders expired before ever filling (132 placed,
+    # ~1 fill on 2026-07-04). Price-drift cancellation still removes orders
+    # that move too far away, so this doesn't loosen risk control.
+    MAX_ORDER_AGE_SECONDS = 4 * 60 * 60
 
     def __init__(self, configs: Optional[List[RealGridConfig]] = None):
         # Read REAL_SYMBOLS from env (e.g., "BTCTHB" or "BTCTHB,ETHTHB")
@@ -335,6 +360,9 @@ class RealGridBot:
                 "filled_buy_prices": {str(k): v for k, v in state.filled_buy_prices.items()},
                 "trade_returns": state.trade_returns[-500:],
                 "daily_pnl_history": state.daily_pnl_history[-90:],
+                "order_times": {str(k): v for k, v in state.order_times.items()},
+                "stop_loss_triggered": {str(k): v for k, v in state.stop_loss_triggered.items()},
+                "stop_loss_orders": {str(k): v for k, v in state.stop_loss_orders.items()},
             }
             await self._redis.set(f"real_grid:{symbol}:state", json.dumps(data))
         except Exception as e:
@@ -350,8 +378,8 @@ class RealGridBot:
                 return False
             data = json.loads(raw)
             state = self.states[symbol]
-            state.active_buys = {int(k): v for k, v in data.get("active_buys", {}).items()}
-            state.active_sells = {int(k): v for k, v in data.get("active_sells", {}).items()}
+            state.active_buys = {float(k): v for k, v in data.get("active_buys", {}).items()}
+            state.active_sells = {float(k): v for k, v in data.get("active_sells", {}).items()}
             state.last_price = data.get("last_price", 0.0)
             state.trades_executed = data.get("trades_executed", 0)
             state.daily_pnl = data.get("daily_pnl", 0.0)
@@ -373,10 +401,15 @@ class RealGridBot:
             state.last_fill_timestamp = data.get("last_fill_timestamp", 0.0)
             state.performance_start_time = data.get("performance_start_time", 0.0)
             # Restore buy-fill tracking
-            state.buy_fill_prices = {int(k): v for k, v in data.get("buy_fill_prices", {}).items()}
-            state.filled_buy_prices = {int(k): v for k, v in data.get("filled_buy_prices", {}).items()}
+            state.buy_fill_prices = {float(k): v for k, v in data.get("buy_fill_prices", {}).items()}
+            state.filled_buy_prices = {float(k): v for k, v in data.get("filled_buy_prices", {}).items()}
             state.trade_returns = data.get("trade_returns", [])
             state.daily_pnl_history = data.get("daily_pnl_history", [])
+            # Restore order times
+            state.order_times = {str(k): v for k, v in data.get("order_times", {}).items()}
+            # Restore stop-loss tracking
+            state.stop_loss_triggered = {float(k): v for k, v in data.get("stop_loss_triggered", {}).items()}
+            state.stop_loss_orders = {float(k): v for k, v in data.get("stop_loss_orders", {}).items()}
             logger.info(
                 "Restored state for %s from Redis: buys=%d sells=%d pnl=%.2f cum_pnl=%.2f order_size=%.6f",
                 symbol, len(state.active_buys), len(state.active_sells), state.daily_pnl,
@@ -628,6 +661,19 @@ class RealGridBot:
             await self._save_state(cfg.symbol)
             return
 
+        # Step 5.5: Detect trend direction (bear market protection)
+        bear_skip = await self._handle_bear_market(cfg, state, price)
+        if bear_skip:
+            logger.info(
+                "[RealGrid %s] price=%.6g trend=%s — buy orders paused (bear market)",
+                cfg.symbol, price, state.trend
+            )
+            await self._save_state(cfg.symbol)
+            return
+
+        # Step 5.6: Check stop-loss on filled buy positions
+        await self._check_stop_loss(cfg, state, price)
+
         # Step 6: Calculate dynamic spacing based on volatility mode
         if cfg.volatility_mode == "atr":
             spacing_pct = await self._calculate_atr_spacing(cfg, price)
@@ -645,9 +691,9 @@ class RealGridBot:
         spacing = price * (spacing_pct / 100.0)
         
         logger.info(
-            "[RealGrid %s] price=%.6g spacing=%.6g (%.1f%%) mode=%s regime=%s alloc=%.1f buys=%d sells=%d pnl=$%.2f",
+            "[RealGrid %s] price=%.6g spacing=%.6g (%.1f%%) mode=%s regime=%s trend=%s alloc=%.1f buys=%d sells=%d pnl=$%.2f",
             cfg.symbol, price, spacing, spacing_pct, cfg.volatility_mode,
-            state.regime, state.allocation_weight,
+            state.regime, state.trend, state.allocation_weight,
             len(state.active_buys), len(state.active_sells),
             state.daily_pnl,
         )
@@ -683,7 +729,13 @@ class RealGridBot:
 
             # Place LIMIT sell only if NOT in buy-only (dip catcher) mode
             if not cfg.buy_only:
-                sell_price = round((price + (spacing * level)) / tick) * tick
+                # When capital-constrained (no buys possible), use tight offset
+                # to get fills and free capital for the buy-sell cycle
+                if len(state.active_buys) == 0 and len(state.active_sells) <= 1:
+                    sell_offset_pct = 0.007  # 0.7% — profitable after 0.2% round-trip fees
+                    sell_price = round((price * (1 + sell_offset_pct)) / tick) * tick
+                else:
+                    sell_price = round((price + (spacing * level)) / tick) * tick
                 sell_price = float(f"{sell_price:.10g}")
                 if sell_price not in state.active_sells:
                     await self._place_grid_order(cfg, state, "SELL", sell_price)
@@ -715,26 +767,218 @@ class RealGridBot:
                 status = order.get("status", "")
                 if status in ("NEW", "PARTIALLY_FILLED"):
                     actual_order_ids.add(order_id)
+                    # Track order time from exchange if not already known
+                    if order_id not in state.order_times:
+                        order_time_ms = order.get("time", 0)
+                        if order_time_ms:
+                            state.order_times[order_id] = order_time_ms / 1000.0
+                        else:
+                            # Unknown placement time (e.g. after Redis restart) —
+                            # give it a fresh lifespan instead of backdating,
+                            # so it doesn't get immediately cancelled on next tick.
+                            state.order_times[order_id] = time.time()
 
-            # Remove orders from state that no longer exist on exchange
-            prices_to_remove = []
-            for price, oid in state.active_buys.items():
-                if oid not in actual_order_ids:
-                    prices_to_remove.append(price)
-            for price in prices_to_remove:
-                del state.active_buys[price]
+            # ── Detect fills: orders that disappeared from exchange = FILLED ──
+            # (This runs BEFORE _cancel_stale_orders, so missing orders were filled, not cancelled)
+            fee_pct = BINANCE_TH_FEE_PCT / 100.0  # 0.001 per side
 
-            prices_to_remove = []
-            for price, oid in state.active_sells.items():
+            # Detect filled BUYs
+            filled_buy_prices = []
+            for price, oid in list(state.active_buys.items()):
                 if oid not in actual_order_ids:
-                    prices_to_remove.append(price)
-            for price in prices_to_remove:
-                del state.active_sells[price]
+                    filled_buy_prices.append((price, oid))
+
+            for buy_price, oid in filled_buy_prices:
+                # Verify against the exchange: a disappeared order is NOT
+                # necessarily filled (manual cancel in the app, exchange purge)
+                verdict = await self._verify_fill(cfg.symbol, oid)
+                if verdict == "open":
+                    continue  # open-orders snapshot raced; still on the book
+                if verdict == "cancelled":
+                    logger.info(
+                        "[RealGrid %s] BUY @ %d was cancelled externally (not filled) — no position booked",
+                        cfg.symbol, buy_price,
+                    )
+                    try:
+                        await self._journal.record_exit(oid, 0.0, "CANCELLED", 0.0)
+                    except Exception as e:
+                        logger.warning("Journal exit (external cancel) failed: %s", e)
+                    del state.active_buys[buy_price]
+                    state.order_times.pop(oid, None)
+                    continue
+                if verdict == "unknown":
+                    logger.warning(
+                        "[RealGrid %s] Could not verify BUY @ %d (order %s) — assuming filled (legacy behavior)",
+                        cfg.symbol, buy_price, oid,
+                    )
+                # Record buy fill price for later SELL PnL matching
+                state.buy_fill_prices[buy_price] = time.time()  # fill time — used for FIFO fallback matching
+                state.filled_buy_prices[buy_price] = 0  # SELL price unknown yet
+                state.orders_filled += 1
+                state.last_fill_timestamp = time.time()
+                logger.info(
+                    "[RealGrid %s] BUY filled @ %d (detected from exchange sync)",
+                    cfg.symbol, buy_price,
+                )
+                self._notifications.append({
+                    "type": "fill",
+                    "side": "BUY",
+                    "symbol": cfg.symbol,
+                    "price": buy_price,
+                    "quantity": state.current_order_size if state.current_order_size > 0 else cfg.order_size,
+                    "profit": 0,
+                    "trade_id": oid,
+                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "message": f"{cfg.symbol} BUY filled @ {buy_price}",
+                })
+                await self._webhook.send_fill_alert(
+                    symbol=cfg.symbol, side="BUY",
+                    price=buy_price,
+                    quantity=state.current_order_size if state.current_order_size > 0 else cfg.order_size,
+                )
+                # Close the journal entry for this order (position opened;
+                # PnL is realized when the matching SELL fills)
+                try:
+                    await self._journal.record_exit(oid, buy_price, "FILLED_BUY", 0.0)
+                except Exception as e:
+                    logger.warning("Journal exit (BUY fill) failed: %s", e)
+                del state.active_buys[buy_price]
+                state.order_times.pop(oid, None)
+
+            # Detect filled SELLs
+            filled_sell_prices = []
+            for price, oid in list(state.active_sells.items()):
+                if oid not in actual_order_ids:
+                    filled_sell_prices.append((price, oid))
+
+            for sell_price, oid in filled_sell_prices:
+                # Verify against the exchange before booking profit — an
+                # externally-cancelled sell booked as a fill would fabricate PnL
+                verdict = await self._verify_fill(cfg.symbol, oid)
+                if verdict == "open":
+                    continue  # open-orders snapshot raced; still on the book
+                if verdict == "cancelled":
+                    logger.info(
+                        "[RealGrid %s] SELL @ %d was cancelled externally (not filled) — no PnL booked",
+                        cfg.symbol, sell_price,
+                    )
+                    try:
+                        await self._journal.record_exit(oid, 0.0, "CANCELLED", 0.0)
+                    except Exception as e:
+                        logger.warning("Journal exit (external cancel) failed: %s", e)
+                    del state.active_sells[sell_price]
+                    state.order_times.pop(oid, None)
+                    continue
+                if verdict == "unknown":
+                    logger.warning(
+                        "[RealGrid %s] Could not verify SELL @ %d (order %s) — assuming filled (legacy behavior)",
+                        cfg.symbol, sell_price, oid,
+                    )
+
+                qty = state.current_order_size if state.current_order_size > 0 else cfg.order_size
+
+                # Match this sell against the correct open buy lot
+                actual_buy_price = self._match_buy_for_sell(state, sell_price)
+
+                # Fees: 0.1% per side, each on its own notional (the old code
+                # charged the buy-side fee on the sell price, overstating it)
+                if actual_buy_price > 0:
+                    buy_fee = actual_buy_price * qty * fee_pct
+                else:
+                    buy_fee = sell_price * qty * fee_pct  # estimate when unmatched
+                sell_fee = sell_price * qty * fee_pct
+                total_fee = buy_fee + sell_fee
+
+                if actual_buy_price > 0:
+                    gross_profit = (sell_price - actual_buy_price) * qty
+                else:
+                    # Fallback: estimate from grid spacing
+                    spacing = sell_price * (cfg.grid_spacing_pct / 100.0)
+                    gross_profit = spacing * qty
+
+                net_profit = gross_profit - total_fee
+                state.daily_pnl += net_profit
+                state.cumulative_pnl += net_profit
+                state.orders_filled += 1
+                state.last_fill_timestamp = time.time()
+
+                # Track per-trade return for Sharpe/Sortino
+                order_notional = qty * sell_price
+                trade_return_pct = (net_profit / order_notional) * 100 if order_notional > 0 else 0
+                state.trade_returns.append(trade_return_pct)
+                if len(state.trade_returns) > 500:
+                    state.trade_returns = state.trade_returns[-500:]
+
+                # Performance: profit velocity
+                if state.performance_start_time > 0:
+                    elapsed_days = (time.time() - state.performance_start_time) / 86400
+                    if elapsed_days > 0.1:
+                        state.profit_velocity_thb_per_day = state.cumulative_pnl / elapsed_days
+
+                # Auto-compounding
+                if cfg.auto_compound_enabled:
+                    old_size = state.current_order_size or cfg.order_size
+                    new_size = self._calculate_compound_order_size(cfg, state)
+                    if new_size != old_size:
+                        state.current_order_size = new_size
+                        logger.info(
+                            "[RealGrid %s] Auto-compound: order_size %.6f -> %.6f (cum_pnl=%.2f THB)",
+                            cfg.symbol, old_size, new_size, state.cumulative_pnl,
+                        )
+
+                # Record in risk manager
+                self._risk.record_trade_result(cfg.symbol, net_profit, is_win=(net_profit > 0))
+                # Drawdown must be measured against account equity, not peak
+                # profit. Passing raw cumulative_pnl here made a 4 THB dip on
+                # a ~9 THB profit peak read as "42% drawdown" and halt the bot
+                # (2026-07-06), when the real account impact was ~0.1%.
+                total_pnl = sum(s.cumulative_pnl for s in self.states.values())
+                self._risk.update_drawdown(GRID_CAPITAL_BASE_THB + total_pnl)
+
+                # Close the journal entry with realized round-trip PnL —
+                # this is what makes win_rate/total_pnl/profit_factor real
+                try:
+                    await self._journal.record_exit(
+                        oid, sell_price, "FILLED_SELL", net_profit, total_fee
+                    )
+                except Exception as e:
+                    logger.warning("Journal exit (SELL fill) failed: %s", e)
+
+                logger.info(
+                    "[RealGrid %s] SELL filled @ %d qty=%.6f buy@%.0f gross=%.2f fee=%.2f net=%.2f THB",
+                    cfg.symbol, sell_price, qty, actual_buy_price, gross_profit, total_fee, net_profit,
+                )
+                self._notifications.append({
+                    "type": "fill",
+                    "side": "SELL",
+                    "symbol": cfg.symbol,
+                    "price": sell_price,
+                    "quantity": qty,
+                    "profit": round(net_profit, 2),
+                    "trade_id": oid,
+                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "message": f"{cfg.symbol} SELL filled @ {sell_price} (net {net_profit:.1f} THB, fee {total_fee:.1f})",
+                })
+                await self._webhook.send_fill_alert(
+                    symbol=cfg.symbol, side="SELL",
+                    price=sell_price, quantity=qty, profit=net_profit,
+                )
+                del state.active_sells[sell_price]
+                state.order_times.pop(oid, None)
+
+            # Update fill rate
+            if state.orders_placed > 0:
+                state.fill_rate = state.orders_filled / state.orders_placed
+
+            # Clean up order_times for orders no longer on exchange
+            stale_time_ids = [oid for oid in state.order_times if oid not in actual_order_ids]
+            for oid in stale_time_ids:
+                del state.order_times[oid]
 
             # Add new orders that exist on exchange but not in state
             for order in orders:
                 order_id = str(order.get("orderId", ""))
-                price = int(float(order.get("price", 0)))
+                price = float(order.get("price", 0))
                 side = order.get("side", "")
                 status = order.get("status", "")
 
@@ -752,26 +996,52 @@ class RealGridBot:
             logger.warning("Failed to sync open orders: %s", e)
 
     async def _cancel_stale_orders(self, cfg: RealGridConfig, state: RealGridState, current_price: float):
-        """Cancel orders that are too far from current price."""
+        """Cancel orders that are too far from current price OR too old."""
         threshold_pct = cfg.stale_threshold_pct / 100.0
         lower_bound = int(current_price * (1 - threshold_pct))
         upper_bound = int(current_price * (1 + threshold_pct))
+        now = time.time()
 
         # Cancel stale buy orders (too far below)
         stale_buy_prices = [p for p in state.active_buys if p < lower_bound]
         for price in stale_buy_prices:
             order_id = state.active_buys[price]
             await self._cancel_order(cfg.symbol, order_id)
+            state.order_times.pop(order_id, None)
             del state.active_buys[price]
-            logger.info("[RealGrid %s] Cancelled stale BUY @ %d", cfg.symbol, price)
+            logger.info("[RealGrid %s] Cancelled stale BUY @ %d (price drift)", cfg.symbol, price)
 
         # Cancel stale sell orders (too far above)
         stale_sell_prices = [p for p in state.active_sells if p > upper_bound]
         for price in stale_sell_prices:
             order_id = state.active_sells[price]
             await self._cancel_order(cfg.symbol, order_id)
+            state.order_times.pop(order_id, None)
             del state.active_sells[price]
-            logger.info("[RealGrid %s] Cancelled stale SELL @ %d", cfg.symbol, price)
+            logger.info("[RealGrid %s] Cancelled stale SELL @ %d (price drift)", cfg.symbol, price)
+
+        # Time-based stale: cancel orders older than MAX_ORDER_AGE_SECONDS
+        aged_buy_prices = []
+        for price, oid in state.active_buys.items():
+            placed_at = state.order_times.get(oid, now)
+            if now - placed_at > self.MAX_ORDER_AGE_SECONDS:
+                aged_buy_prices.append((price, oid))
+        for price, oid in aged_buy_prices:
+            await self._cancel_order(cfg.symbol, oid)
+            state.order_times.pop(oid, None)
+            del state.active_buys[price]
+            logger.info("[RealGrid %s] Cancelled aged BUY @ %d (time stale)", cfg.symbol, price)
+
+        aged_sell_prices = []
+        for price, oid in state.active_sells.items():
+            placed_at = state.order_times.get(oid, now)
+            if now - placed_at > self.MAX_ORDER_AGE_SECONDS:
+                aged_sell_prices.append((price, oid))
+        for price, oid in aged_sell_prices:
+            await self._cancel_order(cfg.symbol, oid)
+            state.order_times.pop(oid, None)
+            del state.active_sells[price]
+            logger.info("[RealGrid %s] Cancelled aged SELL @ %d (time stale)", cfg.symbol, price)
 
     async def _rebalance_grid(self, cfg: RealGridConfig, state: RealGridState):
         """Cancel all open orders and clear state for fresh grid placement.
@@ -812,173 +1082,21 @@ class RealGridBot:
             )
             if resp.status_code != 200:
                 logger.warning("Failed to cancel order %s: %s", order_id, resp.text)
+            else:
+                # Close the journal entry so cancelled orders don't sit
+                # in the journal as OPEN forever (they'd otherwise dominate
+                # open_entries and make the stats meaningless)
+                try:
+                    await self._journal.record_exit(order_id, 0.0, "CANCELLED", 0.0)
+                except Exception as e:
+                    logger.warning("Journal exit (cancel) failed: %s", e)
         except Exception as e:
             logger.warning("Cancel order failed: %s", e)
 
     async def _update_pnl(self, cfg: RealGridConfig, state: RealGridState):
-        """Calculate PnL from actual filled trades (not double-counting)."""
-        try:
-            resp = await self._http.get(
-                f"{BACKEND_API_BASE}/api/trade/history",
-                params={"limit": "50"},
-            )
-            if resp.status_code != 200:
-                return
-
-            trades = resp.json()
-            for t in trades:
-                trade_id = t.get("id", "")
-                symbol = t.get("symbol", "")
-                side = t.get("side", "")
-                status = t.get("status", "")
-
-                # Only count filled trades for our symbol with actual execution
-                if symbol != cfg.symbol or status != "FILLED":
-                    continue
-
-                # Must have actual execution (not just a LIMIT order recorded as FILLED)
-                executed_qty = t.get("executed_qty", 0) or 0
-                if executed_qty <= 0:
-                    continue
-
-                # Skip already counted trades
-                if trade_id in state.counted_trade_ids:
-                    continue
-
-                state.counted_trade_ids.add(trade_id)
-
-                # Track BUY fill: record actual buy price for PnL matching (Fix 1)
-                if side == "BUY":
-                    fill_price = t.get("price", 0)
-                    state.orders_filled += 1
-                    state.last_fill_timestamp = time.time()
-                    if state.orders_placed > 0:
-                        state.fill_rate = state.orders_filled / state.orders_placed
-                    # Store buy fill price keyed by trade_id (as int)
-                    try:
-                        state.buy_fill_prices[int(trade_id)] = fill_price
-                    except (ValueError, TypeError):
-                        pass
-                    self._notifications.append({
-                        "type": "fill",
-                        "side": "BUY",
-                        "symbol": cfg.symbol,
-                        "price": fill_price,
-                        "quantity": executed_qty,
-                        "profit": 0,
-                        "trade_id": trade_id,
-                        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                        "message": f"{cfg.symbol} BUY filled @ {int(fill_price)} qty={executed_qty:.6f}",
-                    })
-                    # Send webhook alert
-                    await self._webhook.send_fill_alert(
-                        symbol=cfg.symbol,
-                        side="BUY",
-                        price=fill_price,
-                        quantity=executed_qty,
-                    )
-
-                # SELL fill: compute actual PnL from matched buy price (Fix 1 + Fix 2)
-                if side == "SELL":
-                    price = t.get("price", 0)
-                    qty = t.get("quantity", 0)
-                    fee = t.get("fee", 0) or 0
-                    if price > 0 and qty > 0:
-                        # Match with oldest unmatched buy fill for actual PnL
-                        actual_buy_price = 0.0
-                        if state.buy_fill_prices:
-                            oldest_key = min(state.buy_fill_prices.keys())
-                            actual_buy_price = state.buy_fill_prices.pop(oldest_key)
-                            state.filled_buy_prices[int(actual_buy_price)] = price
-                        
-                        # Compute real profit = (sell - buy) * qty - fees
-                        if actual_buy_price > 0:
-                            gross_profit = (price - actual_buy_price) * qty
-                        else:
-                            # Fallback: estimate from last spacing
-                            spacing = state.last_price * (cfg.grid_spacing_pct / 100.0)
-                            gross_profit = spacing * qty
-                        
-                        # Fix 2: subtract round-trip fees
-                        net_profit = gross_profit - fee
-                        state.daily_pnl += net_profit
-                        state.daily_trades += 1
-                        
-                        # Track per-trade return for Sharpe/Sortino calculation
-                        order_notional = qty * price if price > 0 else 1
-                        trade_return_pct = (net_profit / order_notional) * 100
-                        state.trade_returns.append(trade_return_pct)
-                        if len(state.trade_returns) > 500:
-                            state.trade_returns = state.trade_returns[-500:]
-                        
-                        # Performance: track fills and profit velocity
-                        state.orders_filled += 1
-                        state.last_fill_timestamp = time.time()
-                        if state.orders_placed > 0:
-                            state.fill_rate = state.orders_filled / state.orders_placed
-                        # Calculate profit velocity (THB/day) over tracking period
-                        if state.performance_start_time > 0:
-                            elapsed_days = (time.time() - state.performance_start_time) / 86400
-                            if elapsed_days > 0.1:  # at least ~2.4h of data
-                                state.profit_velocity_thb_per_day = state.cumulative_pnl / elapsed_days
-                        
-                        # Auto-compounding: accumulate profit and scale order size
-                        if cfg.auto_compound_enabled:
-                            state.cumulative_pnl += net_profit
-                            old_size = state.current_order_size or cfg.order_size
-                            new_size = self._calculate_compound_order_size(cfg, state)
-                            if new_size != old_size:
-                                state.current_order_size = new_size
-                                logger.info(
-                                    "[RealGrid %s] Auto-compound: order_size %.6f -> %.6f "
-                                    "(cum_pnl=%.2f THB)",
-                                    cfg.symbol, old_size, new_size, state.cumulative_pnl,
-                                )
-
-                        # Record in risk manager
-                        self._risk.record_trade_result(cfg.symbol, net_profit, is_win=(net_profit > 0))
-
-                        # Fix 3: Update drawdown tracking in risk manager
-                        self._risk.update_drawdown(state.cumulative_pnl)
-
-                        # Record exit in journal
-                        exchange_oid = t.get("exchange_order_id", "")
-                        await self._journal.record_exit(
-                            exchange_order_id=exchange_oid or trade_id,
-                            exit_price=price,
-                            exit_reason="grid_fill",
-                            actual_pnl=net_profit,
-                            fee=fee,
-                        )
-
-                        logger.info(
-                            "[RealGrid %s] Filled SELL @ %d qty=%.6f buy@%d gross=%.2f fee=%.2f net=%.2f THB",
-                            cfg.symbol, int(price), qty, int(actual_buy_price), gross_profit, fee, net_profit,
-                        )
-
-                        # Push fill notification
-                        self._notifications.append({
-                            "type": "fill",
-                            "side": "SELL",
-                            "symbol": cfg.symbol,
-                            "price": price,
-                            "quantity": qty,
-                            "profit": round(net_profit, 2),
-                            "trade_id": trade_id,
-                            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                            "message": f"{cfg.symbol} SELL filled @ {int(price)} (net profit {net_profit:.0f} THB, fee {fee:.1f})",
-                        })
-                        # Send webhook alert
-                        await self._webhook.send_fill_alert(
-                            symbol=cfg.symbol,
-                            side="SELL",
-                            price=price,
-                            quantity=qty,
-                            profit=net_profit,
-                        )
-
-        except Exception as e:
-            logger.warning("Failed to update PnL: %s", e)
+        """PnL is now calculated in _sync_open_orders() when fills are detected.
+        This method is kept as a no-op to avoid double-counting."""
+        pass
 
     async def _fetch_price(self, symbol: str) -> float:
         """Fetch current price from Binance TH public API (no key needed)."""
@@ -1222,10 +1340,11 @@ class RealGridBot:
         base_levels = SYMBOL_DEFAULTS.get(cfg.symbol, {}).get("grid_levels", 2)
         
         if regime == "low_vol":
-            # Tighten: more levels, slightly tighter spacing
+            # Tighten: more levels, tighter spacing for more fills
             cfg.grid_levels = min(base_levels + 1, 5)
+            cfg.grid_spacing_pct = max(1.0, cfg.grid_spacing_pct * 0.67)  # reduce to ~1%
             cfg.min_spacing_pct = max(MIN_PROFITABLE_SPACING_PCT, cfg.min_spacing_pct * 0.8)
-            logger.debug("[%s] LOW_VOL regime: levels=%d, tighter spacing", cfg.symbol, cfg.grid_levels)
+            logger.info("[%s] LOW_VOL regime: levels=%d, spacing=%.1f%% (tighter for more fills)", cfg.symbol, cfg.grid_levels, cfg.grid_spacing_pct)
             
         elif regime == "high_vol":
             # Widen: fewer levels, wider spacing to avoid getting stuck
@@ -1240,8 +1359,263 @@ class RealGridBot:
             
         else:  # normal
             cfg.grid_levels = base_levels
-            # Reset min_spacing to symbol default
+            # Reset to symbol defaults
+            cfg.grid_spacing_pct = SYMBOL_DEFAULTS.get(cfg.symbol, {}).get("grid_spacing_pct", 1.5)
             cfg.min_spacing_pct = SYMBOL_DEFAULTS.get(cfg.symbol, {}).get("min_spacing_pct", 1.0)
+
+    # ── Trend Detection (Bear Market Protection) ─────────────────────────────
+
+    async def _detect_trend(self, cfg: RealGridConfig, state: RealGridState) -> str:
+        """Detect market trend direction using SMA crossover.
+        
+        Uses 10-period and 30-period SMA on hourly candles:
+        - bullish: SMA10 > SMA30 (uptrend)
+        - neutral: SMA10 ≈ SMA30 (sideways)
+        - bearish: SMA10 < SMA30 (downtrend)
+        
+        Returns:
+            Trend string: "bullish", "neutral", "bearish"
+        """
+        try:
+            resp = await self._http.get(
+                f"{BINANCE_PUBLIC_REST}/api/v1/klines",
+                params={
+                    "symbol": cfg.symbol,
+                    "interval": "1h",
+                    "limit": 35,  # Need 30+ candles for SMA30
+                },
+            )
+            if resp.status_code != 200 or len(resp.json()) < 30:
+                return "neutral"
+
+            klines = resp.json()
+            closes = [float(k[4]) for k in klines]  # Close prices
+            
+            # Calculate SMA10 and SMA30
+            sma10 = sum(closes[-10:]) / 10
+            sma30 = sum(closes[-30:]) / 30
+            
+            # Determine trend with hysteresis (avoid flip-flopping)
+            diff_pct = ((sma10 - sma30) / sma30) * 100
+            
+            if diff_pct > 0.5:  # SMA10 > SMA30 by 0.5%
+                trend = "bullish"
+            elif diff_pct < -0.5:  # SMA10 < SMA30 by 0.5%
+                trend = "bearish"
+            else:
+                trend = "neutral"
+            
+            return trend
+            
+        except Exception as e:
+            logger.debug("[%s] Trend detection failed: %s", cfg.symbol, e)
+            return "neutral"
+
+    async def _handle_bear_market(self, cfg: RealGridConfig, state: RealGridState, price: float) -> bool:
+        """Handle bear market conditions.
+        
+        When trend is bearish:
+        1. Cancel all open buy orders
+        2. Set trend_paused flag to prevent new buy orders
+        3. Log the action
+        
+        When trend recovers from bearish:
+        1. Clear trend_paused flag
+        2. Resume normal operation
+        
+        Returns:
+            True if trading should be skipped (bear market active), False otherwise
+        """
+        trend = await self._detect_trend(cfg, state)
+        state.trend = trend
+        
+        if trend == "bearish":
+            # Cancel all open buy orders
+            if state.active_buys:
+                logger.warning(
+                    "[RealGrid %s] BEAR MARKET detected: cancelling %d buy orders",
+                    cfg.symbol, len(state.active_buys)
+                )
+                for price_key, order_id in list(state.active_buys.items()):
+                    await self._cancel_order(cfg.symbol, order_id)
+                    del state.active_buys[price_key]
+            
+            # Prevent new buy orders
+            if not state.trend_paused:
+                logger.warning(
+                    "[RealGrid %s] BEAR MARKET: buy orders paused (SMA10 < SMA30)",
+                    cfg.symbol
+                )
+            state.trend_paused = True
+            return True  # Skip grid placement
+        
+        elif state.trend_paused and trend != "bearish":
+            # Trend recovered — resume trading
+            logger.info(
+                "[RealGrid %s] Trend recovered to '%s': resuming buy orders",
+                cfg.symbol, trend
+            )
+            state.trend_paused = False
+        
+        return False  # Continue normal operation
+
+    async def _verify_fill(self, symbol: str, order_id: str) -> str:
+        """Ask the exchange what actually happened to an order that vanished
+        from the open-orders list.
+
+        Returns:
+            "filled"    — exchange confirms FILLED; safe to book PnL
+            "cancelled" — CANCELED/EXPIRED/REJECTED (e.g. manual cancel in the
+                          Binance app); must NOT be booked as a fill
+            "open"      — still on the book (open-orders snapshot raced);
+                          skip processing this tick
+            "unknown"   — status query failed; caller decides the fallback
+        """
+        try:
+            resp = await self._http.get(
+                f"{BACKEND_API_BASE}/api/trade/order-status",
+                params={"symbol": symbol, "orderId": order_id},
+            )
+            if resp.status_code == 200:
+                status = (resp.json().get("status") or "").upper()
+                if status == "FILLED":
+                    return "filled"
+                if status in ("CANCELED", "CANCELLED", "EXPIRED", "REJECTED"):
+                    return "cancelled"
+                if status in ("NEW", "PARTIALLY_FILLED"):
+                    return "open"
+        except Exception as e:
+            logger.debug("[%s] order-status query failed for %s: %s", symbol, order_id, e)
+        return "unknown"
+
+    def _match_buy_for_sell(self, state: RealGridState, sell_price: float) -> float:
+        """Pick the open buy lot a filled SELL closes, and consume it.
+
+        Priority (replaces the old `min(prices)` rule, which grabbed the
+        LOWEST-priced buy regardless of pairing and overstated per-trade PnL):
+        1. Stop-loss exact match — we know exactly which buy a stop sell exits.
+        2. Grid pair — the highest buy strictly below the sell price
+           (a grid sell sits one spacing above the buy it exits).
+        3. FIFO fallback — the oldest open lot by fill time (covers stop-loss
+           sells whose tracking was lost and pre-upgrade legacy state).
+
+        Returns the matched buy price, or 0.0 when no open lot exists.
+        """
+        matched: float | None = None
+
+        for buy, placed_sell in state.stop_loss_orders.items():
+            if placed_sell == sell_price and buy in state.buy_fill_prices:
+                matched = buy
+                break
+
+        if matched is None and state.buy_fill_prices:
+            below = [p for p in state.buy_fill_prices if p < sell_price]
+            if below:
+                matched = max(below)
+            else:
+                matched = min(state.buy_fill_prices, key=state.buy_fill_prices.get)
+
+        if matched is None:
+            return 0.0
+
+        state.buy_fill_prices.pop(matched, None)
+        state.filled_buy_prices.pop(matched, None)
+        # Position closed — drop any stop-loss bookkeeping for this lot
+        state.stop_loss_triggered.pop(matched, None)
+        state.stop_loss_orders.pop(matched, None)
+        return matched
+
+    # Re-place an unfilled stop-loss sell when price falls this % below its
+    # limit price. Below this, the limit is still near price and can fill on
+    # a bounce; chasing too eagerly just locks in worse exits.
+    STOP_LOSS_CHASE_PCT = 1.0
+
+    async def _check_stop_loss(self, cfg: RealGridConfig, state: RealGridState, price: float):
+        """Check if any filled buy positions have dropped below stop-loss threshold.
+
+        When price drops > stop_loss_pct below a filled buy price, place a
+        LIMIT SELL at current price to cut the loss. Unlike the original
+        fire-and-forget version, this:
+        1. Only marks the stop as triggered if the exchange ACCEPTED the order
+           (placement can fail: rate limiter, insufficient balance, API error).
+           Failed placements retry automatically on the next tick.
+        2. Chases a falling market: if the placed stop sell is still unfilled
+           and price has dropped a further STOP_LOSS_CHASE_PCT below its limit
+           price, cancels and re-places it at the new current price.
+        """
+        if not state.filled_buy_prices or cfg.buy_only:
+            return
+
+        stop_threshold = cfg.stop_loss_pct / 100.0
+        tick = cfg.tick_size
+
+        for buy_price in list(state.filled_buy_prices.keys()):
+            if state.stop_loss_triggered.get(buy_price, False):
+                # Stop already placed — verify it's still working, chase if stale
+                placed_price = state.stop_loss_orders.get(buy_price)
+                if placed_price is None:
+                    continue  # legacy state from before chase tracking existed
+                if placed_price not in state.active_sells:
+                    # Order left the book (filled or cancelled) — fill detection
+                    # handles the accounting; stop tracking it here
+                    state.stop_loss_orders.pop(buy_price, None)
+                    continue
+                # Chase: price fell well below our resting limit — it won't fill
+                if price < placed_price * (1 - self.STOP_LOSS_CHASE_PCT / 100.0):
+                    old_oid = state.active_sells.get(placed_price)
+                    logger.warning(
+                        "[RealGrid %s] STOP-LOSS chase: limit@%d unfilled, price now %d — re-placing",
+                        cfg.symbol, int(placed_price), int(price),
+                    )
+                    if old_oid:
+                        await self._cancel_order(cfg.symbol, old_oid)
+                        state.order_times.pop(old_oid, None)
+                    state.active_sells.pop(placed_price, None)
+                    state.stop_loss_orders.pop(buy_price, None)
+                    # Reset so the placement path below runs fresh this tick
+                    state.stop_loss_triggered[buy_price] = False
+                else:
+                    continue
+
+            drop_pct = (buy_price - price) / buy_price
+            if drop_pct >= stop_threshold:
+                sell_price = int(round(price / tick) * tick)
+
+                logger.warning(
+                    "[RealGrid %s] STOP-LOSS triggered: bought@%d, now@%d (drop=%.1f%%, threshold=%.1f%%)",
+                    cfg.symbol, buy_price, sell_price, drop_pct * 100, cfg.stop_loss_pct
+                )
+
+                placed = await self._place_grid_order(cfg, state, "SELL", sell_price)
+                if not placed:
+                    # Do NOT mark triggered — the position is still unprotected.
+                    # Next tick retries. This was the original bug: a rate-limited
+                    # or rejected stop order was marked "handled" forever.
+                    logger.warning(
+                        "[RealGrid %s] STOP-LOSS placement FAILED for buy@%d — will retry next tick",
+                        cfg.symbol, buy_price,
+                    )
+                    continue
+
+                state.stop_loss_triggered[buy_price] = True
+                state.stop_loss_orders[buy_price] = float(sell_price)
+
+                self._notifications.append({
+                    "type": "stop_loss",
+                    "side": "SELL",
+                    "symbol": cfg.symbol,
+                    "price": sell_price,
+                    "quantity": state.current_order_size if state.current_order_size > 0 else cfg.order_size,
+                    "profit": 0,
+                    "trade_id": f"sl_{buy_price}",
+                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "message": f"{cfg.symbol} STOP-LOSS: bought@{buy_price} selling@{sell_price} (loss={drop_pct*100:.1f}%)",
+                })
+                await self._webhook.send_fill_alert(
+                    symbol=cfg.symbol, side="SELL",
+                    price=sell_price,
+                    quantity=state.current_order_size if state.current_order_size > 0 else cfg.order_size,
+                )
 
     # ── Capital Allocation Engine ─────────────────────────────────────────────
 
@@ -1458,9 +1832,11 @@ class RealGridBot:
     async def _can_place_buy(self, symbol: str, qty: float, price: int) -> bool:
         """Check if we have enough quote currency to place a BUY order.
         
-        For BUY orders, we need the quote currency (e.g., THB for ETHTHB/BTCTHB).
         Required = qty * price (notional value).
+        Also enforces MIN_FREE_RESERVE_THB to prevent capital starvation
+        for DCA/trend bots.
         """
+        MIN_FREE_RESERVE_THB = 30.0  # Safety buffer — total capital ~555 THB, can't afford 200 reserve
         # Extract quote asset from symbol (e.g., ETHTHB -> THB, BTCTHB -> THB)
         for quote in ["THB", "USDT", "BUSD", "BTC"]:
             if symbol.endswith(quote):
@@ -1472,34 +1848,58 @@ class RealGridBot:
         balances = await self._fetch_balances()
         available = balances.get(quote_asset, 0.0)
         required = qty * price  # Notional value needed
+        
+        logger.info(
+            "[RealGrid %s] Reserve check: available=%.2f %s, required=%.2f, reserve=%.0f",
+            symbol, available, quote_asset, required, MIN_FREE_RESERVE_THB,
+        )
+        
         if available < required:
-            logger.debug(
+            logger.warning(
                 "[RealGrid %s] Skipping BUY: need %.2f %s but have %.2f",
                 symbol, required, quote_asset, available,
             )
             return False
+        # Capital reserve check: keep MIN_FREE_RESERVE_THB free for other bots
+        if quote_asset == "THB" and (available - required) < MIN_FREE_RESERVE_THB:
+            logger.warning(
+                "[RealGrid %s] Skipping BUY: would leave only %.2f THB free (reserve: %.0f THB)",
+                symbol, available - required, MIN_FREE_RESERVE_THB,
+            )
+            return False
+        
+        logger.info(
+            "[RealGrid %s] Reserve check PASSED: will place BUY order",
+            symbol,
+        )
         return True
 
-    async def _place_grid_order(self, cfg: RealGridConfig, state: RealGridState, side: str, price: int):
-        """Place a real LIMIT order at a grid level via Go backend."""
+    async def _place_grid_order(self, cfg: RealGridConfig, state: RealGridState, side: str, price: float) -> bool:
+        """Place a real LIMIT order at a grid level via Go backend.
+
+        Returns True only when the exchange accepted the order — callers that
+        must know the order exists (e.g. stop-loss) depend on this.
+        """
         # ── Testnet safety: block ALL real order placement ──
         if not BINANCE_TH_MAINNET:
-            logger.debug(
-                "[RealGrid %s] Order SKIPPED (testnet mode): %s @ %d",
+            logger.info(
+                "[RealGrid %s] Order SKIPPED (testnet mode): %s @ %.2f",
                 cfg.symbol, side, price,
             )
-            return
+            return False
 
         # Use dynamic order size from auto-compounding if available, else base config size
         order_size = state.current_order_size if state.current_order_size > 0 else cfg.order_size
-        
+
         # ── Balance pre-checks ──
         if side == "SELL":
             if not await self._can_place_sell(cfg.symbol, order_size):
-                return
+                logger.info("[RealGrid %s] SELL skipped: insufficient base balance", cfg.symbol)
+                return False
         elif side == "BUY":
             if not await self._can_place_buy(cfg.symbol, order_size, price):
-                return
+                logger.info("[RealGrid %s] BUY skipped: insufficient quote balance", cfg.symbol)
+                return False
 
         # ── Risk check before order ──
         allowed, reason = self._risk.check_order_allowed(
@@ -1509,8 +1909,8 @@ class RealGridBot:
             price=price,
         )
         if not allowed:
-            logger.debug("[RealGrid %s] Order blocked by risk: %s", cfg.symbol, reason)
-            return
+            logger.info("[RealGrid %s] Order blocked by risk: %s", cfg.symbol, reason)
+            return False
 
         try:
             resp = await self._http.post(
@@ -1539,6 +1939,9 @@ class RealGridBot:
                 else:
                     state.active_sells[price] = order_id
 
+                # Track order placement time for time-based stale cancellation
+                state.order_times[order_id] = time.time()
+
                 # Record in risk manager
                 self._risk.record_order_placed(cfg.symbol)
 
@@ -1557,25 +1960,27 @@ class RealGridBot:
                 ))
 
                 logger.info(
-                    "[RealGrid %s] %s LIMIT @ %d placed (id=%s)",
+                    "[RealGrid %s] %s LIMIT @ %.2f placed (id=%s)",
                     cfg.symbol, side, price, order_id[:16] if order_id else "?",
                 )
+                return True
             elif resp.status_code == 400:
                 # Insufficient balance or exchange rejection — log once then skip silently
                 err = resp.json().get("error", "unknown")
                 if "insufficient" in err.lower():
                     logger.warning(
-                        "[RealGrid %s] %s @ %d rejected: insufficient balance. "
+                        "[RealGrid %s] %s @ %.2f rejected: insufficient balance. "
                         "Will retry next tick when balance may have changed.",
                         cfg.symbol, side, price,
                     )
                 else:
-                    logger.debug("Order rejected @ %d: %s", price, err)
+                    logger.info("Order rejected @ %.2f: %s", price, err)
             else:
                 err = resp.json().get("error", "unknown")
-                logger.debug("Order rejected @ %d (HTTP %d): %s", price, resp.status_code, err)
+                logger.info("Order rejected @ %.2f (HTTP %d): %s", price, resp.status_code, err)
         except Exception as e:
-            logger.debug("Failed to place %s @ %d: %s", side, price, e)
+            logger.info("Failed to place %s @ %.2f: %s", side, price, e)
+        return False
 
     def get_status(self) -> Dict:
         """Get current real grid bot status (includes risk metrics and auto-compound info)."""

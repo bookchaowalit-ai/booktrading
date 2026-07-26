@@ -33,6 +33,7 @@ func (h *TradeHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/trade/status", h.TradeStatus)
 	mux.HandleFunc("/api/trade/history", h.TradeHistory)
 	mux.HandleFunc("/api/trade/open-orders", h.GetOpenOrders)
+	mux.HandleFunc("/api/trade/order-status", h.GetOrderStatus)
 	mux.HandleFunc("/api/trade/cancel-order", h.CancelOrder)
 	// Journal endpoints
 	mux.HandleFunc("/api/journal/entry", h.JournalEntry)
@@ -263,11 +264,18 @@ func (h *TradeHandler) persistTrade(ctx context.Context, req RealOrderRequest, r
 
 	tradeID := fmt.Sprintf("real_%d", time.Now().UnixNano())
 
-	// Try to extract exchange order ID from result
+	// Extract exchange order ID from result. The concrete type varies by
+	// provider (*exchange.Order, *model.Order, ...), so round-trip through
+	// JSON instead of a type assertion — a direct assertion to
+	// map[string]interface{} always fails here since PlaceOrder returns a
+	// typed struct pointer, never a map.
 	var exchangeOrderID *string
-	if m, ok := result.(map[string]interface{}); ok {
-		if oid, exists := m["orderId"]; exists {
-			s := fmt.Sprintf("%v", oid)
+	if raw, err := json.Marshal(result); err == nil {
+		var parsed struct {
+			OrderID json.Number `json:"orderId"`
+		}
+		if json.Unmarshal(raw, &parsed) == nil && parsed.OrderID != "" {
+			s := parsed.OrderID.String()
 			exchangeOrderID = &s
 		}
 	}
@@ -283,12 +291,24 @@ func (h *TradeHandler) persistTrade(ctx context.Context, req RealOrderRequest, r
 		status = "NEW"
 	}
 
+	// Look up the real testnet flag for the active provider instead of
+	// hardcoding — this table must reflect whether the order actually went
+	// to mainnet or testnet.
+	testnet := true
+	provider := string(h.manager.GetCurrentProvider())
+	for _, ex := range h.manager.GetSupportedExchanges() {
+		if ex.Provider == provider {
+			testnet = ex.Testnet
+			break
+		}
+	}
+
 	_, err := h.db.Exec(pctx,
 		`INSERT INTO real_trades (id, exchange_order_id, symbol, side, type, quantity, price, status, exchange, testnet, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
 		 ON CONFLICT (id) DO NOTHING`,
 		tradeID, exchangeOrderID, req.Symbol, req.Side, orderType,
-		req.Quantity, req.Price, status, string(h.manager.GetCurrentProvider()), true,
+		req.Quantity, req.Price, status, provider, testnet,
 	)
 	if err != nil {
 		logger.Error("Failed to persist real trade", "id", tradeID, "error", err)
@@ -324,6 +344,38 @@ func (h *TradeHandler) GetOpenOrders(w http.ResponseWriter, r *http.Request) {
 		"symbol": symbol,
 		"orders": orders,
 	})
+}
+
+// GetOrderStatus handles GET /api/trade/order-status?symbol=BTCTHB&orderId=123
+// Lets the strategy verify what happened to an order that vanished from the
+// open-orders list (FILLED vs CANCELED/EXPIRED) before booking PnL for it.
+func (h *TradeHandler) GetOrderStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	symbol := r.URL.Query().Get("symbol")
+	orderIDStr := r.URL.Query().Get("orderId")
+	if symbol == "" || orderIDStr == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "symbol and orderId are required"})
+		return
+	}
+
+	var orderID int64
+	if _, err := fmt.Sscanf(orderIDStr, "%d", &orderID); err != nil || orderID <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "orderId must be a positive integer"})
+		return
+	}
+
+	order, err := h.manager.GetOrderStatus(r.Context(), symbol, orderID)
+	if err != nil {
+		logger.Error("Failed to get order status", "error", err, "symbol", symbol, "orderId", orderID)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, order)
 }
 
 // CancelOrder handles POST /api/trade/cancel-order

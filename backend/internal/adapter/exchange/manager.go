@@ -497,6 +497,23 @@ func (m *ExchangeManager) CancelOrder(ctx context.Context, symbol string, orderI
 	}
 }
 
+// GetOrderStatus queries a single order's current status on the current exchange
+func (m *ExchangeManager) GetOrderStatus(ctx context.Context, symbol string, orderID int64) (*Order, error) {
+	m.mu.RLock()
+	provider := m.currentProvider
+	m.mu.RUnlock()
+
+	switch provider {
+	case config.ExchangeBinanceTH:
+		if m.binanceTHAdapter == nil {
+			return nil, fmt.Errorf("Binance TH adapter not initialized")
+		}
+		return m.binanceTHAdapter.GetOrderStatus(ctx, symbol, orderID)
+	default:
+		return nil, fmt.Errorf("order status not supported for exchange: %s", provider)
+	}
+}
+
 // placeBitkubOrder places an order on Bitkub
 func (m *ExchangeManager) placeBitkubOrder(symbol string, side string, quantity float64, price float64) (interface{}, error) {
 	if m.bitkubClient == nil {

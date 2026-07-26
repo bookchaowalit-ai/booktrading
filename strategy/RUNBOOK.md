@@ -54,7 +54,7 @@ There are two separate risk systems. Do not mix them when making readiness decis
 ## Daily Monitor Command
 
 ```bash
-cd domains/book-dev/book-products/booktrading
+cd domains/product/engineering/book-dev/github/bookchaowalit-ai/book-products/booktrading
 docker compose exec strategy python scripts/monitor.py
 ```
 

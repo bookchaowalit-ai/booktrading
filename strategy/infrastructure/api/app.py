@@ -229,21 +229,45 @@ async def lifespan(app: FastAPI):
     app.state.real_grid_bot_task = asyncio.create_task(real_grid_bot.start())
     logger.info("Real grid trading bot started (BTCTHB — real orders)")
 
-    # Start Polymarket Paper Trading Bot
-    from app.polymarket.paper_bot import get_poly_paper_bot
-    poly_paper_bot = get_poly_paper_bot()
-    if redis_adapter and redis_adapter.redis:
-        poly_paper_bot.set_redis(redis_adapter.redis)
-    await poly_paper_bot.start()
-    logger.info("Polymarket paper trading bot started (prediction market simulation)")
+    # DCA Accumulation Bot disabled — conflicts with grid bot for capital
+    # from app.dca_bot import get_dca_bot
+    # dca_bot = get_dca_bot()
+    # if redis_adapter and redis_adapter.redis:
+    #     dca_bot.set_redis(redis_adapter.redis)
+    # app.state.dca_bot_task = asyncio.create_task(dca_bot.start())
+    # logger.info("DCA accumulation bot started (buys dips on BTCTHB, ETHTHB)")
 
-    # Start Arbitrage Paper Trading Bot
-    from app.arbitrage_paper_bot import get_arb_paper_bot
-    arb_paper_bot = get_arb_paper_bot()
-    if redis_adapter and redis_adapter.redis:
-        arb_paper_bot._redis = redis_adapter.redis
-    await arb_paper_bot.start()
-    logger.info("Arbitrage paper trading bot started (cross-exchange simulation)")
+    # Trend Following Bot DISABLED — competes with grid bot for limited THB capital
+    # from app.trend_bot import get_trend_bot
+    # trend_bot = get_trend_bot()
+    # if redis_adapter and redis_adapter.redis:
+    #     trend_bot.set_redis(redis_adapter.redis)
+    # app.state.trend_bot_task = asyncio.create_task(trend_bot.start())
+    # logger.info("Trend following bot started (EMA crossover on BTCTHB, ETHTHB, BNBTHB)")
+
+    # Futures Short Bot DISABLED — uses separate Binance Global account, not THB
+    # from app.futures_bot import get_futures_bot
+    # futures_bot = get_futures_bot()
+    # if redis_adapter and redis_adapter.redis:
+    #     futures_bot.set_redis(redis_adapter.redis)
+    # app.state.futures_bot_task = asyncio.create_task(futures_bot.start())
+    # logger.info("Futures short bot started (BTCUSDT, ETHUSDT — bear market strategy)")
+
+    # Polymarket Paper Trading Bot DISABLED — causes confusion with real trading
+    # from app.polymarket.paper_bot import get_poly_paper_bot
+    # poly_paper_bot = get_poly_paper_bot()
+    # if redis_adapter and redis_adapter.redis:
+    #     poly_paper_bot.set_redis(redis_adapter.redis)
+    # await poly_paper_bot.start()
+    # logger.info("Polymarket paper trading bot started (prediction market simulation)")
+
+    # Arbitrage Paper Trading Bot DISABLED — causes confusion with real trading
+    # from app.arbitrage_paper_bot import get_arb_paper_bot
+    # arb_paper_bot = get_arb_paper_bot()
+    # if redis_adapter and redis_adapter.redis:
+    #     arb_paper_bot._redis = redis_adapter.redis
+    # await arb_paper_bot.start()
+    # logger.info("Arbitrage paper trading bot started (cross-exchange simulation)")
 
     # Start webhook notifier for Telegram/Discord alerts
     from app.webhook_notifier import get_webhook_notifier
@@ -1993,6 +2017,33 @@ def register_routes(app: FastAPI):
         bot = get_arb_paper_bot()
         bot.reset()
         return {"status": "reset", "message": "Arbitrage paper bot state reset"}
+
+    # ── DCA Bot Endpoints ──
+
+    @app.get("/api/dca/status")
+    async def dca_status():
+        """Get DCA accumulation bot status."""
+        from app.dca_bot import get_dca_bot
+        bot = get_dca_bot()
+        return bot.get_status()
+
+    # ── Trend Following Bot Endpoints ──
+
+    @app.get("/api/trend/status")
+    async def trend_status():
+        """Get trend following bot status."""
+        from app.trend_bot import get_trend_bot
+        bot = get_trend_bot()
+        return bot.get_status()
+
+    # ── Futures Bot Endpoints ──
+
+    @app.get("/api/futures/status")
+    async def futures_status():
+        """Get futures bot status (bear market shorting)."""
+        from app.futures_bot import get_futures_bot
+        bot = get_futures_bot()
+        return bot.get_status()
 
     @app.get("/api/polymarket/summary")
     async def polymarket_summary(limit: int = 50):

@@ -22,7 +22,53 @@ Notes: [what changed, why, what to watch]
 
 ## Log
 
-### 2026-06-29 — Real Trading Enabled + Kill Switch Reset
+### 2026-07-23 — Bookkeeping Bugs Fixed: real_trades Now Trustworthy + Redis Restart-Policy Fixed
+
+**Context:** Investigated "no profit after weeks of live trading." Real PnL was fine
+(`trade_journal`: 927 closed trades, net +51 THB after fees as of 2026-07-21 — small
+but not the concern) but the `real_trades` audit table and the Redis-backed pub/sub
+were both broken, making the system's own bookkeeping unreliable.
+
+**Bugs fixed (backend/internal/adapter/http/trade_handler.go, `persistTrade`):**
+1. `testnet` was hardcoded to `true` on every insert regardless of the actual
+   exchange config — every one of ~1900 historical rows read `testnet=true` even
+   though `/api/trade/status` correctly reported `testnet=false` (live Binance TH
+   mainnet). Fixed to look up the real flag via `GetSupportedExchanges()`.
+2. `exchange_order_id` was extracted via `result.(map[string]interface{})`, but
+   `PlaceOrder` returns a typed `*Order` struct — the assertion always failed
+   silently, so `exchange_order_id` was `NULL` on 100% of historical rows. Fixed
+   by round-tripping through JSON to read the `orderId` field regardless of
+   provider's concrete return type.
+3. **Root cause of Redis being down:** the `redis` service in `docker-compose.yml`
+   had no `restart:` policy (every other service has `restart: unless-stopped`).
+   After a host reboot (~2026-07-22 10:11 local), Docker restarted everything
+   except Redis, so the backend spent ~24h+ spamming
+   `Failed to publish market data: dial tcp: lookup redis ... no such host`.
+   Added `restart: unless-stopped` to the redis service and brought it back up
+   (data intact — AOF persisted 22 keys).
+
+**Verification (post-fix, 2026-07-21 16:43 UTC → 2026-07-23 08:42 UTC):**
+- 147 real trades placed and persisted; **100% now carry a real `exchange_order_id`
+  and `testnet=false`**; every `real_trades` row has exactly one matching
+  `trade_journal` row (LEFT JOIN on `exchange_order_id`, zero unmatched); zero
+  duplicate `exchange_order_id` in either table.
+- Two orders (`363469458` ETHTHB SELL 0.002 @ ฿65,854; `205875639` SOLTHB SELL
+  0.05 @ ฿2,640.39) cross-checked directly against Binance TH's live
+  `GET /api/v1/order` — symbol/side/qty/price match exactly.
+- Backend logs since the Redis fix (08:41 UTC onward): zero "Failed to publish"
+  / persistence errors, zero non-201 responses on `/api/trade/order` or
+  `/api/journal/entry`.
+- `cd backend && go vet ./... && go test ./...` — clean, all pass.
+- `cd frontend && npm test` (36/36 pass), `npx tsc --noEmit` (clean). No
+  `docs:check` script exists in this repo (checked `frontend/package.json` and
+  CI workflow — not part of the pipeline).
+- `strategy` service `pytest`: 10 pre-existing failures (Polymarket paper-bot
+  kill-switch async bug, grid-safety default-config drift, stale
+  `DEFAULT_MAX_POSITIONS` assertion) — unrelated to this change (no Python was
+  touched); flagged for separate follow-up.
+
+**Decision:** No change to trading behavior — this was a bookkeeping/observability
+fix only. `real_trades` can now be trusted for future evidence-gate decisions.
 
 - Active positions: 14 (Polymarket paper)
 - Resolved trades: 6
