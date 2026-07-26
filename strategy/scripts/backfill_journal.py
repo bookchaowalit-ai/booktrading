@@ -6,19 +6,22 @@ Runs inside the strategy container via: docker compose exec strategy python3 scr
 """
 
 import json
+import os
 import sys
 import time
 from datetime import datetime, timezone
 
 import httpx
 
-BACKEND_API = "http://backend:8080"
-ADMIN_EMAIL = "admin@localhost"
-ADMIN_PASSWORD = "admin123"
+BACKEND_API = os.getenv("BACKEND_API", "http://backend:8080")
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 
 
 def login():
     """Login to backend and return session token."""
+    if not ADMIN_EMAIL or not ADMIN_PASSWORD:
+        raise RuntimeError("ADMIN_EMAIL and ADMIN_PASSWORD must be set")
     resp = httpx.post(
         f"{BACKEND_API}/api/auth/login",
         json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
