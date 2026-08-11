@@ -66,6 +66,20 @@ Expected output includes:
 - Per-signal PnL breakdown
 - Decision recommendation
 
+## Financial Engineering Evidence Run
+
+The Spot/Futures comparison is read-only and does not use trading credentials:
+
+```bash
+cd domains/product/engineering/book-dev/github/bookchaowalit-ai/book-products/booktrading
+docker compose run --rm strategy python /app/scripts/futures_backtest.py --symbol BTCUSDT --interval 1h --days 90
+```
+
+Review the **out-of-sample** segment first. Treat `futures_1x` as the short-access
+baseline, then compare 2x/3x/5x for incremental return versus drawdown, fees,
+funding, and liquidation count. A positive backtest is evidence for further
+paper testing only; it is not approval for mainnet execution.
+
 ---
 
 ## Decision Tree
