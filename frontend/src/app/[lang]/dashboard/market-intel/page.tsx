@@ -625,7 +625,7 @@ function AirdropTab({ opportunities }: { opportunities: MarketOpportunity[] }) {
 
         {trackedTasks.length === 0 && !showAddForm && (
           <p className="text-center text-gray-500 dark:text-gray-400 py-4">
-            No tracked tasks yet. Click "Add Task" to start tracking an airdrop.
+            No tracked tasks yet. Click &quot;Add Task&quot; to start tracking an airdrop.
           </p>
         )}
       </div>

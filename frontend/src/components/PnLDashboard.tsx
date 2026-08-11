@@ -112,12 +112,12 @@ export default function PnLDashboard({ initialData }: PnLDashboardProps) {
         </div>
       </Card>
 
-      {/* Today's P&L */}
+      {/* Today&apos;s P&L */}
       <Card variant="elevated" className="p-4">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
             <TrendingUp className="w-4 h-4 text-gray-500" />
-            <span className="text-xs text-gray-600 dark:text-gray-400">Today's P&L</span>
+            <span className="text-xs text-gray-600 dark:text-gray-400">Today&apos;s P&L</span>
           </div>
           <Badge variant={pnlData.todayPnL >= 0 ? 'success' : 'error'} size="sm">
             {formatPercent(pnlData.todayPnLPercent)}

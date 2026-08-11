@@ -245,13 +245,19 @@ async def lifespan(app: FastAPI):
     # app.state.trend_bot_task = asyncio.create_task(trend_bot.start())
     # logger.info("Trend following bot started (EMA crossover on BTCTHB, ETHTHB, BNBTHB)")
 
-    # Futures Short Bot DISABLED — uses separate Binance Global account, not THB
-    # from app.futures_bot import get_futures_bot
-    # futures_bot = get_futures_bot()
-    # if redis_adapter and redis_adapter.redis:
-    #     futures_bot.set_redis(redis_adapter.redis)
-    # app.state.futures_bot_task = asyncio.create_task(futures_bot.start())
-    # logger.info("Futures short bot started (BTCUSDT, ETHUSDT — bear market strategy)")
+    # USDⓈ-M leveraged trading is opt-in and restricted to paper/testnet by the bot.
+    if os.getenv("FUTURES_ENABLED", "false").lower() == "true":
+        from app.futures_bot import get_futures_bot
+
+        futures_bot = get_futures_bot()
+        futures_bot.validate_startup()
+        if redis_adapter and redis_adapter.redis:
+            futures_bot.set_redis(redis_adapter.redis)
+        app.state.futures_bot_task = asyncio.create_task(futures_bot.start())
+        logger.warning("USDⓈ-M futures bot enabled in %s mode", futures_bot.execution_mode.upper())
+    else:
+        app.state.futures_bot_task = None
+        logger.info("USDⓈ-M futures bot disabled (set FUTURES_ENABLED=true to opt in)")
 
     # Polymarket Paper Trading Bot DISABLED — causes confusion with real trading
     # from app.polymarket.paper_bot import get_poly_paper_bot
@@ -370,6 +376,17 @@ async def lifespan(app: FastAPI):
             await app.state.real_grid_bot_task
         except asyncio.CancelledError:
             pass
+
+    if hasattr(app.state, "futures_bot_task") and app.state.futures_bot_task:
+        from app.futures_bot import get_futures_bot
+
+        futures_bot = get_futures_bot()
+        app.state.futures_bot_task.cancel()
+        try:
+            await app.state.futures_bot_task
+        except asyncio.CancelledError:
+            pass
+        await futures_bot.stop()
 
     if hasattr(app.state, "market_intel_task") and app.state.market_intel_task:
         app.state.market_intel_task.cancel()
@@ -2039,11 +2056,21 @@ def register_routes(app: FastAPI):
     # ── Futures Bot Endpoints ──
 
     @app.get("/api/futures/status")
-    async def futures_status():
-        """Get futures bot status (bear market shorting)."""
+    @auth_required
+    async def futures_status(request: Request):
+        """Get paper/testnet futures positions, margin, and safety status."""
         from app.futures_bot import get_futures_bot
         bot = get_futures_bot()
         return bot.get_status()
+
+    @app.get("/api/futures/preflight")
+    @auth_required
+    async def futures_preflight(request: Request):
+        """Run read-only USDⓈ-M paper/testnet readiness checks."""
+        from app.futures_bot import get_futures_bot
+
+        bot = get_futures_bot()
+        return await bot.preflight()
 
     @app.get("/api/polymarket/summary")
     async def polymarket_summary(limit: int = 50):

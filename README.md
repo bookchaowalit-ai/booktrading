@@ -48,6 +48,7 @@ This outputs a structured decision block: current state, reason, and what trigge
 ### 🤖 Trading Bot
 - **Grid Trading** - Automated buy/sell within price ranges (5 pairs: BTC, ETH, SOL, XRP, BNB)
 - **Exchange Integrations** - Binance TH, Bitkub, Binance Global research and grid infrastructure
+- **Leveraged Market MVP** - Binance USDⓈ-M perpetual futures in paper or Futures Testnet mode only
 - **Paper Trading Fallback** - Safe testing without real money ($10K paper balance)
 - **Paper Grid PnL** - Real-time profit & loss tracking for paper positions
 - **Activity Feed** - Real-time bot activity tracking
@@ -65,7 +66,7 @@ This outputs a structured decision block: current state, reason, and what trigge
 
 ### 💼 Multi-Exchange
 - **Binance Thailand** - Full trading support
-- **Binance Global** - Testnet and live trading
+- **Binance Global** - Research/spot infrastructure plus USDⓈ-M Futures paper/testnet execution
 - **Bitkub** - Thai exchange support
 - **Balance Aggregation** - View all balances in one place
 
@@ -102,6 +103,69 @@ This outputs a structured decision block: current state, reason, and what trigge
 - **Thai (TH)** - Full Thai language support
 - **English (EN)** - Complete English translations
 - **200+ Translation Keys** - Comprehensive coverage
+
+---
+
+## ⚠️ Leveraged Market Scope
+
+The leveraged module is deliberately narrow: Binance USDⓈ-M perpetual futures only. It does **not** yet cover
+COIN-M futures, margin borrowing, options, leveraged tokens, CFDs, or every exchange. Futures mainnet execution is
+refused by the engine even if production credentials are present.
+
+Safe opt-in flow:
+
+```bash
+# Simulation with no exchange credentials
+FUTURES_ENABLED=true
+FUTURES_EXECUTION_MODE=paper
+
+# Or Binance Futures Demo/Testnet (requires demo credentials)
+FUTURES_ENABLED=true
+FUTURES_EXECUTION_MODE=testnet
+BINANCE_FUTURES_API_KEY=...
+BINANCE_FUTURES_API_SECRET=...
+```
+
+The engine uses isolated margin, One-way Mode, per-position and account-wide notional caps, a 5x hard leverage
+ceiling, risk-based sizing, exchange filters, exchange-side
+stop-loss/take-profit orders, position reconciliation, and an automatic halt on ambiguous order state or a breached
+liquidation buffer. These controls reduce operational risk; they do not make leverage more profitable or guarantee
+returns.
+
+Run the read-only preflight before enabling the background bot:
+
+```bash
+# Public Futures Demo connectivity + config/risk checks; no order placement
+docker compose run --rm strategy python /app/scripts/futures_preflight.py
+
+# One observe-only paper cycle; still no order placement
+docker compose run --rm strategy python /app/scripts/futures_preflight.py --paper-cycle
+
+# Explicitly allow an ephemeral simulated paper entry
+docker compose run --rm strategy python /app/scripts/futures_preflight.py --paper-cycle --simulate-entry
+```
+
+The authenticated `GET /api/futures/preflight` endpoint exposes the same read-only readiness report. A successful
+preflight is evidence that configuration and APIs are reachable, not evidence that the strategy is profitable.
+
+### Financial engineering backtest
+
+The repository now includes a deterministic, read-only comparison of Spot against USDⓈ-M Futures at 1x, 2x, 3x,
+and 5x. It uses the same EMA/ADX close-of-bar signal for every variant, executes on the next candle open, and
+accounts for configurable fees, slippage, funding payments, an isolated-margin liquidation approximation, turnover,
+drawdown, Sharpe, Sortino, Calmar, win rate, and profit factor. The report includes full, in-sample, and holdout
+out-of-sample segments; it does not optimize parameters or claim that leverage is profitable.
+
+Run it from the strategy directory (public market data only; no credentials or orders):
+
+```bash
+python3 scripts/futures_backtest.py --symbol BTCUSDT --interval 1h --days 90
+python3 scripts/futures_backtest.py --days 90 --json --output /tmp/bookfinance-backtest.json
+```
+
+The default assumptions are 5 bps fee per side, 2 bps adverse slippage per side, and 20% margin allocation. These
+are explicit inputs, not a claim about a Binance account's fee tier. Spot is modeled as long/cash while Futures is
+long/short; therefore Futures 1x isolates the effect of short access before comparing the extra leverage.
 
 ---
 

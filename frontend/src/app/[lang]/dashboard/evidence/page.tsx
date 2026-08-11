@@ -243,28 +243,14 @@ export default function EvidencePage() {
     setIsRefreshing(false);
   };
 
-  if (isLoading) {
-    return (
-      <div className="mx-auto max-w-7xl p-6 space-y-4">
-        <div className="space-y-2">
-          <div className="h-7 w-48 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
-          <div className="h-4 w-72 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
-        </div>
-        {[1, 2, 3, 4].map((i) => (
-          <div key={i} className="p-4 space-y-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
-            <div className="h-4 w-48 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
-            <div className="h-3 w-64 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
-          </div>
-        ))}
-      </div>
-    );
-  }
-
+  // `gates` and `enrichedGates` must be computed before the `isLoading` early
+  // return below — a Hook (useMemo) can never follow a conditional return.
+  // This was previously called after the early return, which meant this
+  // component called a different number of hooks on the loading render vs.
+  // the loaded render — a real rules-of-hooks violation that risks a
+  // "Rendered more hooks than during the previous render" crash on the
+  // loading → loaded transition. See PRODUCT.md.
   const gates = data?.gates || [];
-  const entries = data?.evidence_entries || [];
-  const paperTrial = data?.paper_trial;
-  const latestChange = data?.latest_change;
-  const filesFound = data?.files_found || { evidence_log: false, readiness_checklist: false, paper_grid_json: false };
 
   // ── Gate Automation: override backend gate statuses with live metric checks ──
   const enrichedGates = useMemo(() => {
@@ -375,6 +361,27 @@ export default function EvidencePage() {
     });
   }, [gates, paperStatus, paperPerf, arbStatus, journalEntries, signalStats]);
 
+  if (isLoading) {
+    return (
+      <div className="mx-auto max-w-7xl p-6 space-y-4">
+        <div className="space-y-2">
+          <div className="h-7 w-48 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+          <div className="h-4 w-72 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+        </div>
+        {[1, 2, 3, 4].map((i) => (
+          <div key={i} className="p-4 space-y-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+            <div className="h-4 w-48 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+            <div className="h-3 w-64 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  const entries = data?.evidence_entries || [];
+  const paperTrial = data?.paper_trial;
+  const latestChange = data?.latest_change;
+  const filesFound = data?.files_found || { evidence_log: false, readiness_checklist: false, paper_grid_json: false };
   const readyCount = enrichedGates.filter(g => g.status === 'ready').length;
 
   return (

@@ -224,7 +224,7 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess }: LoginMod
                     </>
                   ) : (
                     <>
-                      Don't have an account?{' '}
+                      Don&apos;t have an account?{' '}
                       <button
                         onClick={() => {
                           setIsRegister(true);
