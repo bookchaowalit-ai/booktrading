@@ -173,3 +173,4 @@ build/
 *.pid
 *.seed
 *.pid.lock
+strategy/.venv/
