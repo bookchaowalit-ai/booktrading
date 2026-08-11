@@ -158,3 +158,14 @@ fix only. `real_trades` can now be trusted for future evidence-gate decisions.
 Next: longer trial (1 trading day) to capture fills during higher-volatility window.
 
 ---
+
+### 2026-08-11 — Local capital-protection bootstrap (Solo Empire operator)
+
+- Active positions: 14 (documented reconstruction)
+- Resolved trades: 6
+- Kill switch: ACTIVE (paper bot max drawdown 15.84%)
+- Decision: **WAIT**
+- Bankroll: $84.54 / peak $100.45
+- Infra: local redis+postgres started; gitignored `.env` with paper-only defaults; no exchange keys
+- Notes: Seeded Redis key `poly_paper:state` for local observability. No kill-switch reset, no dry-run flip to false, no live trading. Research walk-forward + finance ledger bootstrap run from Solo Empire host.
+

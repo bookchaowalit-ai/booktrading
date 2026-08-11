@@ -174,3 +174,4 @@ build/
 *.seed
 *.pid.lock
 strategy/.venv/
+reports/
