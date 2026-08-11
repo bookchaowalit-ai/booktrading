@@ -12,6 +12,7 @@ require (
 	github.com/redis/go-redis/v9 v9.3.0
 	golang.org/x/crypto v0.17.0
 	google.golang.org/grpc v1.60.1
+	google.golang.org/protobuf v1.32.0
 )
 
 require (
@@ -57,6 +58,5 @@ require (
 	golang.org/x/text v0.14.0 // indirect
 	golang.org/x/tools v0.13.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20231212172506-995d672761c0 // indirect
-	google.golang.org/protobuf v1.32.0 // indirect
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
