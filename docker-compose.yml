@@ -75,7 +75,7 @@ services:
       - DATABASE_SSLMODE=disable
       # Security
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY is required (32+ chars)}
-      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3001}
       # Admin account (created on first startup)
       - FIRST_ADMIN_EMAIL=${FIRST_ADMIN_EMAIL:-}
       - FIRST_ADMIN_PASSWORD=${FIRST_ADMIN_PASSWORD:-}
@@ -129,13 +129,16 @@ services:
       - API_PORT=8000
       - AUTH_TOKEN=${AUTH_TOKEN:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - ALLOWED_ORIGINS=${FRONTEND_URL:-http://localhost:3000}
+      - ALLOWED_ORIGINS=${FRONTEND_URL:-http://localhost:3001}
       - RSI_PERIOD=14
       - EMA_PERIOD=14
       - RSI_OVERSOLD=30.0
       - RSI_OVERBOUGHT=70.0
       - MIN_SIGNAL_STRENGTH=0.2
       - SYMBOLS=BTCUSDT,ETHUSDT
+      # Keep signal/gRPC execution disabled unless explicitly reviewed and enabled.
+      # Real spot execution is handled by the guarded Real Grid bot below.
+      - SIGNAL_ORDER_EXECUTION_ENABLED=${SIGNAL_ORDER_EXECUTION_ENABLED:-false}
       - REAL_SYMBOLS=${REAL_SYMBOLS:-BTCTHB,ETHTHB,BNBTHB,SOLTHB,XRPTHB}
       - DISABLE_PAPER_BOT=${DISABLE_PAPER_BOT:-true}
       # Leveraged USDⓈ-M Futures — opt-in paper/testnet only; mainnet is refused in code
@@ -213,7 +216,7 @@ services:
         - STRATEGY_URL=${STRATEGY_URL:-http://strategy:8000}
     container_name: trading-bot-frontend
     ports:
-      - "3000:3000"
+      - "${FRONTEND_PORT:-3001}:3000"
     environment:
       - BACKEND_URL=${BACKEND_URL:-http://backend:8080}
       - STRATEGY_URL=${STRATEGY_URL:-http://strategy:8000}

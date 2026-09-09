@@ -54,7 +54,7 @@ services:
       - DATABASE_NAME=trading_bot
       - DATABASE_SSLMODE=disable
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-change_me_in_production_32chars}
-      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3001}
       - EXCHANGE_PROVIDER=${EXCHANGE_PROVIDER:-binance_th}
       - BINANCE_TH_API_KEY=${BINANCE_TH_API_KEY:-}
       - BINANCE_TH_API_SECRET=${BINANCE_TH_API_SECRET:-}
@@ -107,7 +107,7 @@ services:
       target: deps
     container_name: trading-bot-frontend-dev
     ports:
-      - "3000:3000"
+      - "${FRONTEND_PORT:-3001}:3000"
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8080
       - NEXT_PUBLIC_STRATEGY_URL=http://localhost:8000

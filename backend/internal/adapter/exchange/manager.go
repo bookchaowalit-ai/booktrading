@@ -348,7 +348,9 @@ func (m *ExchangeManager) getBinanceTHBalances(ctx context.Context) ([]Balance, 
 // GetBinanceTHTicker gets ticker from Binance Thailand
 func (m *ExchangeManager) getBinanceTHTicker(ctx context.Context, symbol string) (*TickerInfo, error) {
 	if m.binanceTHAdapter == nil {
-		return nil, fmt.Errorf("Binance TH adapter not initialized")
+		// Binance TH's public ticker endpoint does not require credentials.
+		// Keep private account/order operations disabled until API keys exist.
+		return NewBinanceTHAdapter("", "").GetTicker(ctx, symbol)
 	}
 	return m.binanceTHAdapter.GetTicker(ctx, symbol)
 }

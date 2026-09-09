@@ -242,8 +242,8 @@ class RiskManager:
             self.state.daily_wins = 0
             self.state.daily_losses = 0
             self.state.last_daily_reset = time.time()
-            self.state.halted = False
-            self.state.halt_reason = ""
+            # Keep an active kill switch across daily accounting resets. A
+            # mainnet halt must be cleared deliberately through reset_kill_switch.
             logger.info("Risk manager daily reset")
 
     def _halt(self, reason: str):

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -12,8 +13,18 @@ import (
 )
 
 // DCABotHandler handles DCA bot HTTP requests
+type dcaBotService interface {
+	CreateBot(context.Context, *model.DCABotCreateRequest, string) (*model.DCABot, error)
+	GetUserBots(context.Context, string) ([]model.DCABot, error)
+	GetBot(context.Context, string) (*model.DCABot, error)
+	StartBot(context.Context, string) error
+	StopBot(context.Context, string) error
+	DeleteBot(context.Context, string) error
+	GetBotOrders(context.Context, string, int) ([]model.DCAOrder, error)
+}
+
 type DCABotHandler struct {
-	dcaService *service.DCABotService
+	dcaService  dcaBotService
 	authHandler *AuthHandler
 }
 
@@ -134,7 +145,7 @@ func (h *DCABotHandler) GetBot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify ownership
-	if bot.UserID != "" && bot.UserID != userID {
+	if bot == nil || bot.UserID != userID {
 		h.writeError(w, http.StatusForbidden, "Access denied: bot belongs to another user")
 		return
 	}
@@ -169,7 +180,7 @@ func (h *DCABotHandler) StartBot(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusNotFound, "Bot not found")
 		return
 	}
-	if bot.UserID != "" && bot.UserID != userID {
+	if bot == nil || bot.UserID != userID {
 		h.writeError(w, http.StatusForbidden, "Access denied: bot belongs to another user")
 		return
 	}
@@ -210,7 +221,7 @@ func (h *DCABotHandler) StopBot(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusNotFound, "Bot not found")
 		return
 	}
-	if bot.UserID != "" && bot.UserID != userID {
+	if bot == nil || bot.UserID != userID {
 		h.writeError(w, http.StatusForbidden, "Access denied: bot belongs to another user")
 		return
 	}
@@ -249,7 +260,7 @@ func (h *DCABotHandler) DeleteBot(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusNotFound, "Bot not found")
 		return
 	}
-	if bot.UserID != "" && bot.UserID != userID {
+	if bot == nil || bot.UserID != userID {
 		h.writeError(w, http.StatusForbidden, "Access denied: bot belongs to another user")
 		return
 	}
@@ -290,7 +301,7 @@ func (h *DCABotHandler) GetBotOrders(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusNotFound, "Bot not found")
 		return
 	}
-	if bot.UserID != "" && bot.UserID != userID {
+	if bot == nil || bot.UserID != userID {
 		h.writeError(w, http.StatusForbidden, "Access denied: bot belongs to another user")
 		return
 	}

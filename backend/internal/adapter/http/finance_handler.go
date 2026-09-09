@@ -1,7 +1,9 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,20 +16,20 @@ import (
 
 // FinanceHandler handles all finance-related HTTP requests
 type FinanceHandler struct {
-	pool              *pgxpool.Pool
-	accountService    *service.FinanceAccountService
-	transactionService *service.FinanceTransactionService
-	categoryService   *service.FinanceCategoryService
-	budgetService     *service.FinanceBudgetService
-	goalService       *service.FinanceGoalService
-	assetService      *service.FinanceAssetService
-	liabilityService  *service.FinanceLiabilityService
+	pool                *pgxpool.Pool
+	accountService      *service.FinanceAccountService
+	transactionService  *service.FinanceTransactionService
+	categoryService     *service.FinanceCategoryService
+	budgetService       *service.FinanceBudgetService
+	goalService         *service.FinanceGoalService
+	assetService        *service.FinanceAssetService
+	liabilityService    *service.FinanceLiabilityService
 	subscriptionService *service.FinanceSubscriptionService
-	diaryService      *service.FinanceDiaryService
-	dashboardService  *service.DashboardService
-	calculatorService *service.FinancialCalculatorService
-	netWorthService   *service.NetWorthService
-	authHandler       *AuthHandler
+	diaryService        *service.FinanceDiaryService
+	dashboardService    *service.DashboardService
+	calculatorService   *service.FinancialCalculatorService
+	netWorthService     *service.NetWorthService
+	authHandler         *AuthHandler
 }
 
 // NewFinanceHandler creates a new finance handler
@@ -48,20 +50,20 @@ func NewFinanceHandler(
 	authHandler *AuthHandler,
 ) *FinanceHandler {
 	return &FinanceHandler{
-		pool:              pool,
-		accountService:    accountService,
-		transactionService: transactionService,
-		categoryService:   categoryService,
-		budgetService:     budgetService,
-		goalService:       goalService,
-		assetService:      assetService,
-		liabilityService:  liabilityService,
+		pool:                pool,
+		accountService:      accountService,
+		transactionService:  transactionService,
+		categoryService:     categoryService,
+		budgetService:       budgetService,
+		goalService:         goalService,
+		assetService:        assetService,
+		liabilityService:    liabilityService,
 		subscriptionService: subscriptionService,
-		diaryService:      diaryService,
-		dashboardService:  dashboardService,
-		calculatorService: calculatorService,
-		netWorthService:   netWorthService,
-		authHandler:       authHandler,
+		diaryService:        diaryService,
+		dashboardService:    dashboardService,
+		calculatorService:   calculatorService,
+		netWorthService:     netWorthService,
+		authHandler:         authHandler,
 	}
 }
 
@@ -78,6 +80,37 @@ func (h *FinanceHandler) getUserID(r *http.Request) string {
 	return ""
 }
 
+// requireUserID fails closed when a handler is called without the authenticated
+// session that the top-level router normally supplies.
+func (h *FinanceHandler) requireUserID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	userID := h.getUserID(r)
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return "", false
+	}
+	return userID, true
+}
+
+// authorizeOwnedResource resolves the persisted owner before an ID-based
+// mutation. Unknown, unowned and foreign resources intentionally share 404.
+func (h *FinanceHandler) authorizeOwnedResource(
+	w http.ResponseWriter,
+	r *http.Request,
+	id string,
+	owner func(context.Context, string) (string, error),
+) (string, bool) {
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
+		return "", false
+	}
+	ownerID, err := owner(r.Context(), id)
+	if err != nil || ownerID == "" || ownerID != userID {
+		http.Error(w, "Resource not found", http.StatusNotFound)
+		return "", false
+	}
+	return userID, true
+}
+
 // ============================================
 // Dashboard
 // ============================================
@@ -89,7 +122,10 @@ func (h *FinanceHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := h.getUserID(r)
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
+		return
+	}
 	summary, err := h.dashboardService.GetDashboardSummary(r.Context(), userID)
 	if err != nil {
 		respondError(w, "Failed to get dashboard data", err, http.StatusInternalServerError)
@@ -111,7 +147,10 @@ func (h *FinanceHandler) GetAccounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := h.getUserID(r)
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
+		return
+	}
 	accounts, err := h.accountService.GetAccounts(r.Context(), userID)
 	if err != nil {
 		http.Error(w, "Failed to get accounts", http.StatusInternalServerError)
@@ -129,13 +168,16 @@ func (h *FinanceHandler) CreateAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
+		return
+	}
 	var req model.CreateAccountRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	userID := h.getUserID(r)
 	account, err := h.accountService.CreateAccount(r.Context(), userID, &req)
 	if err != nil {
 		respondError(w, "Failed to create account", err, http.StatusInternalServerError)
@@ -145,6 +187,20 @@ func (h *FinanceHandler) CreateAccount(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(account)
+}
+
+// authorizeAccount denies unknown and foreign accounts without disclosing ownership.
+func (h *FinanceHandler) authorizeAccount(w http.ResponseWriter, r *http.Request, id string) bool {
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
+		return false
+	}
+	account, err := h.accountService.GetAccount(r.Context(), id)
+	if err != nil || account == nil || account.UserID != userID {
+		http.Error(w, "Account not found", http.StatusNotFound)
+		return false
+	}
+	return true
 }
 
 // UpdateAccount handles PUT /api/finance/accounts/{id}
@@ -161,12 +217,16 @@ func (h *FinanceHandler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var account model.FinanceAccount
+	if !h.authorizeAccount(w, r, id) {
+		return
+	}
 	if err := json.NewDecoder(r.Body).Decode(&account); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	account.ID = id
+	account.UserID = h.getUserID(r)
 	if err := h.accountService.UpdateAccount(r.Context(), &account); err != nil {
 		http.Error(w, "Failed to update account", http.StatusInternalServerError)
 		return
@@ -189,6 +249,9 @@ func (h *FinanceHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.authorizeAccount(w, r, id) {
+		return
+	}
 	if err := h.accountService.DeleteAccount(r.Context(), id); err != nil {
 		http.Error(w, "Failed to delete account", http.StatusInternalServerError)
 		return
@@ -208,7 +271,10 @@ func (h *FinanceHandler) GetTransactions(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	userID := h.getUserID(r)
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
+		return
+	}
 
 	// Parse query parameters
 	limit := 50
@@ -254,15 +320,23 @@ func (h *FinanceHandler) CreateTransaction(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	userID := h.getUserID(r)
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
 	var req model.CreateTransactionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	userID := h.getUserID(r)
 	transaction, err := h.transactionService.CreateTransaction(r.Context(), userID, &req)
 	if err != nil {
+		if errors.Is(err, service.ErrFinanceAccessDenied) {
+			http.Error(w, "Resource not found", http.StatusNotFound)
+			return
+		}
 		respondError(w, "Failed to create transaction", err, http.StatusInternalServerError)
 		return
 	}
@@ -279,6 +353,11 @@ func (h *FinanceHandler) UpdateTransaction(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	userID := h.getUserID(r)
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
 	id := strings.TrimPrefix(r.URL.Path, "/api/finance/transactions/")
 	if id == "" || strings.Contains(id, "/") {
 		http.Error(w, "Transaction ID required", http.StatusBadRequest)
@@ -292,7 +371,11 @@ func (h *FinanceHandler) UpdateTransaction(w http.ResponseWriter, r *http.Reques
 	}
 
 	transaction.ID = id
-	if err := h.transactionService.UpdateTransaction(r.Context(), &transaction); err != nil {
+	if err := h.transactionService.UpdateTransaction(r.Context(), userID, &transaction); err != nil {
+		if errors.Is(err, service.ErrFinanceAccessDenied) {
+			http.Error(w, "Resource not found", http.StatusNotFound)
+			return
+		}
 		http.Error(w, "Failed to update transaction", http.StatusInternalServerError)
 		return
 	}
@@ -308,13 +391,22 @@ func (h *FinanceHandler) DeleteTransaction(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	userID := h.getUserID(r)
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
 	id := strings.TrimPrefix(r.URL.Path, "/api/finance/transactions/")
 	if id == "" || strings.Contains(id, "/") {
 		http.Error(w, "Transaction ID required", http.StatusBadRequest)
 		return
 	}
 
-	if err := h.transactionService.DeleteTransaction(r.Context(), id); err != nil {
+	if err := h.transactionService.DeleteTransaction(r.Context(), userID, id); err != nil {
+		if errors.Is(err, service.ErrFinanceAccessDenied) {
+			http.Error(w, "Resource not found", http.StatusNotFound)
+			return
+		}
 		http.Error(w, "Failed to delete transaction", http.StatusInternalServerError)
 		return
 	}
@@ -333,7 +425,10 @@ func (h *FinanceHandler) GetCategories(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := h.getUserID(r)
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
+		return
+	}
 	categoryType := r.URL.Query().Get("type")
 
 	var categories []*model.FinanceCategory
@@ -361,13 +456,16 @@ func (h *FinanceHandler) CreateCategory(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
+		return
+	}
 	var category model.FinanceCategory
 	if err := json.NewDecoder(r.Body).Decode(&category); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	userID := h.getUserID(r)
 	result, err := h.categoryService.CreateCategory(r.Context(), userID, &category)
 	if err != nil {
 		http.Error(w, "Failed to create category", http.StatusInternalServerError)
@@ -390,7 +488,10 @@ func (h *FinanceHandler) GetBudgets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := h.getUserID(r)
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
+		return
+	}
 	budgets, err := h.budgetService.GetBudgets(r.Context(), userID)
 	if err != nil {
 		http.Error(w, "Failed to get budgets", http.StatusInternalServerError)
@@ -421,13 +522,16 @@ func (h *FinanceHandler) CreateBudget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
+		return
+	}
 	var req model.CreateBudgetRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	userID := h.getUserID(r)
 	budget, err := h.budgetService.CreateBudget(r.Context(), userID, &req)
 	if err != nil {
 		http.Error(w, "Failed to create budget", http.StatusInternalServerError)
@@ -451,6 +555,16 @@ func (h *FinanceHandler) UpdateBudget(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Budget ID required", http.StatusBadRequest)
 		return
 	}
+	userID, ok := h.authorizeOwnedResource(w, r, id, func(ctx context.Context, resourceID string) (string, error) {
+		budget, err := h.budgetService.GetBudget(ctx, resourceID)
+		if err != nil || budget == nil {
+			return "", err
+		}
+		return budget.UserID, nil
+	})
+	if !ok {
+		return
+	}
 
 	var budget model.FinanceBudget
 	if err := json.NewDecoder(r.Body).Decode(&budget); err != nil {
@@ -459,6 +573,7 @@ func (h *FinanceHandler) UpdateBudget(w http.ResponseWriter, r *http.Request) {
 	}
 
 	budget.ID = id
+	budget.UserID = userID
 	if err := h.budgetService.UpdateBudget(r.Context(), &budget); err != nil {
 		http.Error(w, "Failed to update budget", http.StatusInternalServerError)
 		return
@@ -478,6 +593,15 @@ func (h *FinanceHandler) DeleteBudget(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/finance/budgets/")
 	if id == "" || strings.Contains(id, "/") {
 		http.Error(w, "Budget ID required", http.StatusBadRequest)
+		return
+	}
+	if _, ok := h.authorizeOwnedResource(w, r, id, func(ctx context.Context, resourceID string) (string, error) {
+		budget, err := h.budgetService.GetBudget(ctx, resourceID)
+		if err != nil || budget == nil {
+			return "", err
+		}
+		return budget.UserID, nil
+	}); !ok {
 		return
 	}
 
@@ -500,7 +624,10 @@ func (h *FinanceHandler) GetGoals(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := h.getUserID(r)
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
+		return
+	}
 	goals, err := h.goalService.GetGoals(r.Context(), userID)
 	if err != nil {
 		http.Error(w, "Failed to get goals", http.StatusInternalServerError)
@@ -531,13 +658,16 @@ func (h *FinanceHandler) CreateGoal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
+		return
+	}
 	var req model.CreateGoalRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	userID := h.getUserID(r)
 	goal, err := h.goalService.CreateGoal(r.Context(), userID, &req)
 	if err != nil {
 		http.Error(w, "Failed to create goal", http.StatusInternalServerError)
@@ -561,6 +691,16 @@ func (h *FinanceHandler) UpdateGoal(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Goal ID required", http.StatusBadRequest)
 		return
 	}
+	userID, ok := h.authorizeOwnedResource(w, r, id, func(ctx context.Context, resourceID string) (string, error) {
+		goal, err := h.goalService.GetGoal(ctx, resourceID)
+		if err != nil || goal == nil {
+			return "", err
+		}
+		return goal.UserID, nil
+	})
+	if !ok {
+		return
+	}
 
 	var goal model.FinanceGoal
 	if err := json.NewDecoder(r.Body).Decode(&goal); err != nil {
@@ -569,6 +709,7 @@ func (h *FinanceHandler) UpdateGoal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	goal.ID = id
+	goal.UserID = userID
 	if err := h.goalService.UpdateGoal(r.Context(), &goal); err != nil {
 		http.Error(w, "Failed to update goal", http.StatusInternalServerError)
 		return
@@ -592,6 +733,15 @@ func (h *FinanceHandler) AddToGoal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := parts[0]
+	if _, ok := h.authorizeOwnedResource(w, r, id, func(ctx context.Context, resourceID string) (string, error) {
+		goal, err := h.goalService.GetGoal(ctx, resourceID)
+		if err != nil || goal == nil {
+			return "", err
+		}
+		return goal.UserID, nil
+	}); !ok {
+		return
+	}
 
 	var req struct {
 		Amount float64 `json:"amount"`
@@ -623,6 +773,15 @@ func (h *FinanceHandler) DeleteGoal(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Goal ID required", http.StatusBadRequest)
 		return
 	}
+	if _, ok := h.authorizeOwnedResource(w, r, id, func(ctx context.Context, resourceID string) (string, error) {
+		goal, err := h.goalService.GetGoal(ctx, resourceID)
+		if err != nil || goal == nil {
+			return "", err
+		}
+		return goal.UserID, nil
+	}); !ok {
+		return
+	}
 
 	if err := h.goalService.DeleteGoal(r.Context(), id); err != nil {
 		http.Error(w, "Failed to delete goal", http.StatusInternalServerError)
@@ -643,7 +802,10 @@ func (h *FinanceHandler) GetAssets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := h.getUserID(r)
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
+		return
+	}
 	assets, err := h.assetService.GetAssets(r.Context(), userID)
 	if err != nil {
 		http.Error(w, "Failed to get assets", http.StatusInternalServerError)
@@ -661,13 +823,16 @@ func (h *FinanceHandler) CreateAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
+		return
+	}
 	var asset model.FinanceAsset
 	if err := json.NewDecoder(r.Body).Decode(&asset); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	userID := h.getUserID(r)
 	result, err := h.assetService.CreateAsset(r.Context(), userID, &asset)
 	if err != nil {
 		http.Error(w, "Failed to create asset", http.StatusInternalServerError)
@@ -691,6 +856,16 @@ func (h *FinanceHandler) UpdateAsset(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Asset ID required", http.StatusBadRequest)
 		return
 	}
+	userID, ok := h.authorizeOwnedResource(w, r, id, func(ctx context.Context, resourceID string) (string, error) {
+		asset, err := h.assetService.GetAsset(ctx, resourceID)
+		if err != nil || asset == nil {
+			return "", err
+		}
+		return asset.UserID, nil
+	})
+	if !ok {
+		return
+	}
 
 	var asset model.FinanceAsset
 	if err := json.NewDecoder(r.Body).Decode(&asset); err != nil {
@@ -699,6 +874,7 @@ func (h *FinanceHandler) UpdateAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	asset.ID = id
+	asset.UserID = userID
 	if err := h.assetService.UpdateAsset(r.Context(), &asset); err != nil {
 		http.Error(w, "Failed to update asset", http.StatusInternalServerError)
 		return
@@ -718,6 +894,15 @@ func (h *FinanceHandler) DeleteAsset(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/finance/assets/")
 	if id == "" || strings.Contains(id, "/") {
 		http.Error(w, "Asset ID required", http.StatusBadRequest)
+		return
+	}
+	if _, ok := h.authorizeOwnedResource(w, r, id, func(ctx context.Context, resourceID string) (string, error) {
+		asset, err := h.assetService.GetAsset(ctx, resourceID)
+		if err != nil || asset == nil {
+			return "", err
+		}
+		return asset.UserID, nil
+	}); !ok {
 		return
 	}
 
@@ -740,7 +925,10 @@ func (h *FinanceHandler) GetLiabilities(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	userID := h.getUserID(r)
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
+		return
+	}
 	liabilities, err := h.liabilityService.GetLiabilities(r.Context(), userID)
 	if err != nil {
 		http.Error(w, "Failed to get liabilities", http.StatusInternalServerError)
@@ -758,13 +946,16 @@ func (h *FinanceHandler) CreateLiability(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
+		return
+	}
 	var liability model.FinanceLiability
 	if err := json.NewDecoder(r.Body).Decode(&liability); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	userID := h.getUserID(r)
 	result, err := h.liabilityService.CreateLiability(r.Context(), userID, &liability)
 	if err != nil {
 		http.Error(w, "Failed to create liability", http.StatusInternalServerError)
@@ -788,6 +979,16 @@ func (h *FinanceHandler) UpdateLiability(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Liability ID required", http.StatusBadRequest)
 		return
 	}
+	userID, ok := h.authorizeOwnedResource(w, r, id, func(ctx context.Context, resourceID string) (string, error) {
+		liability, err := h.liabilityService.GetLiability(ctx, resourceID)
+		if err != nil || liability == nil {
+			return "", err
+		}
+		return liability.UserID, nil
+	})
+	if !ok {
+		return
+	}
 
 	var liability model.FinanceLiability
 	if err := json.NewDecoder(r.Body).Decode(&liability); err != nil {
@@ -796,6 +997,7 @@ func (h *FinanceHandler) UpdateLiability(w http.ResponseWriter, r *http.Request)
 	}
 
 	liability.ID = id
+	liability.UserID = userID
 	if err := h.liabilityService.UpdateLiability(r.Context(), &liability); err != nil {
 		http.Error(w, "Failed to update liability", http.StatusInternalServerError)
 		return
@@ -819,6 +1021,15 @@ func (h *FinanceHandler) MakePayment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := parts[0]
+	if _, ok := h.authorizeOwnedResource(w, r, id, func(ctx context.Context, resourceID string) (string, error) {
+		liability, err := h.liabilityService.GetLiability(ctx, resourceID)
+		if err != nil || liability == nil {
+			return "", err
+		}
+		return liability.UserID, nil
+	}); !ok {
+		return
+	}
 
 	var req struct {
 		Amount float64 `json:"amount"`
@@ -850,6 +1061,15 @@ func (h *FinanceHandler) DeleteLiability(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Liability ID required", http.StatusBadRequest)
 		return
 	}
+	if _, ok := h.authorizeOwnedResource(w, r, id, func(ctx context.Context, resourceID string) (string, error) {
+		liability, err := h.liabilityService.GetLiability(ctx, resourceID)
+		if err != nil || liability == nil {
+			return "", err
+		}
+		return liability.UserID, nil
+	}); !ok {
+		return
+	}
 
 	if err := h.liabilityService.DeleteLiability(r.Context(), id); err != nil {
 		http.Error(w, "Failed to delete liability", http.StatusInternalServerError)
@@ -870,7 +1090,10 @@ func (h *FinanceHandler) GetSubscriptions(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	userID := h.getUserID(r)
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
+		return
+	}
 	subscriptions, err := h.subscriptionService.GetSubscriptions(r.Context(), userID)
 	if err != nil {
 		http.Error(w, "Failed to get subscriptions", http.StatusInternalServerError)
@@ -888,7 +1111,10 @@ func (h *FinanceHandler) GetUpcomingBills(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	userID := h.getUserID(r)
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
+		return
+	}
 	days := 7
 	if d := r.URL.Query().Get("days"); d != "" {
 		if parsed, err := strconv.Atoi(d); err == nil && parsed > 0 {
@@ -913,13 +1139,16 @@ func (h *FinanceHandler) CreateSubscription(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
+		return
+	}
 	var subscription model.FinanceSubscription
 	if err := json.NewDecoder(r.Body).Decode(&subscription); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	userID := h.getUserID(r)
 	result, err := h.subscriptionService.CreateSubscription(r.Context(), userID, &subscription)
 	if err != nil {
 		http.Error(w, "Failed to create subscription", http.StatusInternalServerError)
@@ -943,6 +1172,16 @@ func (h *FinanceHandler) UpdateSubscription(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Subscription ID required", http.StatusBadRequest)
 		return
 	}
+	userID, ok := h.authorizeOwnedResource(w, r, id, func(ctx context.Context, resourceID string) (string, error) {
+		subscription, err := h.subscriptionService.GetSubscription(ctx, resourceID)
+		if err != nil || subscription == nil {
+			return "", err
+		}
+		return subscription.UserID, nil
+	})
+	if !ok {
+		return
+	}
 
 	var subscription model.FinanceSubscription
 	if err := json.NewDecoder(r.Body).Decode(&subscription); err != nil {
@@ -951,6 +1190,7 @@ func (h *FinanceHandler) UpdateSubscription(w http.ResponseWriter, r *http.Reque
 	}
 
 	subscription.ID = id
+	subscription.UserID = userID
 	if err := h.subscriptionService.UpdateSubscription(r.Context(), &subscription); err != nil {
 		http.Error(w, "Failed to update subscription", http.StatusInternalServerError)
 		return
@@ -970,6 +1210,15 @@ func (h *FinanceHandler) DeleteSubscription(w http.ResponseWriter, r *http.Reque
 	id := strings.TrimPrefix(r.URL.Path, "/api/finance/subscriptions/")
 	if id == "" || strings.Contains(id, "/") {
 		http.Error(w, "Subscription ID required", http.StatusBadRequest)
+		return
+	}
+	if _, ok := h.authorizeOwnedResource(w, r, id, func(ctx context.Context, resourceID string) (string, error) {
+		subscription, err := h.subscriptionService.GetSubscription(ctx, resourceID)
+		if err != nil || subscription == nil {
+			return "", err
+		}
+		return subscription.UserID, nil
+	}); !ok {
 		return
 	}
 
@@ -992,7 +1241,10 @@ func (h *FinanceHandler) GetDiaryEntries(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	userID := h.getUserID(r)
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
+		return
+	}
 	limit := 30
 	offset := 0
 
@@ -1024,7 +1276,10 @@ func (h *FinanceHandler) GetDiaryEntryByDate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	userID := h.getUserID(r)
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
+		return
+	}
 	dateStr := r.URL.Query().Get("date")
 	if dateStr == "" {
 		dateStr = time.Now().Format("2006-01-02")
@@ -1055,13 +1310,16 @@ func (h *FinanceHandler) CreateDiaryEntry(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
+		return
+	}
 	var req model.CreateDiaryEntryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	userID := h.getUserID(r)
 	entry, err := h.diaryService.CreateEntry(r.Context(), userID, &req)
 	if err != nil {
 		http.Error(w, "Failed to create diary entry", http.StatusInternalServerError)
@@ -1085,6 +1343,16 @@ func (h *FinanceHandler) UpdateDiaryEntry(w http.ResponseWriter, r *http.Request
 		http.Error(w, "Diary entry ID required", http.StatusBadRequest)
 		return
 	}
+	userID, ok := h.authorizeOwnedResource(w, r, id, func(ctx context.Context, resourceID string) (string, error) {
+		entry, err := h.diaryService.GetEntry(ctx, resourceID)
+		if err != nil || entry == nil {
+			return "", err
+		}
+		return entry.UserID, nil
+	})
+	if !ok {
+		return
+	}
 
 	var entry model.FinanceDiaryEntry
 	if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
@@ -1093,6 +1361,7 @@ func (h *FinanceHandler) UpdateDiaryEntry(w http.ResponseWriter, r *http.Request
 	}
 
 	entry.ID = id
+	entry.UserID = userID
 	if err := h.diaryService.UpdateEntry(r.Context(), &entry); err != nil {
 		http.Error(w, "Failed to update diary entry", http.StatusInternalServerError)
 		return
@@ -1112,6 +1381,15 @@ func (h *FinanceHandler) DeleteDiaryEntry(w http.ResponseWriter, r *http.Request
 	id := strings.TrimPrefix(r.URL.Path, "/api/finance/diary/")
 	if id == "" || strings.Contains(id, "/") {
 		http.Error(w, "Diary entry ID required", http.StatusBadRequest)
+		return
+	}
+	if _, ok := h.authorizeOwnedResource(w, r, id, func(ctx context.Context, resourceID string) (string, error) {
+		entry, err := h.diaryService.GetEntry(ctx, resourceID)
+		if err != nil || entry == nil {
+			return "", err
+		}
+		return entry.UserID, nil
+	}); !ok {
 		return
 	}
 
@@ -1173,10 +1451,10 @@ func (h *FinanceHandler) CalculateSavingsGoal(w http.ResponseWriter, r *http.Req
 	}
 
 	var input struct {
-		TargetAmount       float64 `json:"targetAmount"`
-		CurrentAmount      float64 `json:"currentAmount"`
+		TargetAmount        float64 `json:"targetAmount"`
+		CurrentAmount       float64 `json:"currentAmount"`
 		MonthlyContribution float64 `json:"monthlyContribution"`
-		AnnualRate         float64 `json:"annualRate"`
+		AnnualRate          float64 `json:"annualRate"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -1233,8 +1511,8 @@ func (h *FinanceHandler) CalculateAssetAllocation(w http.ResponseWriter, r *http
 	}
 
 	var input struct {
-		Age             int    `json:"age"`
-		RiskTolerance   string `json:"riskTolerance"` // low, medium, high
+		Age           int    `json:"age"`
+		RiskTolerance string `json:"riskTolerance"` // low, medium, high
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -1258,7 +1536,10 @@ func (h *FinanceHandler) GetNetWorth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := h.getUserID(r)
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
+		return
+	}
 	history, err := h.netWorthService.GetLatestNetWorth(r.Context(), userID)
 	if err != nil {
 		// Calculate fresh net worth
@@ -1284,7 +1565,10 @@ func (h *FinanceHandler) GetNetWorthHistory(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	userID := h.getUserID(r)
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
+		return
+	}
 	limit := 12
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
@@ -1309,7 +1593,10 @@ func (h *FinanceHandler) RecalculateNetWorth(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	userID := h.getUserID(r)
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
+		return
+	}
 
 	// Calculate fresh net worth
 	assets, _ := h.accountService.GetTotalBalance(r.Context(), userID)

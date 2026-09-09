@@ -10,6 +10,23 @@ import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 global.fetch = vi.fn();
 
 describe('API Service', () => {
+  it('sends the session on every price-alert mutation', async () => {
+    const storage = vi.spyOn(Storage.prototype, 'getItem').mockReturnValue('fixture-session');
+    (fetch as Mock).mockReset();
+    (fetch as Mock).mockResolvedValue({ ok: true, json: async () => ({}) });
+    try {
+      await api.createPriceAlert('BTCUSDT', 100, 'ABOVE');
+      await api.deletePriceAlert('fixture-alert');
+      await api.resetPriceAlerts();
+      expect(fetch).toHaveBeenCalledTimes(3);
+      for (const [, options] of (fetch as Mock).mock.calls) {
+        expect(options.headers.Authorization).toBe('Bearer fixture-session');
+      }
+    } finally {
+      storage.mockRestore();
+    }
+  });
+
   beforeEach(() => {
     (fetch as Mock).mockClear();
   });

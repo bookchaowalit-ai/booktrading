@@ -920,7 +920,7 @@ export const api = {
     try {
       const response = await fetch(`${API_BASE_URL}/api/price-alerts`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ symbol, target_price: targetPrice, direction }),
       });
       if (!response.ok) return null;
@@ -934,7 +934,7 @@ export const api = {
     try {
       const response = await fetch(`${API_BASE_URL}/api/price-alerts`, {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ id }),
       });
       return response.ok;
@@ -947,7 +947,7 @@ export const api = {
     try {
       const response = await fetch(`${API_BASE_URL}/api/price-alerts/reset`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
       });
       return response.ok;
     } catch {

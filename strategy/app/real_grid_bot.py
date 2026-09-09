@@ -128,10 +128,12 @@ SYMBOL_DEFAULTS = {
     "BTCTHB": {
         # BTC handled by Binance DCA — keep config but buy_only if ever activated
         "grid_spacing_pct": 3.0,
-        "grid_levels": 4,
+        # Micro-live gate: one level and one outstanding order maximum.
+        "grid_levels": 1,
         "order_size": 0.00005,
         "max_position": 0.001,
         "max_daily_loss_usd": 50.0,
+        "max_open_orders": 1,
         "volatility_mode": "fixed",
         "buy_only": True,
         "stale_threshold_pct": 15.0,
@@ -266,6 +268,11 @@ MIN_PROFITABLE_SPACING_PCT = 0.5      # spacing must be > 0.5% to profit after f
 # tracking. Cumulative PnL alone is NOT a valid equity curve: early on the
 # peak is a few THB, so tiny dips register as huge percentage drawdowns.
 GRID_CAPITAL_BASE_THB = float(os.getenv("GRID_CAPITAL_BASE_THB", "3000"))
+# Portfolio-wide exposure is deliberately bounded below the account capital
+# base.  This applies to new BUY exposure; SELLs remain available for exits.
+GRID_MAX_PORTFOLIO_NOTIONAL_THB = float(
+    os.getenv("GRID_MAX_PORTFOLIO_NOTIONAL_THB", str(GRID_CAPITAL_BASE_THB * 0.8))
+)
 
 # Regime detection thresholds (ATR percentile)
 REGIME_THRESHOLDS = {
@@ -317,6 +324,7 @@ class RealGridBot:
         self._notifications: deque = deque(maxlen=50)
         # Redis client for state persistence (injected via set_redis)
         self._redis = None
+        self._risk = get_risk_manager()
         # Webhook notifier for Telegram/Discord alerts
         self._webhook = get_webhook_notifier()
         # Health tracking: last tick time per symbol
@@ -585,7 +593,9 @@ class RealGridBot:
             state.daily_pnl = 0.0
             state.daily_trades = 0
             state.last_daily_reset = time.time()
-            state.halted = False
+            # A safety halt is persistent. Daily accounting must not silently
+            # re-enable mainnet trading; only the explicit enable/reset path
+            # may clear state.halted.
             state.counted_trade_ids.clear()
             
             # Auto-tune compound threshold based on performance
@@ -598,8 +608,16 @@ class RealGridBot:
             # Send comprehensive daily digest (all symbols)
             await self._send_comprehensive_digest()
             
-            # Auto-rebalance: cancel all orders and re-place at fresh levels
-            await self._rebalance_grid(cfg, state)
+            # Auto-rebalance only when the symbol is not halted. A daily
+            # accounting rollover must never bypass a persistent kill switch.
+            if not state.halted:
+                await self._rebalance_grid(cfg, state)
+            else:
+                logger.info(
+                    "[RealGrid %s] Daily rollover kept safety halt active; "
+                    "skipping rebalance",
+                    cfg.symbol,
+                )
 
         # Safety: daily loss limit
         if state.daily_pnl < -cfg.max_daily_loss_usd:
@@ -617,6 +635,11 @@ class RealGridBot:
             return
 
         if state.halted:
+            # A safety halt must block trading, but it must not leave canceled
+            # exchange orders permanently stuck in the persisted local state.
+            # Reconcile only explicit cancellations; unknown/filled outcomes
+            # remain pending manual review and are never assumed to be fills.
+            await self._reconcile_halted_orders(cfg, state)
             return
 
         # Step 1: Sync open orders from Binance TH
@@ -698,19 +721,18 @@ class RealGridBot:
             state.daily_pnl,
         )
 
-        # ── Portfolio-level exposure cap (Fix 6) ──
-        total_notional = 0.0
-        for sym, st in self.states.items():
-            sym_cfg = next((c for c in self.configs if c.symbol == sym), None)
-            if sym_cfg:
-                size = st.current_order_size if st.current_order_size > 0 else sym_cfg.order_size
-                n_orders = len(st.active_buys) + len(st.active_sells)
-                total_notional += n_orders * size * st.last_price if st.last_price > 0 else 0
-        MAX_PORTFOLIO_NOTIONAL = 50000.0  # 50K THB total exposure cap
-        if total_notional >= MAX_PORTFOLIO_NOTIONAL:
-            logger.debug("[RealGrid %s] Portfolio exposure cap: %.0f THB >= %.0f — skipping", cfg.symbol, total_notional, MAX_PORTFOLIO_NOTIONAL)
-            await self._save_state(cfg.symbol)
-            return
+        # ── Portfolio-level exposure cap ──
+        # The order-level guard below blocks new BUYs.  Do not return here:
+        # exits must still be allowed when the portfolio is at its cap.
+        total_notional = self._total_open_notional()
+        if total_notional >= GRID_MAX_PORTFOLIO_NOTIONAL_THB:
+            logger.debug(
+                "[RealGrid %s] Portfolio exposure cap: %.0f THB >= %.0f — "
+                "new BUYs blocked, exits remain available",
+                cfg.symbol,
+                total_notional,
+                GRID_MAX_PORTFOLIO_NOTIONAL_THB,
+            )
 
         for level in range(1, cfg.grid_levels + 1):
             # Round price to tick_size (Binance TH requires prices to be multiples of tickSize)
@@ -742,6 +764,26 @@ class RealGridBot:
 
         # Persist state to Redis after each tick
         await self._save_state(cfg.symbol)
+
+    def _total_open_orders(self) -> int:
+        """Count active orders across every configured symbol."""
+        return sum(
+            len(state.active_buys) + len(state.active_sells)
+            for state in self.states.values()
+        )
+
+    def _total_open_notional(self) -> float:
+        """Estimate active-order notional across the whole real-grid portfolio."""
+        config_by_symbol = {config.symbol: config for config in self.configs}
+        total = 0.0
+        for symbol, state in self.states.items():
+            config = config_by_symbol.get(symbol)
+            if not config:
+                continue
+            size = state.current_order_size if state.current_order_size > 0 else config.order_size
+            total += sum(price * size for price in state.active_buys)
+            total += sum(price * size for price in state.active_sells)
+        return total
 
     async def _sync_open_orders(self, cfg: RealGridConfig, state: RealGridState):
         """Query actual open orders from Binance TH and update state.
@@ -994,6 +1036,47 @@ class RealGridBot:
 
         except Exception as e:
             logger.warning("Failed to sync open orders: %s", e)
+
+    async def _reconcile_halted_orders(self, cfg: RealGridConfig, state: RealGridState):
+        """Remove only orders explicitly confirmed canceled while halted.
+
+        This is intentionally narrower than ``_sync_open_orders``: a halted
+        bot must not book fills or place replacements until an operator reviews
+        the safety condition. It only clears local order references when the
+        backend confirms CANCELED/EXPIRED/REJECTED.
+        """
+        if not self._http:
+            return
+
+        changed = False
+        for side, order_map in (("BUY", state.active_buys), ("SELL", state.active_sells)):
+            for price, order_id in list(order_map.items()):
+                verdict = await self._verify_fill(cfg.symbol, order_id)
+                if verdict != "cancelled":
+                    continue
+
+                del order_map[price]
+                state.order_times.pop(order_id, None)
+                changed = True
+                logger.info(
+                    "[RealGrid %s] Removed canceled %s @ %.10g from halted state",
+                    cfg.symbol,
+                    side,
+                    price,
+                )
+                journal = getattr(self, "_journal", None)
+                if journal:
+                    try:
+                        await journal.record_exit(order_id, 0.0, "CANCELLED", 0.0)
+                    except Exception as exc:
+                        logger.warning(
+                            "Journal exit (halted %s cancellation) failed: %s",
+                            side,
+                            exc,
+                        )
+
+        if changed:
+            await self._save_state(cfg.symbol)
 
     async def _cancel_stale_orders(self, cfg: RealGridConfig, state: RealGridState, current_price: float):
         """Cancel orders that are too far from current price OR too old."""
@@ -1891,6 +1974,34 @@ class RealGridBot:
         # Use dynamic order size from auto-compounding if available, else base config size
         order_size = state.current_order_size if state.current_order_size > 0 else cfg.order_size
 
+        # Global guards apply before any balance check or backend request.  A
+        # BUY adds exposure; a SELL remains available so a full portfolio can
+        # still reduce exposure and exit positions.
+        if side == "BUY":
+            total_open_orders = self._total_open_orders()
+            max_open_orders = self._risk.config.max_open_orders
+            if total_open_orders >= max_open_orders:
+                logger.info(
+                    "[RealGrid %s] BUY blocked: global open-order cap %d/%d",
+                    cfg.symbol,
+                    total_open_orders,
+                    max_open_orders,
+                )
+                return False
+
+            total_open_notional = self._total_open_notional()
+            candidate_notional = order_size * price
+            if total_open_notional + candidate_notional > GRID_MAX_PORTFOLIO_NOTIONAL_THB:
+                logger.info(
+                    "[RealGrid %s] BUY blocked: portfolio notional %.2f + %.2f "
+                    "> %.2f THB",
+                    cfg.symbol,
+                    total_open_notional,
+                    candidate_notional,
+                    GRID_MAX_PORTFOLIO_NOTIONAL_THB,
+                )
+                return False
+
         # ── Balance pre-checks ──
         if side == "SELL":
             if not await self._can_place_sell(cfg.symbol, order_size):
@@ -1982,6 +2093,7 @@ class RealGridBot:
             logger.info("Failed to place %s @ %.2f: %s", side, price, e)
         return False
 
+
     def get_status(self) -> Dict:
         """Get current real grid bot status (includes risk metrics and auto-compound info)."""
         risk = get_risk_manager()
@@ -2019,6 +2131,12 @@ class RealGridBot:
             "running": self._running,
             "enabled": self._enabled,
             "symbols": symbols_data,
+            "portfolio": {
+                "open_orders": self._total_open_orders(),
+                "max_open_orders": risk.config.max_open_orders,
+                "open_notional_thb": round(self._total_open_notional(), 4),
+                "max_notional_thb": GRID_MAX_PORTFOLIO_NOTIONAL_THB,
+            },
             "total_cumulative_pnl": round(total_cumulative_pnl, 2),
             "risk": risk.get_status(),
             "journal_stats": journal.get_stats(),

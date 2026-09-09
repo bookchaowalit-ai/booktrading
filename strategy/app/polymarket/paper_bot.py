@@ -24,7 +24,7 @@ import os
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import httpx
 
@@ -37,7 +37,7 @@ CLOB_API = "https://clob.polymarket.com"
 
 # Paper trading defaults — tuned for alpha
 DEFAULT_SCAN_INTERVAL = 120  # 2 minutes (faster = catch moves quicker)
-DEFAULT_MAX_POSITIONS = 15  # paper-mode cap — bot finds 600+ opps/scan with good edge
+DEFAULT_MAX_POSITIONS = 8  # conservative cap used by the readiness monitor
 DEFAULT_POSITION_SIZE_USDC = 5.0  # $5 per position (paper)
 DEFAULT_MIN_DEVIATION = 0.002  # 0.2% mispricing threshold (Polymarket is efficient)
 DEFAULT_MIN_LIQUIDITY = 200  # min $200 liquidity (was $500)
@@ -1341,8 +1341,14 @@ class PolymarketPaperBot:
         # Reset peak to current so drawdown is 0% — prevents immediate re-trigger
         self.peak_bankroll = self.bankroll
         logger.info("Kill switch manually reset (peak_bankroll=%.2f, current=%.2f)", self.peak_bankroll, self.bankroll)
-        # Persist the reset state to Redis
-        asyncio.create_task(self._save_state())
+        # Persist the reset state when called from an async API context. The
+        # monitor/tests may call this synchronously, where create_task() would
+        # raise and leave an unawaited coroutine behind.
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self._save_state())
 
     # ── Market Filtering ───────────────────────────────────────────────────────
 

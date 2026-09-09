@@ -3,9 +3,9 @@ Strategy Service Configuration
 Centralized configuration management with validation
 """
 
-import os
 import logging
-from typing import List, Optional
+import os
+
 from pydantic import BaseModel, Field, validator
 
 logger = logging.getLogger(__name__)
@@ -17,7 +17,7 @@ class ServiceConfig(BaseModel):
     # Redis Configuration
     redis_host: str = Field(default="localhost", env="REDIS_HOST")
     redis_port: int = Field(default=6379, env="REDIS_PORT", gt=0, le=65535)
-    redis_password: Optional[str] = Field(default=None, env="REDIS_PASSWORD")
+    redis_password: str | None = Field(default=None, env="REDIS_PASSWORD")
     redis_db: int = Field(default=0, env="REDIS_DB", ge=0, le=15)
 
     # gRPC Configuration
@@ -27,7 +27,7 @@ class ServiceConfig(BaseModel):
     # API Configuration
     api_host: str = Field(default="0.0.0.0", env="API_HOST")
     api_port: int = Field(default=8000, env="API_PORT", gt=0, le=65535)
-    auth_token: Optional[str] = Field(default=None, env="AUTH_TOKEN")
+    auth_token: str | None = Field(default=None, env="AUTH_TOKEN")
     log_level: str = Field(default="INFO", env="LOG_LEVEL")
     allowed_origins: str = Field(default="http://localhost:3000", env="ALLOWED_ORIGINS")
 
@@ -101,12 +101,12 @@ class ServiceConfig(BaseModel):
         return v_upper
 
     @property
-    def symbol_list(self) -> List[str]:
+    def symbol_list(self) -> list[str]:
         """Get symbols as a list"""
         return [s.strip() for s in self.symbols.split(",") if s.strip()]
 
     @property
-    def allowed_origins_list(self) -> List[str]:
+    def allowed_origins_list(self) -> list[str]:
         """Get allowed origins as a list"""
         return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
 
@@ -152,6 +152,18 @@ class ServiceConfig(BaseModel):
             stoch_rsi_period=int(os.getenv("STOCH_RSI_PERIOD", "14")),
             adx_min_trend=float(os.getenv("ADX_MIN_TREND", "25.0")),
             min_composite_score=float(os.getenv("MIN_COMPOSITE_SCORE", "0.5")),
+            market_intel_enabled=os.getenv("MARKET_INTEL_ENABLED", "true").lower() in ("1", "true", "yes"),
+            market_intel_sources=os.getenv(
+                "MARKET_INTEL_SOURCES",
+                "crypto,prediction,stocks,macro,airdrops,degen,binance_alpha,arb",
+            ),
+            market_intel_crypto_symbols=os.getenv(
+                "MARKET_INTEL_CRYPTO_SYMBOLS", "BTCTHB,ETHTHB,BTCUSDT,ETHUSDT"
+            ),
+            market_intel_stock_symbols=os.getenv(
+                "MARKET_INTEL_STOCK_SYMBOLS",
+                "SPY,QQQ,AAPL,MSFT,GOOGL,AMZN,NVDA,TSLA,META,PTT.BK,AOT.BK,SCB.BK",
+            ),
         )
 
     def validate_all(self) -> None:

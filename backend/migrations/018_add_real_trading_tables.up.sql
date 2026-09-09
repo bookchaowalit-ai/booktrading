@@ -36,7 +36,3 @@ CREATE TABLE IF NOT EXISTS real_trade_summaries (
     max_drawdown NUMERIC(20, 8) DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
-
--- +migrate Down
-DROP TABLE IF EXISTS real_trades;
-DROP TABLE IF EXISTS real_trade_summaries;

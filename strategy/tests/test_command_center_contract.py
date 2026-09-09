@@ -2,7 +2,7 @@
 Contract tests for /api/command-center endpoint.
 
 These tests hit the live running strategy API inside the container.
-Run with: docker compose exec strategy python -m pytest tests/test_command_center_contract.py -v
+Run with: docker compose exec strategy python -m pytest -m integration tests/test_command_center_contract.py -v
 
 Validates:
 1. Response shape — all required top-level keys present
@@ -17,6 +17,8 @@ import httpx
 import pytest
 
 STRATEGY_API_URL = os.environ.get('STRATEGY_API_URL', 'http://strategy:8000')
+
+pytestmark = pytest.mark.integration
 
 
 @pytest.fixture

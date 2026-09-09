@@ -85,7 +85,8 @@ Examples:
 func migrateUp(databaseURL string) {
 	m, err := migrate.New("file://migrations", databaseURL)
 	if err != nil {
-		slog.Error("Failed to create migrate instance: %v", err)
+		slog.Error("Failed to create migrate instance", "error", err)
+		return
 	}
 	defer m.Close()
 
@@ -94,7 +95,8 @@ func migrateUp(databaseURL string) {
 			slog.Info("No new migrations to apply")
 			return
 		}
-		slog.Error("Failed to run migrations: %v", err)
+		slog.Error("Failed to run migrations", "error", err)
+		return
 	}
 
 	slog.Info("✓ Migrations applied successfully")
@@ -103,12 +105,14 @@ func migrateUp(databaseURL string) {
 func migrateDown(databaseURL string) {
 	m, err := migrate.New("file://migrations", databaseURL)
 	if err != nil {
-		slog.Error("Failed to create migrate instance: %v", err)
+		slog.Error("Failed to create migrate instance", "error", err)
+		return
 	}
 	defer m.Close()
 
 	if err := m.Steps(-1); err != nil {
-		slog.Error("Failed to rollback migration: %v", err)
+		slog.Error("Failed to rollback migration", "error", err)
+		return
 	}
 
 	slog.Info("✓ Migration rolled back successfully")
@@ -117,13 +121,15 @@ func migrateDown(databaseURL string) {
 func showVersion(databaseURL string) {
 	m, err := migrate.New("file://migrations", databaseURL)
 	if err != nil {
-		slog.Error("Failed to create migrate instance: %v", err)
+		slog.Error("Failed to create migrate instance", "error", err)
+		return
 	}
 	defer m.Close()
 
 	version, dirty, err := m.Version()
 	if err != nil {
-		slog.Error("Failed to get migration version: %v", err)
+		slog.Error("Failed to get migration version", "error", err)
+		return
 	}
 
 	if dirty {
@@ -140,11 +146,13 @@ func createMigration(name string) {
 
 	// Create files
 	if err := os.WriteFile(upFile, []byte("-- Migration up\n"), 0644); err != nil {
-		slog.Error("Failed to create up migration: %v", err)
+		slog.Error("Failed to create up migration", "error", err)
+		return
 	}
 
 	if err := os.WriteFile(downFile, []byte("-- Migration down\n"), 0644); err != nil {
-		slog.Error("Failed to create down migration: %v", err)
+		slog.Error("Failed to create down migration", "error", err)
+		return
 	}
 
 	fmt.Printf("✓ Created migration files:\n  - %s\n  - %s\n", upFile, downFile)

@@ -230,7 +230,9 @@ func main() {
 	// Historical data service (syncs klines from Binance)
 	historicalService := service.NewHistoricalDataService(db.Pool, []string{"BTCUSDT", "ETHUSDT"})
 	historicalService.StartSync("1h")
-	historicalService.StartSync("1d")
+	// Go durations use "h" for hours; the Binance kline interval remains "1d"
+	// inside the service's per-symbol sync loop.
+	historicalService.StartSync("24h")
 	defer historicalService.StopSync()
 
 	// Audit logging

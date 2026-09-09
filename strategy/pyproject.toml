@@ -27,3 +27,7 @@ quote-style = "double"
 pythonpath = ["."]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+addopts = "-m 'not integration'"
+markers = [
+    "integration: requires the running strategy API and Docker services",
+]

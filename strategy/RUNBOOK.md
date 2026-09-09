@@ -235,7 +235,7 @@ Full test suite covers kill-switch, safety filters, monitor decision logic, grid
 | `strategy/tests/test_kill_switch.py` | 13 kill switch tests |
 | `strategy/tests/test_monitor_decision.py` | 27 monitor decision tree tests |
 | `strategy/tests/test_safety_filters.py` | 20 safety filter tests |
-| `strategy/tests/test_command_center_contract.py` | Command Center API safety contract tests |
+| `strategy/tests/test_command_center_contract.py` | Command Center API safety contract tests (`pytest -m integration`) |
 | `strategy/RUNBOOK.md` | This file |
 | `docs/READINESS_CHECKLIST.md` | Versioned gate criteria for each stage |
 | `docs/EVIDENCE_LOG.md` | State-change evidence log |

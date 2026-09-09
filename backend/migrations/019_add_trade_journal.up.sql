@@ -28,6 +28,3 @@ CREATE INDEX IF NOT EXISTS idx_journal_status ON trade_journal(status);
 CREATE INDEX IF NOT EXISTS idx_journal_strategy ON trade_journal(strategy);
 CREATE INDEX IF NOT EXISTS idx_journal_created_at ON trade_journal(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_journal_exchange_oid ON trade_journal(exchange_order_id);
-
--- +migrate Down
-DROP TABLE IF EXISTS trade_journal;

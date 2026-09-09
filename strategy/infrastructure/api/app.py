@@ -30,12 +30,23 @@ from core.service.anomaly_detector import AnomalyDetector
 from core.service.param_optimizer import ParamOptimizer
 from infrastructure.redis.redis_adapter import RedisAdapter
 from infrastructure.grpc.grpc_client import GRPCClientManager
+from app.polymarket.state import (
+    PAPER_STATE_KEY,
+    overlay_paper_performance,
+    overlay_paper_status,
+    persisted_positions,
+    persisted_trades,
+    summarize_paper_state,
+)
 
 logger = logging.getLogger(__name__)
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 API_TOKEN: Optional[str] = None  # Set via AUTH_TOKEN env var
 DISABLE_PAPER_BOT = os.getenv("DISABLE_PAPER_BOT", "false").lower() in ("true", "1", "yes")
+SIGNAL_ORDER_EXECUTION_ENABLED = os.getenv(
+    "SIGNAL_ORDER_EXECUTION_ENABLED", "false"
+).lower() in ("true", "1", "yes")
 
 
 def require_auth(request: Request):
@@ -69,6 +80,30 @@ class RateLimiter:
 
 
 rate_limiter = RateLimiter(max_requests=60, window_seconds=60)
+
+
+async def _read_persisted_paper_state() -> Optional[Dict]:
+    """Read the canonical paper-bot safety state from Redis.
+
+    The Polymarket paper bot is intentionally disabled in this API process, so
+    its singleton is not a reliable source of persisted positions or kill
+    switch state. Redis is shared with the monitoring command and is therefore
+    the source of truth when a valid state record is present.
+    """
+    if not redis_adapter or not redis_adapter.redis:
+        return None
+    try:
+        raw = await redis_adapter.redis.get(PAPER_STATE_KEY)
+        if not raw:
+            return None
+        state = json.loads(raw)
+        return state if isinstance(state, dict) else None
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        logger.warning("Ignoring invalid persisted paper-bot state: %s", exc)
+        return None
+    except Exception as exc:
+        logger.debug("Could not read persisted paper-bot state: %s", exc)
+        return None
 
 
 async def rate_limit_middleware(request: Request, call_next):
@@ -178,12 +213,13 @@ def auth_required(func):
 strategy: Optional[MultiSymbolStrategy] = None
 redis_adapter: Optional[RedisAdapter] = None
 grpc_client_manager: Optional[GRPCClientManager] = None
+onchain_stream = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
-    global strategy, redis_adapter, grpc_client_manager
+    global strategy, redis_adapter, grpc_client_manager, onchain_stream
 
     # Startup
     redis_host = app.state.config.get("redis_host", "localhost")
@@ -283,6 +319,13 @@ async def lifespan(app: FastAPI):
 
     # Create order executor callback using gRPC
     def execute_order_via_grpc(signal: OrderSignal) -> bool:
+        if not SIGNAL_ORDER_EXECUTION_ENABLED:
+            logger.info(
+                "Signal order execution disabled; observing %s %s only",
+                signal.side.value,
+                signal.symbol.value,
+            )
+            return False
         if grpc_client_manager:
             response = grpc_client_manager.execute_order_with_retry(
                 symbol=signal.symbol.value,
@@ -352,6 +395,26 @@ async def lifespan(app: FastAPI):
     else:
         app.state.market_intel_task = None
 
+    # Optional read-only Solana stream.  It is disabled unless explicitly
+    # enabled so a deployment cannot unexpectedly consume a public RPC quota.
+    app.state.onchain_stream_task = None
+    app.state.onchain_stream_stop_event = None
+    app.state.onchain_events = []
+    if os.getenv("MARKET_INTEL_ONCHAIN_STREAM_ENABLED", "false").lower() in {"1", "true", "yes"}:
+        from app.market_intel.onchain_stream import SolanaOnchainStream
+
+        onchain_stream = SolanaOnchainStream.from_env()
+        app.state.onchain_stream_stop_event = asyncio.Event()
+
+        async def _record_onchain_event(event):
+            app.state.onchain_events.append(event)
+            app.state.onchain_events = app.state.onchain_events[-500:]
+
+        app.state.onchain_stream_task = asyncio.create_task(
+            onchain_stream.run(_record_onchain_event, app.state.onchain_stream_stop_event)
+        )
+        logger.info("Solana on-chain discovery stream started (read-only)")
+
     yield
 
     # Shutdown
@@ -394,6 +457,16 @@ async def lifespan(app: FastAPI):
             await app.state.market_intel_task
         except asyncio.CancelledError:
             pass
+
+    if getattr(app.state, "onchain_stream_stop_event", None):
+        app.state.onchain_stream_stop_event.set()
+    if getattr(app.state, "onchain_stream_task", None):
+        app.state.onchain_stream_task.cancel()
+        try:
+            await app.state.onchain_stream_task
+        except asyncio.CancelledError:
+            pass
+    onchain_stream = None
 
     if hasattr(app.state, "market_data_task"):
         app.state.market_data_task.cancel()
@@ -1253,6 +1326,13 @@ def register_routes(app: FastAPI):
         bot = get_real_grid_bot()
         return bot.get_status()
 
+    @app.get("/api/real-grid/preflight")
+    async def real_grid_preflight(symbols: Optional[str] = None):
+        """Run public, read-only readiness checks for one or more symbols."""
+        from app.real_grid_preflight import run_preflight
+
+        return await run_preflight(symbols)
+
     @app.post("/api/real-grid/kill")
     @auth_required
     async def real_grid_kill(request: Request):
@@ -1973,20 +2053,34 @@ def register_routes(app: FastAPI):
         """Get Polymarket paper trading bot status."""
         from app.polymarket.paper_bot import get_poly_paper_bot
         bot = get_poly_paper_bot()
-        return bot.get_status()
+        status = bot.get_status()
+        persisted_state = await _read_persisted_paper_state()
+        return (
+            overlay_paper_status(status, persisted_state)
+            if persisted_state is not None
+            else status
+        )
 
     @app.get("/api/poly-paper/positions")
     async def poly_paper_positions(active_only: bool = False):
         """Get paper trading positions."""
         from app.polymarket.paper_bot import get_poly_paper_bot
         bot = get_poly_paper_bot()
-        return bot.get_positions(active_only=active_only)
+        persisted_state = await _read_persisted_paper_state()
+        return (
+            persisted_positions(persisted_state, active_only=active_only)
+            if persisted_state is not None
+            else bot.get_positions(active_only=active_only)
+        )
 
     @app.get("/api/poly-paper/trades")
     async def poly_paper_trades(limit: int = 50):
         """Get recent paper trades."""
         from app.polymarket.paper_bot import get_poly_paper_bot
         bot = get_poly_paper_bot()
+        persisted_state = await _read_persisted_paper_state()
+        if persisted_state is not None:
+            return persisted_trades(persisted_state, limit=limit)
         return bot.get_trades(limit=limit)
 
     @app.get("/api/poly-paper/performance")
@@ -1994,7 +2088,13 @@ def register_routes(app: FastAPI):
         """Get detailed paper trading performance metrics."""
         from app.polymarket.paper_bot import get_poly_paper_bot
         bot = get_poly_paper_bot()
-        return bot.get_performance()
+        performance = bot.get_performance()
+        persisted_state = await _read_persisted_paper_state()
+        return (
+            overlay_paper_performance(performance, persisted_state)
+            if persisted_state is not None
+            else performance
+        )
 
     @app.get("/api/poly-paper/notifications")
     async def poly_paper_notifications(limit: int = 20):
@@ -2182,15 +2282,19 @@ def register_routes(app: FastAPI):
     async def market_intel_sources():
         """List available market data sources and their status."""
         scanner = _get_market_scanner()
+        sources = []
+        for src in scanner.sources.values():
+            item = {
+                "name": src.source_name,
+                "market_type": src.market_type.value,
+                "enabled": True,
+            }
+            coverage = getattr(src, "coverage_status", None)
+            if callable(coverage):
+                item["coverage"] = coverage()
+            sources.append(item)
         return {
-            "sources": [
-                {
-                    "name": src.source_name,
-                    "market_type": src.market_type.value,
-                    "enabled": True,
-                }
-                for src in scanner.sources.values()
-            ],
+            "sources": sources,
             "total": len(scanner.sources),
         }
 
@@ -2215,6 +2319,17 @@ def register_routes(app: FastAPI):
         if not _last_scan_result:
             return {"status": "no_scan_yet", "message": "Background scan has not completed yet"}
         return _last_scan_result
+
+    @app.get("/api/market-intel/onchain/status")
+    async def market_intel_onchain_status():
+        """Return read-only Solana stream health and recent event evidence."""
+        stream_status = onchain_stream.status() if onchain_stream else {
+            "enabled": False,
+            "connected": False,
+            "reason": "MARKET_INTEL_ONCHAIN_STREAM_ENABLED is not true",
+        }
+        events = getattr(app.state, "onchain_events", [])
+        return {"stream": stream_status, "recent_events": events[-50:], "total_buffered": len(events)}
 
     @app.get("/api/market-intel/portfolio")
     async def market_intel_portfolio():
@@ -2801,6 +2916,19 @@ def register_routes(app: FastAPI):
             resolved_positions = 0
             poly_status = {}
 
+        # The paper bot is intentionally not started by this API process.
+        # Prefer its persisted Redis state so command-center and monitor.py
+        # cannot report contradictory safety decisions.
+        paper_state_source = 'memory'
+        persisted_poly_state = await _read_persisted_paper_state()
+        if persisted_poly_state is not None:
+            persisted_summary = summarize_paper_state(persisted_poly_state)
+            active_positions = persisted_summary['active_positions']
+            resolved_positions = persisted_summary['resolved_positions']
+            poly_kill_switch = persisted_summary['kill_switch_active']
+            poly_kill_reason = persisted_summary['kill_reason']
+            paper_state_source = 'redis'
+
         # ── 4. Real grid status ──
         try:
             from app.real_grid_bot import get_real_grid_bot
@@ -2922,6 +3050,10 @@ def register_routes(app: FastAPI):
         except Exception:
             pass
 
+        if persisted_poly_state is not None:
+            paper_bankroll = persisted_summary['bankroll']
+            peak_bankroll = persisted_summary['peak_bankroll']
+
         max_allowed_exposure = poly_max_positions * poly_position_size if poly_max_positions else 0.0
         estimated_exposure = active_positions * poly_position_size if active_positions else 0.0
         bankroll_pnl = paper_bankroll - 100.0  # initial bankroll is $100
@@ -2957,6 +3089,7 @@ def register_routes(app: FastAPI):
                 'kill_switch_active': poly_kill_switch,
                 'kill_reason': poly_kill_reason,
                 'active_positions': active_positions,
+                'state_source': paper_state_source,
             },
             'grid_bot': {
                 'drawdown_pct': round(drawdown_pct, 2),

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"time"
@@ -109,11 +110,55 @@ func NewFinanceTransactionService(
 	}
 }
 
+var ErrFinanceAccessDenied = errors.New("finance resource not found")
+
+func (s *FinanceTransactionService) ownedAccount(ctx context.Context, userID, id string) (*model.FinanceAccount, error) {
+	if userID == "" {
+		return nil, ErrFinanceAccessDenied
+	}
+	account, err := s.accountRepo.GetByID(ctx, id)
+	if err != nil || account == nil || account.UserID != userID {
+		return nil, ErrFinanceAccessDenied
+	}
+	return account, nil
+}
+
+func (s *FinanceTransactionService) allowedCategory(ctx context.Context, userID string, id *string) error {
+	if id == nil {
+		return nil
+	}
+	category, err := s.categoryRepo.GetByID(ctx, *id)
+	if err != nil || category == nil {
+		return ErrFinanceAccessDenied
+	}
+	if category.UserID == userID || (category.UserID == "system" && category.IsSystem) {
+		return nil
+	}
+	return ErrFinanceAccessDenied
+}
+
+func (s *FinanceTransactionService) ownedTransaction(ctx context.Context, userID, id string) (*model.FinanceTransaction, error) {
+	if userID == "" {
+		return nil, ErrFinanceAccessDenied
+	}
+	transaction, err := s.transactionRepo.GetByID(ctx, id)
+	if err != nil || transaction == nil || transaction.UserID != userID {
+		return nil, ErrFinanceAccessDenied
+	}
+	if _, err := s.ownedAccount(ctx, userID, transaction.AccountID); err != nil {
+		return nil, err
+	}
+	return transaction, nil
+}
+
 func (s *FinanceTransactionService) CreateTransaction(ctx context.Context, userID string, req *model.CreateTransactionRequest) (*model.FinanceTransaction, error) {
-	// Validate account exists
-	account, err := s.accountRepo.GetByID(ctx, req.AccountID)
+	// Authorize every referenced resource before persistence or balance changes.
+	account, err := s.ownedAccount(ctx, userID, req.AccountID)
 	if err != nil {
-		return nil, fmt.Errorf("account not found: %w", err)
+		return nil, err
+	}
+	if err := s.allowedCategory(ctx, userID, req.CategoryID); err != nil {
+		return nil, err
 	}
 
 	date := time.Now()
@@ -178,13 +223,23 @@ func (s *FinanceTransactionService) GetTransactionsByDateRange(ctx context.Conte
 	return s.transactionRepo.GetByDateRange(ctx, userID, startDate, endDate)
 }
 
-func (s *FinanceTransactionService) UpdateTransaction(ctx context.Context, transaction *model.FinanceTransaction) error {
+func (s *FinanceTransactionService) UpdateTransaction(ctx context.Context, userID string, transaction *model.FinanceTransaction) error {
+	if _, err := s.ownedTransaction(ctx, userID, transaction.ID); err != nil {
+		return err
+	}
+	if _, err := s.ownedAccount(ctx, userID, transaction.AccountID); err != nil {
+		return err
+	}
+	if err := s.allowedCategory(ctx, userID, transaction.CategoryID); err != nil {
+		return err
+	}
+	transaction.UserID = userID
 	return s.transactionRepo.Update(ctx, transaction)
 }
 
-func (s *FinanceTransactionService) DeleteTransaction(ctx context.Context, id string) error {
+func (s *FinanceTransactionService) DeleteTransaction(ctx context.Context, userID, id string) error {
 	// Get transaction first to adjust account balance
-	transaction, err := s.transactionRepo.GetByID(ctx, id)
+	transaction, err := s.ownedTransaction(ctx, userID, id)
 	if err != nil {
 		return err
 	}
@@ -400,22 +455,22 @@ func (s *FinanceGoalService) CreateGoal(ctx context.Context, userID string, req 
 	}
 
 	goal := &model.FinanceGoal{
-		ID:                 uuid.New().String(),
-		UserID:             userID,
-		Name:               req.Name,
-		Type:               req.Type,
-		TargetAmount:       req.TargetAmount,
-		CurrentAmount:      req.CurrentAmount,
-		Currency:           req.Currency,
-		TargetDate:         req.TargetDate,
+		ID:                  uuid.New().String(),
+		UserID:              userID,
+		Name:                req.Name,
+		Type:                req.Type,
+		TargetAmount:        req.TargetAmount,
+		CurrentAmount:       req.CurrentAmount,
+		Currency:            req.Currency,
+		TargetDate:          req.TargetDate,
 		MonthlyContribution: req.MonthlyContribution,
-		Priority:           priority,
-		Status:             model.GoalStatusActive,
-		Color:              req.Color,
-		Icon:               req.Icon,
-		Notes:              req.Notes,
-		CreatedAt:          time.Now(),
-		UpdatedAt:          time.Now(),
+		Priority:            priority,
+		Status:              model.GoalStatusActive,
+		Color:               req.Color,
+		Icon:                req.Icon,
+		Notes:               req.Notes,
+		CreatedAt:           time.Now(),
+		UpdatedAt:           time.Now(),
 	}
 
 	if req.Currency == "" {
@@ -716,10 +771,10 @@ func (s *FinanceDiaryService) DeleteEntry(ctx context.Context, id string) error 
 
 // NetWorthService implements net worth calculations
 type NetWorthService struct {
-	accountRepo    repository.FinanceAccountRepository
-	assetRepo      repository.FinanceAssetRepository
-	liabilityRepo  repository.FinanceLiabilityRepository
-	historyRepo    repository.NetWorthHistoryRepository
+	accountRepo     repository.FinanceAccountRepository
+	assetRepo       repository.FinanceAssetRepository
+	liabilityRepo   repository.FinanceLiabilityRepository
+	historyRepo     repository.NetWorthHistoryRepository
 	transactionRepo repository.FinanceTransactionRepository
 }
 
@@ -732,10 +787,10 @@ func NewNetWorthService(
 	transactionRepo repository.FinanceTransactionRepository,
 ) *NetWorthService {
 	return &NetWorthService{
-		accountRepo:    accountRepo,
-		assetRepo:      assetRepo,
-		liabilityRepo:  liabilityRepo,
-		historyRepo:    historyRepo,
+		accountRepo:     accountRepo,
+		assetRepo:       assetRepo,
+		liabilityRepo:   liabilityRepo,
+		historyRepo:     historyRepo,
 		transactionRepo: transactionRepo,
 	}
 }
@@ -808,15 +863,15 @@ func (s *NetWorthService) GetLatestNetWorth(ctx context.Context, userID string) 
 
 // DashboardService implements dashboard data aggregation
 type DashboardService struct {
-	accountRepo       repository.FinanceAccountRepository
-	transactionRepo   repository.FinanceTransactionRepository
-	budgetRepo        repository.FinanceBudgetRepository
-	goalRepo          repository.FinanceGoalRepository
-	subscriptionRepo  repository.FinanceSubscriptionRepository
-	categoryRepo      repository.FinanceCategoryRepository
-	assetRepo         repository.FinanceAssetRepository
-	liabilityRepo     repository.FinanceLiabilityRepository
-	historyRepo       repository.NetWorthHistoryRepository
+	accountRepo      repository.FinanceAccountRepository
+	transactionRepo  repository.FinanceTransactionRepository
+	budgetRepo       repository.FinanceBudgetRepository
+	goalRepo         repository.FinanceGoalRepository
+	subscriptionRepo repository.FinanceSubscriptionRepository
+	categoryRepo     repository.FinanceCategoryRepository
+	assetRepo        repository.FinanceAssetRepository
+	liabilityRepo    repository.FinanceLiabilityRepository
+	historyRepo      repository.NetWorthHistoryRepository
 }
 
 // NewDashboardService creates a new dashboard service
@@ -832,15 +887,15 @@ func NewDashboardService(
 	historyRepo repository.NetWorthHistoryRepository,
 ) *DashboardService {
 	return &DashboardService{
-		accountRepo:       accountRepo,
-		transactionRepo:   transactionRepo,
-		budgetRepo:        budgetRepo,
-		goalRepo:          goalRepo,
-		subscriptionRepo:  subscriptionRepo,
-		categoryRepo:      categoryRepo,
-		assetRepo:         assetRepo,
-		liabilityRepo:     liabilityRepo,
-		historyRepo:       historyRepo,
+		accountRepo:      accountRepo,
+		transactionRepo:  transactionRepo,
+		budgetRepo:       budgetRepo,
+		goalRepo:         goalRepo,
+		subscriptionRepo: subscriptionRepo,
+		categoryRepo:     categoryRepo,
+		assetRepo:        assetRepo,
+		liabilityRepo:    liabilityRepo,
+		historyRepo:      historyRepo,
 	}
 }
 

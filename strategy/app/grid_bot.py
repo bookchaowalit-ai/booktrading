@@ -94,8 +94,8 @@ def validate_grid_config(cfg: GridConfig, ref_price: float = 0.0) -> List[str]:
         violations.append(f"order_size must be > 0, got {cfg.order_size}")
     if cfg.max_position <= 0:
         violations.append(f"max_position must be > 0, got {cfg.max_position}")
-    if cfg.grid_spacing_pct < 0.2:
-        violations.append(f"grid_spacing_pct={cfg.grid_spacing_pct} below minimum 0.2%")
+    if cfg.grid_spacing_pct < 0.5:
+        violations.append(f"grid_spacing_pct={cfg.grid_spacing_pct} below minimum 0.5%")
     if cfg.max_notional <= 0:
         violations.append(f"max_notional must be > 0, got {cfg.max_notional}")
     # Check max exposure if we have a reference price
@@ -109,8 +109,8 @@ def validate_grid_config(cfg: GridConfig, ref_price: float = 0.0) -> List[str]:
     return violations
 
 
-def safe_paper_defaults() -> List[GridConfig]:
-    """Conservative paper defaults — mixed THB + USDT pairs.
+def _legacy_safe_paper_defaults() -> List[GridConfig]:
+    """Legacy mixed-exchange defaults retained for explicit migration only.
 
     THB pairs (Binance TH): ฿1,000-2,120 max exposure each.
     USDT pairs (Binance Global): $100-250 max exposure each.
@@ -271,6 +271,28 @@ def safe_paper_defaults() -> List[GridConfig]:
             imbalance_threshold=0.60,
             desperation_buy_threshold=8,
         ),
+    ]
+
+
+def safe_paper_defaults() -> List[GridConfig]:
+    """Return one conservative Binance TH paper configuration.
+
+    Paper defaults intentionally mirror the reviewed BTCTHB real-grid scope:
+    one symbol, two levels, a small base quantity, and a hard notional cap.
+    Multi-exchange/multi-symbol paper runs must provide explicit configs.
+    """
+    return [
+        GridConfig(
+            symbol="BTCTHB",
+            grid_spacing_pct=2.0,
+            grid_levels=2,
+            order_size=0.00005,
+            max_position=0.001,
+            max_notional=3000.0,
+            price_decimals=0,
+            min_notional=100.0,
+            qty_decimals=6,
+        )
     ]
 
 

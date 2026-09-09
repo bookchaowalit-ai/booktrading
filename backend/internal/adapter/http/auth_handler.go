@@ -36,27 +36,41 @@ type sessionStore interface {
 
 // memorySessionStore is the fallback in-memory implementation.
 type memorySessionStore struct {
-	mu     sync.RWMutex
-	tokens map[string]string
+	mu      sync.RWMutex
+	tokens  map[string]string
+	expires map[string]time.Time
 }
 
-func (m *memorySessionStore) SetSession(_ context.Context, token, userID string, _ time.Duration) error {
+func (m *memorySessionStore) SetSession(_ context.Context, token, userID string, ttl time.Duration) error {
 	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.tokens == nil {
+		m.tokens = make(map[string]string)
+	}
+	if m.expires == nil {
+		m.expires = make(map[string]time.Time)
+	}
 	m.tokens[token] = userID
-	m.mu.Unlock()
+	m.expires[token] = time.Now().Add(ttl)
 	return nil
 }
 
 func (m *memorySessionStore) GetSession(_ context.Context, token string) (string, bool) {
-	m.mu.RLock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	v, ok := m.tokens[token]
-	m.mu.RUnlock()
+	if !ok || !time.Now().Before(m.expires[token]) {
+		delete(m.tokens, token)
+		delete(m.expires, token)
+		return "", false
+	}
 	return v, ok
 }
 
 func (m *memorySessionStore) DeleteSession(_ context.Context, token string) {
 	m.mu.Lock()
 	delete(m.tokens, token)
+	delete(m.expires, token)
 	m.mu.Unlock()
 }
 
@@ -73,16 +87,16 @@ type authUser struct {
 
 // AuthHandler handles authentication
 type AuthHandler struct {
-	mu           sync.RWMutex
-	users        []authUser
-	sessions     sessionStore
+	mu            sync.RWMutex
+	users         []authUser
+	sessions      sessionStore
 	loginAttempts map[string]*loginAttempt // IP -> attempt tracking
-	loginMu      sync.Mutex               // separate lock for login attempts
+	loginMu       sync.Mutex               // separate lock for login attempts
 }
 
 type loginAttempt struct {
-	count     int
-	lastReset time.Time
+	count        int
+	lastReset    time.Time
 	blockedUntil time.Time
 }
 

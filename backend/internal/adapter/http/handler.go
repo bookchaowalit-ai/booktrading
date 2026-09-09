@@ -947,39 +947,14 @@ func (r *Router) RegisterFinanceRoutes(handler *FinanceHandler) {
 	r.mux.HandleFunc("/api/finance/calculators/asset-allocation", handler.CalculateAssetAllocation)
 }
 
-// publicRoutes are paths/prefixes that do not require authentication
-var publicRoutes = []string{
-	"/api/auth/login",
-	"/api/auth/register",
-	"/api/health",
-	"/api/paper",
-	"/api/trade",
-	"/api/metrics",
-	"/api/journal",
-	"/api/bot",
-	"/api/portfolio",
-	"/api/trades",
-	"/api/performance",
-	"/api/exchange",
-	"/api/orders",
-	"/api/notifications",
-	"/api/settings",
-	"/api/price-alerts",
-	"/api/risk",
-	"/api/poly-paper",
-	"/api/command-center",
-	"/api/real-grid",
-	"/api/dashboard",
-}
-
-// isPublicRoute checks if the path matches any public route (exact or prefix)
+// Only the exact bootstrap and health endpoints bypass authentication.
 func isPublicRoute(path string) bool {
-	for _, route := range publicRoutes {
-		if path == route || strings.HasPrefix(path, route+"/") {
-			return true
-		}
+	switch path {
+	case "/api/auth/login", "/api/auth/register", "/api/health":
+		return true
+	default:
+		return false
 	}
-	return false
 }
 
 // rateLimiter implements a simple sliding window rate limiter with memory cap

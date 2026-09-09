@@ -2,24 +2,38 @@
 Cross-market opportunity scanner.
 Scans all market sources simultaneously and aggregates results.
 """
-import logging
-import uuid
-from typing import List, Optional, Dict, Any
-from datetime import datetime
 
-from app.market_intel.models import (
-    MarketQuote, MarketOpportunity, MarketSummary, ScannerResult,
-    MarketType, Severity,
+import logging
+import os
+import uuid
+from collections.abc import Callable, Mapping
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from app.market_intel.evm_provider import (
+    EVMProviderIngestor,
+    EVMProviderRegistry,
+    environment_secret_resolver,
 )
-from app.market_intel.sources.base import BaseSource
-from app.market_intel.sources.crypto import CryptoSource
-from app.market_intel.sources.prediction import PredictionSource
-from app.market_intel.sources.stocks import StockSource
-from app.market_intel.sources.macro import MacroSource
+from app.market_intel.models import (
+    MarketOpportunity,
+    MarketQuote,
+    MarketSummary,
+    MarketType,
+    ScannerResult,
+    Severity,
+)
 from app.market_intel.sources.airdrops import AirdropSource
-from app.market_intel.sources.degen import DegenSource
+from app.market_intel.sources.base import BaseSource
 from app.market_intel.sources.binance_alpha import BinanceAlphaSource
 from app.market_intel.sources.cross_exchange_arb import CrossExchangeArbSource
+from app.market_intel.sources.crypto import CryptoSource
+from app.market_intel.sources.degen import DegenSource
+from app.market_intel.sources.evm_onchain import EVMOnchainSource
+from app.market_intel.sources.macro import MacroSource
+from app.market_intel.sources.prediction import PredictionSource
+from app.market_intel.sources.solana_onchain import SolanaOnchainSource
+from app.market_intel.sources.stocks import StockSource
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +50,42 @@ class MarketScanner:
         polymarket_gamma_api: str = "https://gamma-api.polymarket.com",
         polymarket_clob_api: str = "https://clob.polymarket.com",
         enabled_sources: Optional[List[str]] = None,
+        degen_onchain_source: SolanaOnchainSource | None = None,
+        evm_onchain_source: EVMOnchainSource | None = None,
+        evm_provider_ingestor: EVMProviderIngestor | None = None,
+        evm_provider_registry: EVMProviderRegistry | None = None,
+        evm_secret_resolver: Mapping[str, str] | Callable[[str], str | None] | None = None,
     ):
+        if evm_provider_ingestor is not None and evm_provider_registry is not None:
+            raise ValueError("pass either evm_provider_ingestor or evm_provider_registry, not both")
         self.crypto_symbols = crypto_symbols or ["BTCTHB", "ETHTHB", "BTCUSDT", "ETHUSDT"]
         self.stock_symbols = stock_symbols
-        self.enabled = set(enabled_sources or ["crypto", "prediction", "stocks", "macro", "airdrops", "degen", "binance_alpha", "arb"])
+        self.enabled = set(
+            enabled_sources or ["crypto", "prediction", "stocks", "macro", "airdrops", "degen", "binance_alpha", "arb"]
+        )
+        if evm_onchain_source is None and "degen" in self.enabled and any(
+            os.getenv(name, "").strip()
+            for name in (
+                "EVM_ONCHAIN_RPC_URLS_JSON",
+                "EVM_ONCHAIN_FACTORY_ADDRESSES_JSON",
+                "EVM_ONCHAIN_EVENT_TOPICS_JSON",
+            )
+        ):
+            evm_onchain_source = EVMOnchainSource()
+        registry_from_env = False
+        if (
+            evm_provider_ingestor is None
+            and evm_provider_registry is None
+            and "degen" in self.enabled
+            and os.getenv("MARKET_INTEL_EVM_PROVIDER_REGISTRY_JSON", "").strip()
+        ):
+            evm_provider_registry = EVMProviderRegistry.from_env()
+            registry_from_env = True
+        if evm_provider_registry is not None and "degen" in self.enabled:
+            secret_resolver = evm_secret_resolver
+            if secret_resolver is None and registry_from_env:
+                secret_resolver = environment_secret_resolver
+            evm_provider_ingestor = evm_provider_registry.build_ingestor(secret_resolver=secret_resolver)
 
         # Initialize sources
         self.sources: Dict[str, BaseSource] = {}
@@ -57,7 +103,11 @@ class MarketScanner:
         if "airdrops" in self.enabled:
             self.sources["airdrops"] = AirdropSource()
         if "degen" in self.enabled:
-            self.sources["degen"] = DegenSource()
+            self.sources["degen"] = DegenSource(
+                onchain_source=degen_onchain_source,
+                evm_onchain_source=evm_onchain_source,
+                evm_provider_ingestor=evm_provider_ingestor,
+            )
         if "binance_alpha" in self.enabled:
             self.sources["binance_alpha"] = BinanceAlphaSource()
         if "arb" in self.enabled:

@@ -48,8 +48,3 @@ CREATE TABLE IF NOT EXISTS paper_portfolios (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_paper_portfolios_user_id ON paper_portfolios(user_id);
-
--- +migrate Down
-DROP TABLE IF EXISTS paper_orders;
-DROP TABLE IF EXISTS paper_positions;
-DROP TABLE IF EXISTS paper_portfolios;

@@ -23,7 +23,3 @@ CREATE TABLE IF NOT EXISTS price_alerts (
 );
 CREATE INDEX IF NOT EXISTS idx_price_alerts_symbol ON price_alerts(symbol);
 CREATE INDEX IF NOT EXISTS idx_price_alerts_triggered ON price_alerts(triggered);
-
--- +migrate Down
-DROP TABLE IF EXISTS portfolio_snapshots;
-DROP TABLE IF EXISTS price_alerts;

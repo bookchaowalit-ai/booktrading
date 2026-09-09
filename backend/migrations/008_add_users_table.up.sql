@@ -23,12 +23,3 @@ BEGIN
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL;
     END IF;
 END $$;
-
--- +migrate Down
-DO $$
-BEGIN
-    ALTER TABLE orders DROP CONSTRAINT IF EXISTS fk_orders_user_id;
-EXCEPTION
-    WHEN undefined_table THEN NULL;
-END $$;
-DROP TABLE IF EXISTS users;

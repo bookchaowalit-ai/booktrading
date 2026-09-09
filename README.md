@@ -187,7 +187,7 @@ cd bookfinance
 docker compose up -d --build
 
 # Access application
-# Frontend: http://localhost:3000
+# Frontend: http://localhost:3001
 # Backend API: http://localhost:8080
 # Strategy API: http://localhost:8000
 ```
@@ -296,7 +296,7 @@ bookfinance/
 docker compose exec strategy pytest /app/tests/ -v
 ```
 
-Covers kill-switch logic, safety filters, dry-run enforcement, blocklist/allowlist, grid safety, monitor decisions, and `/api/command-center` contracts.
+Covers kill-switch logic, safety filters, dry-run enforcement, blocklist/allowlist, grid safety, monitor decisions, and `/api/command-center` contracts. The default suite is offline; the live API contract tests are marked `integration` and can be run explicitly with `docker compose exec strategy pytest -m integration /app/tests/test_command_center_contract.py -v`.
 
 ### Backend Tests
 

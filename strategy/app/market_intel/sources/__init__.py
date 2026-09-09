@@ -1,6 +1,7 @@
 """
 Market data sources — unified interface.
 """
+
 from app.market_intel.sources.base import BaseSource
 from app.market_intel.sources.crypto import CryptoSource
 from app.market_intel.sources.prediction import PredictionSource
@@ -8,6 +9,8 @@ from app.market_intel.sources.stocks import StockSource
 from app.market_intel.sources.macro import MacroSource
 from app.market_intel.sources.airdrops import AirdropSource
 from app.market_intel.sources.degen import DegenSource
+from app.market_intel.sources.solana_onchain import SolanaOnchainSource
+from app.market_intel.sources.evm_onchain import EVMOnchainSource
 from app.market_intel.sources.binance_alpha import BinanceAlphaSource
 from app.market_intel.sources.cross_exchange_arb import CrossExchangeArbSource
 
@@ -19,6 +22,8 @@ __all__ = [
     "MacroSource",
     "AirdropSource",
     "DegenSource",
+    "SolanaOnchainSource",
+    "EVMOnchainSource",
     "BinanceAlphaSource",
     "CrossExchangeArbSource",
 ]
