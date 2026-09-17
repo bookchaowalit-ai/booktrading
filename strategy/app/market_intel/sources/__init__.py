@@ -13,6 +13,7 @@ from app.market_intel.sources.solana_onchain import SolanaOnchainSource
 from app.market_intel.sources.evm_onchain import EVMOnchainSource
 from app.market_intel.sources.binance_alpha import BinanceAlphaSource
 from app.market_intel.sources.cross_exchange_arb import CrossExchangeArbSource
+from app.market_intel.sources.world import WorldSource
 
 __all__ = [
     "BaseSource",
@@ -26,6 +27,7 @@ __all__ = [
     "EVMOnchainSource",
     "BinanceAlphaSource",
     "CrossExchangeArbSource",
+    "WorldSource",
 ]
 """
 Market data sources — unified interface.

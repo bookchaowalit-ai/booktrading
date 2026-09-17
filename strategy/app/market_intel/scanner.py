@@ -34,6 +34,13 @@ from app.market_intel.sources.macro import MacroSource
 from app.market_intel.sources.prediction import PredictionSource
 from app.market_intel.sources.solana_onchain import SolanaOnchainSource
 from app.market_intel.sources.stocks import StockSource
+from app.market_intel.sources.world import WorldSource
+from app.world.client import WorldMarketsClient, WorldMarketsConfig
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.world.landing import WorldLandingWriter
+from app.world.scanner import WorldPaperScanner
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +62,11 @@ class MarketScanner:
         evm_provider_ingestor: EVMProviderIngestor | None = None,
         evm_provider_registry: EVMProviderRegistry | None = None,
         evm_secret_resolver: Mapping[str, str] | Callable[[str], str | None] | None = None,
+        world_config: WorldMarketsConfig | None = None,
+        world_client: WorldMarketsClient | None = None,
+        world_landing_writer: "WorldLandingWriter | None" = None,
+        world_paper_scanner: WorldPaperScanner | None = None,
+        world_require_landing: bool = True,
     ):
         if evm_provider_ingestor is not None and evm_provider_registry is not None:
             raise ValueError("pass either evm_provider_ingestor or evm_provider_registry, not both")
@@ -112,6 +124,14 @@ class MarketScanner:
             self.sources["binance_alpha"] = BinanceAlphaSource()
         if "arb" in self.enabled:
             self.sources["arb"] = CrossExchangeArbSource()
+        if "world" in self.enabled:
+            self.sources["world"] = WorldSource(
+                config=world_config,
+                client=world_client,
+                landing_writer=world_landing_writer,
+                scanner=world_paper_scanner,
+                require_landing=world_require_landing,
+            )
 
     async def scan_all(
         self,

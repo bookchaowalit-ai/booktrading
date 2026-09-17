@@ -70,6 +70,16 @@ class ServiceConfig(BaseModel):
     polymarket_data_api: str = Field(default="https://data-api.polymarket.com", env="POLYMARKET_DATA_API")
     polymarket_enabled: bool = Field(default=True, env="POLYMARKET_ENABLED")
 
+    # World Markets read-only configuration.  Execution is intentionally not a config option.
+    world_markets_api_base: str = Field(
+        default="https://markets-api-proxy.world-xyz.workers.dev/api/v1", env="WORLD_MARKETS_API_BASE"
+    )
+    world_markets_ws_url: str = Field(
+        default="wss://markets-api-proxy.world-xyz.workers.dev/api/v1/ws", env="WORLD_MARKETS_WS_URL"
+    )
+    world_markets_enabled: bool = Field(default=False, env="WORLD_MARKETS_ENABLED")
+    world_markets_landing_uri: str | None = Field(default=None, env="WORLD_MARKETS_LANDING_URI")
+
     # Market Intelligence Configuration
     market_intel_enabled: bool = Field(default=True, env="MARKET_INTEL_ENABLED")
     market_intel_sources: str = Field(default="crypto,prediction,stocks,macro,airdrops,degen,binance_alpha,arb", env="MARKET_INTEL_SOURCES")
@@ -152,6 +162,14 @@ class ServiceConfig(BaseModel):
             stoch_rsi_period=int(os.getenv("STOCH_RSI_PERIOD", "14")),
             adx_min_trend=float(os.getenv("ADX_MIN_TREND", "25.0")),
             min_composite_score=float(os.getenv("MIN_COMPOSITE_SCORE", "0.5")),
+            world_markets_api_base=os.getenv(
+                "WORLD_MARKETS_API_BASE", "https://markets-api-proxy.world-xyz.workers.dev/api/v1"
+            ),
+            world_markets_ws_url=os.getenv(
+                "WORLD_MARKETS_WS_URL", "wss://markets-api-proxy.world-xyz.workers.dev/api/v1/ws"
+            ),
+            world_markets_enabled=os.getenv("WORLD_MARKETS_ENABLED", "false").lower() in ("1", "true", "yes"),
+            world_markets_landing_uri=os.getenv("WORLD_MARKETS_LANDING_URI"),
             market_intel_enabled=os.getenv("MARKET_INTEL_ENABLED", "true").lower() in ("1", "true", "yes"),
             market_intel_sources=os.getenv(
                 "MARKET_INTEL_SOURCES",

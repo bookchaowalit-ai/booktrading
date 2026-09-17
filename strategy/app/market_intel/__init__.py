@@ -54,6 +54,7 @@ from app.market_intel.sources import (
     PredictionSource,
     SolanaOnchainSource,
     StockSource,
+    WorldSource,
 )
 
 __all__ = [  # noqa: RUF022
@@ -107,4 +108,5 @@ __all__ = [  # noqa: RUF022
     "SolanaOnchainSource",
     "BinanceAlphaSource",
     "CrossExchangeArbSource",
+    "WorldSource",
 ]

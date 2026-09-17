@@ -14,7 +14,7 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from functools import wraps
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -57,6 +57,39 @@ def require_auth(request: Request):
     if not auth.startswith("Bearer "):
         return False
     return auth[7:] == API_TOKEN
+
+
+def _world_landing_uri(app: FastAPI) -> str | None:
+    """Resolve the World lake without returning any secret configuration."""
+    config = getattr(app.state, "config", {}) or {}
+    if isinstance(config, dict):
+        value = config.get("world_markets_landing_uri") or config.get("world_markets_landing_dir")
+    else:
+        value = getattr(config, "world_markets_landing_uri", None) or getattr(
+            config, "world_markets_landing_dir", None
+        )
+    value = value or os.getenv("WORLD_MARKETS_LANDING_URI") or os.getenv("WORLD_MARKETS_LANDING_DIR")
+    clean = str(value).strip() if value is not None else ""
+    return clean or None
+
+
+def _world_received_at(value: str | None) -> datetime | None:
+    """Parse the optional API timestamp and require an explicit timezone."""
+    if value is None:
+        return None
+    try:
+        result = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="received_at must be a timezone-aware ISO timestamp",
+        ) from exc
+    if result.tzinfo is None or result.utcoffset() is None:
+        raise HTTPException(
+            status_code=400,
+            detail="received_at must be a timezone-aware ISO timestamp",
+        )
+    return result.astimezone(timezone.utc)
 
 
 # ── Rate Limiting ───────────────────────────────────────────────────────────────
@@ -165,6 +198,22 @@ class SignalResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     redis_connected: bool
+
+
+class WorldImportResponse(BaseModel):
+    source: str
+    mode: str
+    execution_enabled: bool
+    lake_persisted: bool
+    received_at: str
+    raw_sha256: str
+    landing: Dict[str, Any]
+    markets_scanned: int
+    quality_eligible_market_count: int
+    invalid_market_count: int
+    incomplete_resolution_count: int
+    signals: List[Dict[str, Any]]
+    markets: List[Dict[str, Any]]
 
 
 class BacktestRequest(BaseModel):
@@ -828,6 +877,73 @@ def register_routes(app: FastAPI):
             status="healthy" if redis_connected else "degraded",
             redis_connected=redis_connected,
         )
+
+    @app.get("/api/v1/world/status")
+    async def world_status(request: Request):
+        """Expose the read-only World integration contract."""
+        if not API_TOKEN or not require_auth(request):
+            raise HTTPException(status_code=401, detail="Invalid or missing API token")
+        return {
+            "source": "world_xyz",
+            "mode": "read_only_paper",
+            "execution_enabled": False,
+            "lake_configured": _world_landing_uri(app) is not None,
+            "import_endpoint": "/api/v1/world/import",
+        }
+
+    @app.post("/api/v1/world/import", response_model=WorldImportResponse)
+    async def world_import(
+        request: Request,
+        received_at: Optional[str] = None,
+        endpoint: str = "/events",
+    ):
+        """Land a producer-supplied World JSON body and return paper signals."""
+        if not API_TOKEN or not require_auth(request):
+            raise HTTPException(status_code=401, detail="Invalid or missing API token")
+
+        landing_uri = _world_landing_uri(app)
+        if not landing_uri:
+            raise HTTPException(status_code=503, detail="World Markets landing is not configured")
+
+        from app.world.importer import MAX_IMPORT_BYTES, WorldImportError, import_world_response
+        from app.market_intel.onchain_landing import ObjectStoreError
+
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                if int(content_length) > MAX_IMPORT_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"World JSON payload exceeds the {MAX_IMPORT_BYTES} byte limit",
+                    )
+            except ValueError:
+                # The body-length check below remains authoritative when a
+                # producer sends a malformed Content-Length header.
+                pass
+
+        body = bytearray()
+        async for chunk in request.stream():
+            body.extend(chunk)
+            if len(body) > MAX_IMPORT_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"World JSON payload exceeds the {MAX_IMPORT_BYTES} byte limit",
+                )
+        raw = bytes(body)
+
+        parsed_received_at = _world_received_at(received_at)
+        try:
+            report = import_world_response(
+                raw,
+                landing_uri,
+                endpoint=endpoint,
+                received_at=parsed_received_at,
+            )
+        except ObjectStoreError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except (WorldImportError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return report.as_dict()
 
     @app.get("/api/indicators", response_model=Dict[str, IndicatorResponse])
     async def get_indicators(request: Request):
