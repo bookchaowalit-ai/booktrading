@@ -82,6 +82,9 @@ could reset the kill switch without authentication.
 - Polymarket `_parse_date`: epoch values become tz-aware UTC like ISO `Z`
   strings (they were naive host-local, so the two forms disagreed by the host
   offset and could not be compared); `strategy/tests/test_polymarket_dates.py`.
+- Real-grid preflight `_as_float` treats NaN/inf as missing, so a NaN 24h
+  volume or price move no longer skips the liquidity/volatility warnings
+  (`test_preflight_treats_nan_market_data_as_missing`).
 
 ## Done in pass 4
 - Frontend: Next 14.2.35 -> 15.5.27 (latest 15.x), React 18 -> 19,

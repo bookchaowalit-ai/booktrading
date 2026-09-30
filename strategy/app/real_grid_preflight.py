@@ -45,10 +45,17 @@ def parse_symbols(raw: str | None = None) -> list[str]:
 
 
 def _as_float(value: Any, default: float = 0.0) -> float:
+    """Parse a number; NaN/inf fall back to ``default``.
+
+    ``float("NaN")`` succeeds, and NaN compares False against every bound,
+    so a NaN volume or price move silently skipped the liquidity and
+    volatility warnings.
+    """
     try:
-        return float(value)
+        number = float(value)
     except (TypeError, ValueError):
         return default
+    return number if math.isfinite(number) else default
 
 
 def _is_step_multiple(quantity: float, step_size: float) -> bool:

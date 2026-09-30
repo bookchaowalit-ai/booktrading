@@ -111,3 +111,25 @@ async def test_global_portfolio_cap_blocks_new_buy(monkeypatch) -> None:
 
     assert placed is False
     bot._http.post.assert_not_awaited()
+
+
+def test_preflight_treats_nan_market_data_as_missing() -> None:
+    report = validate_symbol_snapshot(
+        "ETHTHB",
+        _exchange_symbol("ETHTHB"),
+        {"lastPrice": "70000", "quoteVolume": "NaN", "priceChangePercent": "nan"},
+        {"order_size": 0.002, "grid_levels": 2, "max_position": 0.004, "tick_size": 1},
+    )
+
+    # A NaN volume must not skip the low-liquidity warning (NaN < x is False).
+    assert "low_24h_quote_volume" in report["warnings"]
+    assert report["quote_volume_24h_thb"] == 0.0
+
+    nan_price = validate_symbol_snapshot(
+        "ETHTHB",
+        _exchange_symbol("ETHTHB"),
+        {"lastPrice": "inf", "quoteVolume": "1000000", "priceChangePercent": "2"},
+        {"order_size": 0.002, "grid_levels": 2, "max_position": 0.004, "tick_size": 1},
+    )
+    assert nan_price["ready"] is False
+    assert "ticker_unavailable" in nan_price["blockers"]
