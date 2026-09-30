@@ -5,7 +5,7 @@ All market data endpoints are public (no auth required).
 """
 import logging
 from typing import List, Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 import httpx
 
 from app.polymarket.models import (
@@ -342,12 +342,16 @@ class PolymarketClient:
         )
 
     def _parse_date(self, val) -> Optional[datetime]:
-        """Parse date string to datetime."""
+        """Parse an epoch or ISO date to a datetime.
+
+        Epoch values are UTC and returned tz-aware, like ISO strings ending in
+        ``Z``; ``fromtimestamp`` without a tz returned naive host-local time.
+        """
         if not val:
             return None
         try:
             if isinstance(val, (int, float)):
-                return datetime.fromtimestamp(val)
+                return datetime.fromtimestamp(val, tz=UTC)
             return datetime.fromisoformat(str(val).replace("Z", "+00:00"))
         except Exception:
             return None

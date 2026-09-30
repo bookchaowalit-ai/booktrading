@@ -79,6 +79,9 @@ could reset the kill switch without authentication.
   `grid_reconcile_test.go`, `signal_trade_test.go` — httptest fakes only.
   Verified with `go vet`, `gofmt -l`, `go mod tidy` diff, `go test -race
   ./...`.
+- Polymarket `_parse_date`: epoch values become tz-aware UTC like ISO `Z`
+  strings (they were naive host-local, so the two forms disagreed by the host
+  offset and could not be compared); `strategy/tests/test_polymarket_dates.py`.
 
 ## Done in pass 4
 - Frontend: Next 14.2.35 -> 15.5.27 (latest 15.x), React 18 -> 19,
