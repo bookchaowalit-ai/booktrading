@@ -96,6 +96,11 @@ could reset the kill switch without authentication.
   NaN/Inf (which made the dashboard JSON fail to encode). `goalOnTrack` uses
   fractional months: goals due within 30 days divided by `days/30 == 0`.
   The dashboard's `OnTrack` uses the same rule. `finance_percent_test.go`.
+- Strategy DCA sells: quantity and limit price are floored to the symbol's
+  step/tick grid (`_floor_to_step`, Decimal-exact). They were sent raw
+  (15% of holdings, or 95% of a short balance), which Binance TH rejects,
+  and the min-notional check now runs after rounding.
+  `tests/test_dca_order_grid.py`.
 
 ## Done in pass 4
 - Frontend: Next 14.2.35 -> 15.5.27 (latest 15.x), React 18 -> 19,
