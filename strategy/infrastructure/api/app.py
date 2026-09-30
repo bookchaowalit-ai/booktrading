@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from functools import wraps
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -1757,7 +1757,8 @@ def register_routes(app: FastAPI):
     # ── Backtester Endpoints ──
 
     @app.post("/api/backtest/run")
-    async def run_grid_backtest(request: dict):
+    @auth_required
+    async def run_grid_backtest(request: Request, body: dict = Body(...)):
         """
         Run grid trading backtest with given parameters.
         
@@ -1787,27 +1788,27 @@ def register_routes(app: FastAPI):
         from app.backtester import GridBacktester, BacktestConfig
 
         config = BacktestConfig(
-            symbol=request.get("symbol", "BTCTHB"),
-            grid_spacing_pct=request.get("grid_spacing_pct", 1.5),
-            grid_levels=request.get("grid_levels", 2),
-            order_size=request.get("order_size", 0.00005),
-            max_position=request.get("max_position", 0.001),
-            max_open_orders=request.get("max_open_orders", 10),
-            initial_capital_thb=request.get("initial_capital_thb", 10000.0),
-            volatility_mode=request.get("volatility_mode", "fixed"),
-            atr_period=request.get("atr_period", 14),
-            atr_multiplier=request.get("atr_multiplier", 1.5),
-            min_spacing_pct=request.get("min_spacing_pct", 0.5),
-            max_spacing_pct=request.get("max_spacing_pct", 5.0),
-            grid_mode=request.get("grid_mode", "arithmetic"),
-            dgt_enabled=request.get("dgt_enabled", False),
-            dgt_reinvest_pct=request.get("dgt_reinvest_pct", 0.5),
-            enable_entry_confluence=request.get("enable_entry_confluence", False),
-            rsi_buy_threshold=request.get("rsi_buy_threshold", 45.0),
-            volume_multiplier=request.get("volume_multiplier", 1.5),
+            symbol=body.get("symbol", "BTCTHB"),
+            grid_spacing_pct=body.get("grid_spacing_pct", 1.5),
+            grid_levels=body.get("grid_levels", 2),
+            order_size=body.get("order_size", 0.00005),
+            max_position=body.get("max_position", 0.001),
+            max_open_orders=body.get("max_open_orders", 10),
+            initial_capital_thb=body.get("initial_capital_thb", 10000.0),
+            volatility_mode=body.get("volatility_mode", "fixed"),
+            atr_period=body.get("atr_period", 14),
+            atr_multiplier=body.get("atr_multiplier", 1.5),
+            min_spacing_pct=body.get("min_spacing_pct", 0.5),
+            max_spacing_pct=body.get("max_spacing_pct", 5.0),
+            grid_mode=body.get("grid_mode", "arithmetic"),
+            dgt_enabled=body.get("dgt_enabled", False),
+            dgt_reinvest_pct=body.get("dgt_reinvest_pct", 0.5),
+            enable_entry_confluence=body.get("enable_entry_confluence", False),
+            rsi_buy_threshold=body.get("rsi_buy_threshold", 45.0),
+            volume_multiplier=body.get("volume_multiplier", 1.5),
         )
-        days = request.get("days", 30)
-        interval = request.get("interval", "1h")
+        days = body.get("days", 30)
+        interval = body.get("interval", "1h")
 
         backtester = GridBacktester(config)
         try:
@@ -1857,7 +1858,8 @@ def register_routes(app: FastAPI):
             await backtester.close()
 
     @app.post("/api/backtest/sweep")
-    async def run_parameter_sweep_endpoint(request: dict):
+    @auth_required
+    async def run_parameter_sweep_endpoint(request: Request, body: dict = Body(...)):
         """
         Run parameter sweep: test multiple grid_spacing_pct x grid_levels combos.
         
@@ -1876,18 +1878,18 @@ def register_routes(app: FastAPI):
         from app.backtester import run_parameter_sweep
 
         result = await run_parameter_sweep(
-            symbol=request.get("symbol", "BTCTHB"),
-            days=request.get("days", 30),
-            interval=request.get("interval", "1h"),
-            volatility_mode=request.get("volatility_mode", "fixed"),
-            spacing_range=request.get("spacing_range"),
-            levels_range=request.get("levels_range"),
-            atr_period=request.get("atr_period", 14),
-            atr_multiplier=request.get("atr_multiplier", 1.5),
-            min_spacing_pct=request.get("min_spacing_pct", 0.5),
-            max_spacing_pct=request.get("max_spacing_pct", 5.0),
-            order_size=request.get("order_size", 0.00005),
-            initial_capital_thb=request.get("initial_capital_thb", 10000.0),
+            symbol=body.get("symbol", "BTCTHB"),
+            days=body.get("days", 30),
+            interval=body.get("interval", "1h"),
+            volatility_mode=body.get("volatility_mode", "fixed"),
+            spacing_range=body.get("spacing_range"),
+            levels_range=body.get("levels_range"),
+            atr_period=body.get("atr_period", 14),
+            atr_multiplier=body.get("atr_multiplier", 1.5),
+            min_spacing_pct=body.get("min_spacing_pct", 0.5),
+            max_spacing_pct=body.get("max_spacing_pct", 5.0),
+            order_size=body.get("order_size", 0.00005),
+            initial_capital_thb=body.get("initial_capital_thb", 10000.0),
         )
         return {
             "symbol": result.symbol,
@@ -1916,7 +1918,8 @@ def register_routes(app: FastAPI):
     # ── Polymarket Endpoints ──
 
     @app.post("/api/backtest/compare")
-    async def compare_strategies(request: dict):
+    @auth_required
+    async def compare_strategies(request: Request, body: dict = Body(...)):
         """
         Run 11 strategy variants side-by-side for comparison:
           1. baseline: arithmetic grid (legacy)
@@ -1933,13 +1936,13 @@ def register_routes(app: FastAPI):
         """
         from app.backtester import GridBacktester, BacktestConfig
 
-        symbol = request.get("symbol", "BTCTHB")
-        days = request.get("days", 30)
-        interval = request.get("interval", "1h")
-        spacing = request.get("grid_spacing_pct", 1.5)
-        levels = request.get("grid_levels", 2)
-        order_size = request.get("order_size", 0.00005)
-        capital = request.get("initial_capital_thb", 10000.0)
+        symbol = body.get("symbol", "BTCTHB")
+        days = body.get("days", 30)
+        interval = body.get("interval", "1h")
+        spacing = body.get("grid_spacing_pct", 1.5)
+        levels = body.get("grid_levels", 2)
+        order_size = body.get("order_size", 0.00005)
+        capital = body.get("initial_capital_thb", 10000.0)
 
         configs = {
             "baseline": BacktestConfig(
@@ -2108,7 +2111,8 @@ def register_routes(app: FastAPI):
         }
 
     @app.post("/api/backtest/walk-forward")
-    async def walk_forward_tuning(request: dict):
+    @auth_required
+    async def walk_forward_tuning(request: Request, body: dict = Body(...)):
         """
         Walk-forward parameter optimization.
         Tunes desperation_buy_threshold, imbalance_threshold, rsi_buy_threshold
@@ -2116,10 +2120,10 @@ def register_routes(app: FastAPI):
         """
         from app.backtester import run_walk_forward_tuning
 
-        symbol = request.get("symbol", "BTCTHB")
-        days = request.get("days", 30)
-        interval = request.get("interval", "1h")
-        n_folds = request.get("n_folds", 3)
+        symbol = body.get("symbol", "BTCTHB")
+        days = body.get("days", 30)
+        interval = body.get("interval", "1h")
+        n_folds = body.get("n_folds", 3)
 
         result = await run_walk_forward_tuning(
             symbol=symbol, days=days, interval=interval, n_folds=n_folds,
@@ -2604,6 +2608,7 @@ def register_routes(app: FastAPI):
         return {"tasks": tasks, "stats": stats}
 
     @app.post("/api/airdrop-tracker/tasks")
+    @auth_required
     async def airdrop_tracker_add(request: Request):
         """Add a new airdrop task to track."""
         try:
@@ -2629,6 +2634,7 @@ def register_routes(app: FastAPI):
         return {"task": task}
 
     @app.patch("/api/airdrop-tracker/tasks/{task_id}")
+    @auth_required
     async def airdrop_tracker_update(task_id: str, request: Request):
         """Update an existing airdrop task."""
         try:
@@ -2643,6 +2649,7 @@ def register_routes(app: FastAPI):
         return {"task": task}
 
     @app.patch("/api/airdrop-tracker/tasks/{task_id}/subtasks/{subtask_idx}")
+    @auth_required
     async def airdrop_tracker_update_subtask(task_id: str, subtask_idx: int, request: Request):
         """Toggle a subtask completion status."""
         try:
@@ -2658,7 +2665,8 @@ def register_routes(app: FastAPI):
         return {"task": task}
 
     @app.delete("/api/airdrop-tracker/tasks/{task_id}")
-    async def airdrop_tracker_delete(task_id: str):
+    @auth_required
+    async def airdrop_tracker_delete(task_id: str, request: Request):
         """Remove a tracked airdrop task."""
         tracker = _get_airdrop_tracker()
         success = await tracker.delete_task(task_id)
@@ -2704,7 +2712,8 @@ def register_routes(app: FastAPI):
         return await logger.get_performance_stats()
 
     @app.post("/api/signal-tracker/evaluate")
-    async def signal_tracker_evaluate():
+    @auth_required
+    async def signal_tracker_evaluate(request: Request):
         """
         Manually trigger signal evaluation against current prices.
         Normally runs automatically, but can be triggered on-demand.

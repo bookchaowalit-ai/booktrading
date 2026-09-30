@@ -21,6 +21,13 @@ could reset the kill switch without authentication.
   that cannot attribute every recent row keeps the order pending.
 
 ### P1
+- Frontend services `airdrop-tracker.ts`, `backtest.ts`,
+  `signal-tracker.ts` and `monitoring.ts` (kill/enable) call the strategy
+  API without a bearer token, so with `AUTH_TOKEN` set those UI actions
+  return 401. Proxy them through the Go backend (server-side token) rather
+  than exposing the strategy token to the browser.
+- `POST /api/v1/world/import` has no auth decorator; confirm its intended
+  caller and guard it.
 - Backtester: ATR spacing and grid (re)anchoring still use bar *i*'s own
   close/high/low. Anchor on the bar open or the previous close, and resolve
   same-bar buy→sell round trips pessimistically.
@@ -51,7 +58,22 @@ could reset the kill switch without authentication.
   no tests. Add table tests around order request construction, using fake
   HTTP servers only.
 
-## Done in this pass (pass 5)
+## Done in this pass (pass 6: route auth + action pinning)
+- `strategy/infrastructure/api/app.py`: `@auth_required` (same as the
+  real-grid kill/enable routes) now guards airdrop-tracker POST/PATCH
+  (task + subtask)/DELETE, backtest run/sweep/compare/walk-forward and
+  `POST /api/signal-tracker/evaluate`. Backtest handlers take
+  `request: Request, body: dict = Body(...)`, so the JSON body contract is
+  unchanged. `strategy/tests/test_mutating_routes_auth.py` (39 tests,
+  backends faked, no network): missing/wrong/non-Bearer token -> 401 and
+  nothing runs; valid token reaches the handler; body still parsed;
+  production without `AUTH_TOKEN` fails closed. Full suite 536 passed.
+- `.github/workflows/ci-cd.yml`: codecov, docker/setup-buildx,
+  docker/build-push and appleboy/ssh-action pinned to commit SHAs with a
+  `# vX.Y.Z` comment (resolved with `git ls-remote`, annotated tags
+  dereferenced).
+
+## Done in pass 5
 - Go Bitkub: new v3 order functions (`bitkub/orders_v3.go`): place-bid /
   place-ask with `client_id` (bids converted to THB at the order price),
   `order-info`, `cancel-order`, and `FindOrderByClientID`. Requests are
