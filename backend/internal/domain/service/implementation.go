@@ -897,20 +897,39 @@ func (s *BotServiceImpl) executeSignalTrade(ctx context.Context, symbol string, 
 		return false
 	}
 
-	// Execute order
-	var orderErr error
-	if manager != nil {
-		_, orderErr = manager.PlaceOrder(ctx, symbol, side, quantity, currentPrice)
-	} else {
-		_, orderErr = client.PlaceOrder(symbol, side, "MARKET", quantity, currentPrice)
+	place := func(ctx context.Context, side string, quantity, price float64) error {
+		if manager != nil {
+			_, err := manager.PlaceOrder(ctx, symbol, side, quantity, price)
+			return err
+		}
+		_, err := client.PlaceOrder(symbol, side, "MARKET", quantity, price)
+		return err
+	}
+	return s.signalTradeStep(ctx, symbol, side, quantity, currentPrice, place)
+}
+
+// signalTradeStep submits one signal-driven order and records it. A failed
+// order is not a trade: it is reported as ORDER_FAILED, is not counted in
+// tradesCount/TotalTrades, is never relabelled as a "PAPER" fill, and does not
+// open an auto-mode position. It reports whether the order went through.
+func (s *BotServiceImpl) signalTradeStep(ctx context.Context, symbol, side string, quantity, currentPrice float64, place gridOrderFunc) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+
+	if orderErr := place(ctx, side, quantity, currentPrice); orderErr != nil {
+		logger.Warn("Signal trade order failed", "symbol", symbol, "side", side, "error", orderErr)
+		s.broadcaster.BroadcastBotActivity(&model.BotActivity{
+			Timestamp: time.Now(),
+			Activity:  "ORDER_FAILED",
+			Symbol:    symbol,
+			Message:   fmt.Sprintf("Signal %s %.4f @ %.2f failed: %v", side, quantity, currentPrice, orderErr),
+			Level:     "error",
+		})
+		return false
 	}
 
 	tradeType := fmt.Sprintf("SIGNAL_%s", side)
-	if orderErr != nil {
-		logger.Info("Signal trade order failed", "error", orderErr)
-		tradeType = "PAPER_" + tradeType
-	}
-
 	s.broadcaster.BroadcastTradeNotification(&model.TradeNotification{
 		ID:        fmt.Sprintf("signal_trade_%d", time.Now().UnixMilli()),
 		Symbol:    model.TradeSymbol(symbol),
@@ -925,21 +944,20 @@ func (s *BotServiceImpl) executeSignalTrade(ctx context.Context, symbol string, 
 
 	s.runningMu.Lock()
 	// Track position in auto mode (only while this run is still active)
-	if s.botMode == model.BotModeAuto && side == "BUY" && orderErr == nil && ctx.Err() == nil {
+	if s.botMode == model.BotModeAuto && side == "BUY" && ctx.Err() == nil {
 		s.positions[symbol] = &positionInfo{
 			entryPrice: currentPrice,
 			quantity:   quantity,
 			entryTime:  time.Now(),
 		}
 	}
-	// Update stats
 	s.tradesCount++
 	if s.botMode == model.BotModeSignal || s.botMode == model.BotModeAuto {
 		s.botStatus.TotalTrades = s.tradesCount
 	}
 	s.runningMu.Unlock()
 
-	return orderErr == nil
+	return true
 }
 
 // gridTradingLoop is the main grid trading loop. The gridBook is owned by
