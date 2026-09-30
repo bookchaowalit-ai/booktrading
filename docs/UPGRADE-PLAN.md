@@ -5,7 +5,7 @@ protection mode) first; nothing here authorizes real-money trading.
 
 ## Current state
 
-**Score: 6.5 / 10** (was 5 before pass 1). The three suites (Go, Next.js,
+**Score: 7 / 10** (6.5 after pass 1, 5 before). Pass 2 closed the Go grid P0s (position cap, per-level idempotency, failed orders no longer counted as paper trades) and moved Next to 14.2.35. The three suites (Go, Next.js,
 strategy Python) are green, and CI now runs the full offline strategy suite.
 Before this pass, the Go race detector flaked in CI, CI ran only 2 of the
 ~50 strategy test files, the paper grid sync crashed with a `NameError` it
@@ -15,17 +15,15 @@ could reset the kill switch without authentication.
 ## Backlog
 
 ### P0
-- Go grid loop (`backend/internal/domain/service/implementation.go`,
-  `executeGridTrading`) places an order on every 5s tick while price stays in
-  the bottom/top band. It has no inventory or position cap and never
-  de-duplicates per level. Add a per-level fill state and a max-position check
-  before any real order.
-- Upgrade `next` from 14.1.0 (npm flags a published security advisory) to the
-  latest patched 14.2.x. Verify with `npm run lint && npx tsc --noEmit &&
-  npm test && npm run build`.
-- The Go `executeSignalTrade` / grid fallback reports a *failed real order*
-  as a "PAPER" trade and counts it in `tradesCount`. Record it as a failed
-  order instead, so evidence and PnL are not inflated.
+- Next 14.2.35 is the last 14.x, but `npm audit` still lists Next advisories
+  fixed only in 15.x/16.x (image optimizer, RSC DoS, middleware bypass).
+  Plan a Next 15 migration (async request APIs, React 19) in its own pass.
+- `executeSignalTrade` (SIGNAL/AUTO modes) still labels a failed real order
+  as "PAPER" and counts it in `tradesCount`; apply the same fix as the grid
+  (`gridStep`).
+- Grid order placement is synchronous; an order that times out after the
+  exchange accepted it is treated as failed. Reconcile open orders/fills from
+  the exchange before re-arming a level.
 
 ### P1
 - `require_auth` in `strategy/infrastructure/api/app.py` allows every caller
@@ -47,6 +45,8 @@ could reset the kill switch without authentication.
   (imports, pyupgrade). Fix them per package and widen the CI ruff scope
   beyond `E9,F63,F7,F82`.
 - Duplicate re-exports in `app/market_intel/sources/__init__.py` (F811).
+- `frontend/package-lock.json` is gitignored, so installs are not
+  reproducible; commit it and switch CI to `npm ci`.
 - Go `adapter/exchange`, `adapter/repository` and `adapter/grpcserver` have
   no tests. Add table tests around order request construction, using fake
   HTTP servers only.
@@ -75,3 +75,15 @@ could reset the kill switch without authentication.
   (`tests/test_grid_backtester.py`).
 - CI: the strategy job runs the full offline pytest suite plus a ruff gate
   for undefined names and syntax errors.
+
+## Done in this pass (pass 2)
+- Go grid: new per-run `gridBook` (`implementation.go`). A BUY is placed at
+  most once per grid level until a SELL releases it (idempotent, no more
+  order-per-tick), base inventory is capped at `quantity * gridLevels`, the
+  quote exposure is capped by `Investment` when set, SELL needs inventory
+  (no naked sells), and a failed order is reported as `ORDER_FAILED` instead
+  of a counted "PAPER" trade. Tests: `grid_position_test.go`; verified with
+  `go vet` and `go test -race ./...`.
+- Frontend: `next` and `eslint-config-next` 14.1.0 -> 14.2.35 (latest 14.x,
+  no major bump). Verified `npm run lint`, `tsc --noEmit`, `npm test`
+  (37 passed), `npm run build`.
