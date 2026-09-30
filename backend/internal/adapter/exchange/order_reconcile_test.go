@@ -148,7 +148,7 @@ func TestExecutorTagsOrdersAndLooksThemUp(t *testing.T) {
 }
 
 func TestUnsupportedExchangeCannotReconcile(t *testing.T) {
-	m := &ExchangeManager{currentProvider: config.ExchangeBitkub}
+	m := &ExchangeManager{currentProvider: config.ExchangeProvider("unknown")}
 	if _, err := m.LookupOrderByClientID(context.Background(), "THB_BTC", "grid-a-1"); !errors.Is(err, ErrReconcileUnsupported) {
 		t.Fatalf("err = %v, want ErrReconcileUnsupported", err)
 	}

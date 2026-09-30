@@ -41,7 +41,7 @@ func (e *scriptedExchange) place(ctx context.Context, clientOrderID, side string
 	return e.placeResp, nil
 }
 
-func (e *scriptedExchange) lookup(ctx context.Context, clientOrderID string) (gridOrderReport, error) {
+func (e *scriptedExchange) lookup(ctx context.Context, clientOrderID string, submittedAt time.Time) (gridOrderReport, error) {
 	e.lookups++
 	if e.lookupErr != nil {
 		return gridOrderReport{}, e.lookupErr

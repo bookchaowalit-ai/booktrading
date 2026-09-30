@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 // fakeGridExchange fills every accepted order immediately unless fail is set.
@@ -26,7 +27,7 @@ func (f *fakeGridExchange) signal(ctx context.Context, side string, quantity, pr
 	return err
 }
 
-func (f *fakeGridExchange) lookup(ctx context.Context, clientOrderID string) (gridOrderReport, error) {
+func (f *fakeGridExchange) lookup(ctx context.Context, clientOrderID string, submittedAt time.Time) (gridOrderReport, error) {
 	return gridOrderReport{state: gridOrderNotFound}, nil
 }
 

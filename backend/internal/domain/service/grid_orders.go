@@ -29,6 +29,9 @@ import (
 //     that is still in flight can be unknown to the exchange for a moment;
 //   - if the exchange cannot look orders up, the order stays pending and the
 //     grid stops placing orders until an operator reconciles and restarts it.
+//     Binance and Binance TH look up by client order ID; Bitkub scans open
+//     orders and the fills made since submission (it has no direct query), and
+//     a lookup it cannot decide keeps the order pending.
 
 // gridUnknownGrace is how long an unknown order must be absent from the
 // exchange before the grid treats it as never placed.
@@ -54,8 +57,9 @@ type gridExchange interface {
 	// place submits an order. An error for which exchange.IsOrderStateUnknown
 	// is true means the order may exist.
 	place(ctx context.Context, clientOrderID, side string, quantity, price float64) (gridOrderReport, error)
-	// lookup returns the state of an order by client order ID.
-	lookup(ctx context.Context, clientOrderID string) (gridOrderReport, error)
+	// lookup returns the state of an order by client order ID. submittedAt
+	// bounds the search on exchanges that cannot query by client order ID.
+	lookup(ctx context.Context, clientOrderID string, submittedAt time.Time) (gridOrderReport, error)
 }
 
 // gridPendingOrder is an order whose outcome is not final yet.
@@ -180,7 +184,7 @@ func (s *BotServiceImpl) reconcileGridOrder(ctx context.Context, grid gridParams
 	if ctx.Err() != nil {
 		return ""
 	}
-	report, err := ex.lookup(ctx, order.clientOrderID)
+	report, err := ex.lookup(ctx, order.clientOrderID, order.submittedAt)
 	if err != nil {
 		level, msg := "warning", "lookup failed, will retry"
 		if errors.Is(err, exchange.ErrReconcileUnsupported) {
@@ -310,11 +314,11 @@ func (e *liveGridExchange) place(ctx context.Context, clientOrderID, side string
 	return gridOrderReport{state: gridOrderFilled, executedQty: quantity}, nil
 }
 
-func (e *liveGridExchange) lookup(ctx context.Context, clientOrderID string) (gridOrderReport, error) {
+func (e *liveGridExchange) lookup(ctx context.Context, clientOrderID string, submittedAt time.Time) (gridOrderReport, error) {
 	if e.manager == nil {
 		return gridOrderReport{}, exchange.ErrReconcileUnsupported
 	}
-	report, err := e.manager.LookupOrderByClientID(ctx, e.symbol, clientOrderID)
+	report, err := e.manager.LookupOrderByClientIDSince(ctx, e.symbol, clientOrderID, submittedAt)
 	if errors.Is(err, exchange.ErrOrderNotFound) {
 		return gridOrderReport{state: gridOrderNotFound}, nil
 	}

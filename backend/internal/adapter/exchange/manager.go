@@ -331,6 +331,7 @@ func (m *ExchangeManager) PlaceOrderWithClientID(ctx context.Context, symbol, si
 	provider := m.currentProvider
 	executor := m.binanceExecutor
 	thAdapter := m.binanceTHAdapter
+	bk := m.bitkubClient
 	m.mu.RUnlock()
 
 	switch provider {
@@ -374,6 +375,11 @@ func (m *ExchangeManager) PlaceOrderWithClientID(ctx context.Context, symbol, si
 			return nil, err
 		}
 		return reportFromOrder(placed), nil
+	case config.ExchangeBitkub:
+		if bk == nil {
+			return nil, fmt.Errorf("Bitkub client not initialized")
+		}
+		return placeBitkubWithClientID(ctx, bk, symbol, side, quantity, price, clientOrderID)
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrReconcileUnsupported, provider)
 	}
@@ -383,11 +389,24 @@ func (m *ExchangeManager) PlaceOrderWithClientID(ctx context.Context, symbol, si
 // PlaceOrderWithClientID, or ErrOrderNotFound when the exchange never
 // accepted it.
 func (m *ExchangeManager) LookupOrderByClientID(ctx context.Context, symbol, clientOrderID string) (*OrderReport, error) {
+	return m.LookupOrderByClientIDSince(ctx, symbol, clientOrderID, time.Time{})
+}
+
+// LookupOrderByClientIDSince is LookupOrderByClientID for an order submitted
+// at or after since. Binance ignores since. Bitkub cannot query by client
+// order ID, so it scans open orders and the fills made since then (see
+// bitkub.FindOrderByClientID); a zero since makes absence unprovable there.
+func (m *ExchangeManager) LookupOrderByClientIDSince(ctx context.Context, symbol, clientOrderID string, since time.Time) (*OrderReport, error) {
 	m.mu.RLock()
 	provider := m.currentProvider
 	executor := m.binanceExecutor
 	thAdapter := m.binanceTHAdapter
+	bk := m.bitkubClient
 	m.mu.RUnlock()
+
+	if provider == config.ExchangeBitkub && bk != nil {
+		return lookupBitkubByClientID(ctx, bk, symbol, clientOrderID, since)
+	}
 
 	var (
 		order *Order
