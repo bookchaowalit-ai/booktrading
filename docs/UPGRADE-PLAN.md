@@ -5,7 +5,7 @@ protection mode) first; nothing here authorizes real-money trading.
 
 ## Current state
 
-**Score: 8 / 10** (7.5 after pass 3, 7 after pass 2, 6.5 after pass 1, 5 before). Pass 4 moved the frontend to Next 15.5 / React 19 with a tracked lockfile, and made grid orders with an unknown outcome reconcile by client order ID instead of re-submitting. Pass 3 fixed failed signal orders being counted as paper trades, made strategy auth fail closed in production, and enforced gofmt/tidy in CI. Pass 2 closed the Go grid P0s (position cap, per-level idempotency, failed orders no longer counted as paper trades) and moved Next to 14.2.35. The three suites (Go, Next.js,
+**Score: 8.5 / 10** (8 after pass 4, 7.5 after pass 3, 7 after pass 2, 6.5 after pass 1, 5 before). Pass 5 closed the last order-safety P0: Bitkub grid orders reconcile through the v3 API instead of pausing the grid, open grid orders are cancelled after a max age, and signal/auto orders reuse the same reconciliation. Pass 4 moved the frontend to Next 15.5 / React 19 with a tracked lockfile, and made grid orders with an unknown outcome reconcile by client order ID instead of re-submitting. Pass 3 fixed failed signal orders being counted as paper trades, made strategy auth fail closed in production, and enforced gofmt/tidy in CI. Pass 2 closed the Go grid P0s (position cap, per-level idempotency, failed orders no longer counted as paper trades) and moved Next to 14.2.35. The three suites (Go, Next.js,
 strategy Python) are green, and CI now runs the full offline strategy suite.
 Before this pass, the Go race detector flaked in CI, CI ran only 2 of the
 ~50 strategy test files, the paper grid sync crashed with a `NameError` it
@@ -15,9 +15,10 @@ could reset the kill switch without authentication.
 ## Backlog
 
 ### P0
-- Bitkub has no client-order-ID lookup here, so a Bitkub grid order with an
-  unknown outcome pauses the grid until an operator reconciles and restarts
-  it. Add a Bitkub order-history lookup (by order hash) to close that gap.
+- (none open) Validate the Bitkub v3 lookup against a real sandbox read-only
+  call before enabling Bitkub for real money: the client-ID fields in
+  `my-open-orders` / `my-order-history` are read defensively, and a lookup
+  that cannot attribute every recent row keeps the order pending.
 
 ### P1
 - Backtester: ATR spacing and grid (re)anchoring still use bar *i*'s own
@@ -28,12 +29,13 @@ could reset the kill switch without authentication.
   starting with order quantity/price rounding.
 - CI pins `GO_VERSION: '1.21'` (EOL). Move to a supported Go and bump the
   `go` directive in `go.mod` together.
-- Signal/auto order placement still treats a timeout as a failure. Reuse the
-  grid's client-order-ID reconciliation (`grid_orders.go`) before re-sending
-  an exit order.
-- A grid LIMIT order that stays open blocks the grid (by design, no
-  double-submit). Add a max age after which the open order is cancelled and
-  reconciled.
+- The legacy Bitkub client methods (`GetBalances`, `PlaceOrder`,
+  `CancelOrder`, `GetOpenOrders` in `bitkub/client.go`) use non-Bitkub
+  paths/headers (`/api/v3/order`, `X-JFIN-*`) and are effectively dead.
+  Move balances to the signed v3 `wallet` call and delete the rest; the
+  `tradingClient`-only (no manager) path in `liveGridExchange` still treats
+  any accepted order as a fill.
+- Make `gridOrderMaxAge` (15 min) configurable per bot start.
 
 ### P2
 - Strategy ruff debt: about 1,800 findings, most of them auto-fixable
@@ -49,7 +51,36 @@ could reset the kill switch without authentication.
   no tests. Add table tests around order request construction, using fake
   HTTP servers only.
 
-## Done in this pass (pass 4)
+## Done in this pass (pass 5)
+- Go Bitkub: new v3 order functions (`bitkub/orders_v3.go`): place-bid /
+  place-ask with `client_id` (bids converted to THB at the order price),
+  `order-info`, `cancel-order`, and `FindOrderByClientID`. Requests are
+  signed as documented (HMAC-SHA256 of timestamp + method + path[?query] +
+  body, `X-BTK-*` headers). Transport errors, 5xx, error 90 and unreadable
+  200s are unknown outcomes. Bitkub has no query by client ID, so the lookup
+  scans open orders and trade history since submission; "not found" is only
+  returned when no row in that window is unattributed (or the history page
+  is full), else the order stays pending. `ExchangeManager` wires Bitkub
+  into `PlaceOrderWithClientID` and the new `LookupOrderByClientIDSince`,
+  so a Bitkub grid order with an unknown outcome is reconciled instead of
+  pausing the grid.
+- Go grid: an accepted order open longer than 15 min is cancelled by client
+  order ID (`CancelOrderByClientID` on Binance, Binance TH and Bitkub),
+  retried at most once a minute. It stays pending until a lookup reports it
+  final, so partial and racing fills are recorded; unconfirmed orders are
+  never cancelled.
+- Go signal/auto: orders carry client order IDs and reuse the grid rules
+  (`signal_orders.go`): unknown or open orders become the symbol's pending
+  order and are looked up on the next signal / SL-TP check, so a timed-out
+  exit is never re-sent blindly. Stale open orders are cancelled, partial
+  fills update the auto position, and exits are capped to the position.
+- Tests: `bitkub/orders_v3_test.go` (signature-checking fake),
+  `bitkub_reconcile_test.go`, `order_reconcile_test.go`,
+  `grid_reconcile_test.go`, `signal_trade_test.go` — httptest fakes only.
+  Verified with `go vet`, `gofmt -l`, `go mod tidy` diff, `go test -race
+  ./...`.
+
+## Done in pass 4
 - Frontend: Next 14.2.35 -> 15.5.27 (latest 15.x), React 18 -> 19,
   `@types/react*` 19, `eslint-config-next` 15.5.27, `@testing-library/react`
   16 (+ `@testing-library/dom`), and `lucide-react` 0.469 (first release with
