@@ -1,0 +1,33 @@
+{
+  "signature": "FakeRaydiumSignature001",
+  "slot": 7001,
+  "observed_at": "2026-01-02T03:04:05+00:00",
+  "source": "fixture",
+  "finality_status": "finalized",
+  "reorg_status": "canonical",
+  "instructions": [
+    {
+      "program_id": "FakeRaydiumProgram111111111111111111111111111111",
+      "instruction_index": 2,
+      "event_index": 0,
+      "discriminator": "raydium.swap.sell.v1",
+      "event_type": "sell",
+      "side": "sell",
+      "orientation": "token_to_quote",
+      "account_roles": {
+        "pool": "FakeRaydiumPool111111111111111111111111111111",
+        "seller": "FakeRaydiumSeller1111111111111111111111111111",
+        "token_source": "FakeRaydiumTokenSource111111111111111111111",
+        "quote_destination": "FakeRaydiumQuoteDestination1111111111111111"
+      },
+      "token": {
+        "mint": "FakeRaydiumTokenMint1111111111111111111111111",
+        "amount_raw": "123456789012345678901"
+      },
+      "quote": {
+        "mint": "FakeRaydiumQuoteMint1111111111111111111111111",
+        "amount_raw": "987654321"
+      }
+    }
+  ]
+}

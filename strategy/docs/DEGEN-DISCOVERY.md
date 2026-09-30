@@ -102,10 +102,11 @@ typed `risk_decision` with one of `detected`, `unsupported`,
 `invalidated`. Only `watchlist` and `paper_candidate` can reach degen
 opportunity ranking; a missing, stale, conflicting, or provider-only check is
 an abstention. A `watchlist` result is a bounded research state, not a claim
-that the token is safe or will not rug. The current concentration value is
-the raw share of the five largest token accounts; pool/vault exclusion and
-wallet-level clustering are still pending, so it is evidence rather than a
-final holder score.
+that the token is safe or will not rug. The concentration value is the raw
+share of the five largest token accounts when no wallet-intelligence evidence
+is present. Pool/vault/CEX exclusions remain explicit inputs, and a
+cluster-adjusted value is used only when its contract evidence is supplied, so
+the result remains evidence rather than a universal holder score.
 
 DexScreener boosts are retained as `paid_promotion` discovery metadata only.
 They never satisfy an authority, LP custody, or sell simulation requirement.
@@ -148,6 +149,32 @@ its no-EVM-provider mode.
 chain; ชุดหลักสำหรับการประเมิน EVM คือ `goplus`, `honeypot`, `simulation` และ
 `lp_custody`. การมีแค่หนึ่ง adapter ยังไม่ถือว่า coverage ครบ.
 
+รายละเอียด schema และ promotion boundary อยู่ใน
+[`WALLET-INTELLIGENCE-CONTRACT.md`](WALLET-INTELLIGENCE-CONTRACT.md). สำหรับ
+wallet intelligence มี contract `wallet-intelligence.v1` ใน
+`app.market_intel.wallet_intelligence` รับ normalized transfer/relation input
+และสร้าง ownership hypothesis ที่มี deterministic cluster id, raw/cluster-adjusted
+concentration, coverage และ HHI โดย identity และ cluster id ผูกกับ chain
+เสมอ. เฉพาะ `same_owner` กับ `shared_control` ที่มี confidence ผ่าน threshold
+เท่านั้นที่ merge cluster; `funded_by`,
+`common_funder` และ exchange relations ถูกเก็บเป็น graph evidence โดยไม่สรุปว่า
+เป็นเจ้าของเดียวกันอัตโนมัติ. `cluster-sell-monitor.v1` เป็น windowed
+read-only alert สำหรับ risk evidence เท่านั้น ไม่ใช่ order command และไม่มี
+RPC write, wallet access หรือ transaction signing.
+
+สัญญา normalized sell event แบบ additive อยู่ใน
+[`SOLANA-SELL-EVENT-CONTRACT.md`](SOLANA-SELL-EVENT-CONTRACT.md). Contract นี้
+รับเฉพาะ decoder registry และ transaction dictionary ที่ sanitize แล้ว,
+ใช้ finalized+canonical เท่านั้นกับ cluster-sell monitor และไม่เปลี่ยน
+discovery event schema/lake path เดิม.
+
+สัญญา EVM normalized sell event แบบ parallel อยู่ใน
+[`EVM-SELL-EVENT-CONTRACT.md`](EVM-SELL-EVENT-CONTRACT.md). Contract นี้ใช้
+เฉพาะ registry และ sanitized transaction/log fixture ที่ caller ส่งให้,
+รองรับ `ethereum`, `bsc`, `base`, `arbitrum` และยังไม่ผูกกับ
+`EVMOnchainSource`, `EVMProviderRegistry`, `DegenSource`, `MarketQuote` หรือ
+lake writer.
+
 สำหรับ EVM event discovery ให้ส่ง `EVMOnchainSource` เข้า
 `MarketScanner(evm_onchain_source=...)` หรือกำหนด JSON ทั้งสามตัวแปรด้านบน
 ซึ่ง scanner จะโหลด source ให้อัตโนมัติเมื่อมีค่าใดค่าหนึ่งถูกตั้งไว้
@@ -161,6 +188,12 @@ payload ดิบในสถานะระบบ.
 [`EVM-PROVIDER-RELEASE-GATE.md`](EVM-PROVIDER-RELEASE-GATE.md) และรัน
 `scripts/evm_provider_preflight.py`; dry-run นี้เป็น MockTransport แบบ
 paper-only จึงไม่ยืนยันว่า upstream จริงพร้อมใช้งานและไม่สร้าง transaction
+
+ชั้นถัดจาก risk gate ใช้ [`ONCHAIN-EXECUTION-CONTRACT.md`](ONCHAIN-EXECUTION-CONTRACT.md)
+และ `trade-intent.v1` เป็น provider-neutral proposal เท่านั้น. Strategy สร้างได้
+เฉพาะ `paper`/`simulation` intent ที่มี evidence reference; ห้ามส่ง calldata,
+private key, RPC หรือคำสั่ง swap เข้า strategy และยังไม่ผูกเข้ากับ Go
+`DexService` จนกว่าจะมี execution release gate แยกต่างหาก.
 
 The stream uses `processed` logs for latency and fetches the transaction at
 `confirmed` commitment. Consumers should treat a later failed or rolled-back

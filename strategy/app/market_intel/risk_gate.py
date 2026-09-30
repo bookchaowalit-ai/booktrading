@@ -56,6 +56,7 @@ class RiskEvidence:
     decoder_status: str | None = None
     authority_checked: bool = False
     holder_concentration: float | None = None
+    effective_concentration: float | None = None
     liquidity_usd: float | None = None
     active_depth_usd: float | None = None
     lp_locked_ratio: float | None = None
@@ -68,6 +69,11 @@ class RiskEvidence:
     risk_flags: tuple[str, ...] = field(default_factory=tuple)
     provider_sources: tuple[str, ...] = field(default_factory=tuple)
     independent_provider_count: int = 0
+    cluster_sell_share: float | None = None
+    cluster_sell_severity: str | None = None
+    cluster_sell_alert: bool = False
+    cluster_sell_observed_at: datetime | None = None
+    cluster_sell_conflict: bool = False
     event_type: str | None = None
     price_available: bool = False
     demand_observed: bool = False
@@ -249,6 +255,10 @@ def _normalize_evidence(metadata: Mapping[str, Any]) -> RiskEvidence:
     holder_evidence = _as_mapping(
         _first(risk, "holders", "holder_distribution") or _first(metadata, "holders", "holder_distribution")
     )
+    cluster_sell_evidence = _as_mapping(
+        _first(risk, "cluster_sell", "cluster_sell_alert")
+        or _first(metadata, "cluster_sell", "cluster_sell_alert")
+    )
 
     chain = str(_first(risk, "chain") or metadata.get("chain") or "").strip().lower() or None
     token_address = _first(risk, "token_address", "address") or metadata.get("token_address")
@@ -296,7 +306,7 @@ def _normalize_evidence(metadata: Mapping[str, Any]) -> RiskEvidence:
         or any(key in contract for key in ("owner", "admin", "proxy_admin", "implementation"))
     )
 
-    holder_concentration = _as_ratio(
+    raw_holder_concentration = _as_ratio(
         _coalesce(
             _first(
                 holder_evidence,
@@ -309,6 +319,15 @@ def _normalize_evidence(metadata: Mapping[str, Any]) -> RiskEvidence:
             metadata.get("top5_holder_concentration"),
         )
     )
+    effective_concentration = _as_ratio(
+        _coalesce(
+            _first(holder_evidence, "effective_concentration", "cluster_top5_share"),
+            _first(risk, "effective_concentration", "cluster_top5_share"),
+            _first(cluster_sell_evidence, "effective_concentration"),
+            metadata.get("effective_concentration"),
+        )
+    )
+    holder_concentration = effective_concentration if effective_concentration is not None else raw_holder_concentration
     liquidity_usd = _as_float(
         _coalesce(
             _first(liquidity_evidence, "liquidity_usd", "usd", "total_usd"),
@@ -418,6 +437,48 @@ def _normalize_evidence(metadata: Mapping[str, Any]) -> RiskEvidence:
     if decoder_status is not None:
         decoder_status = str(decoder_status).strip().lower()
 
+    cluster_sell_share = _as_ratio(
+        _coalesce(
+            _first(cluster_sell_evidence, "sell_share", "cluster_sell_share"),
+            _first(risk, "cluster_sell_share"),
+            metadata.get("cluster_sell_share"),
+        )
+    )
+    cluster_sell_severity = _first(
+        cluster_sell_evidence,
+        "severity",
+    ) or _first(risk, "cluster_sell_severity") or metadata.get("cluster_sell_severity")
+    if cluster_sell_severity is not None:
+        cluster_sell_severity = str(cluster_sell_severity).strip().lower()
+    cluster_sell_alert = bool(
+        _as_bool(
+            _coalesce(
+                _first(cluster_sell_evidence, "alert", "triggered"),
+                _first(risk, "cluster_sell_alert"),
+                metadata.get("cluster_sell_alert"),
+            )
+        )
+        is True
+        or cluster_sell_severity in {"watch", "high", "critical"}
+    )
+    cluster_sell_observed_at = _as_datetime(
+        _coalesce(
+            _first(cluster_sell_evidence, "window_end", "observed_at", "checked_at", "as_of"),
+            _first(risk, "cluster_sell_observed_at"),
+            metadata.get("cluster_sell_observed_at"),
+        )
+    )
+    cluster_sell_conflict = (
+        _as_bool(
+            _coalesce(
+                _first(cluster_sell_evidence, "conflict", "provider_conflict"),
+                _first(risk, "cluster_sell_conflict"),
+                metadata.get("cluster_sell_conflict"),
+            )
+        )
+        is True
+    )
+
     demand_observed = bool(
         (_as_float(metadata.get("volume_24h")) or 0) > 0
         or (_as_float(metadata.get("unique_buyers")) or 0) > 0
@@ -430,6 +491,7 @@ def _normalize_evidence(metadata: Mapping[str, Any]) -> RiskEvidence:
         decoder_status=decoder_status,
         authority_checked=authority_checked,
         holder_concentration=holder_concentration,
+        effective_concentration=effective_concentration,
         liquidity_usd=liquidity_usd,
         active_depth_usd=active_depth_usd,
         lp_locked_ratio=lp_locked_ratio,
@@ -437,13 +499,18 @@ def _normalize_evidence(metadata: Mapping[str, Any]) -> RiskEvidence:
         lp_custody_verified=lp_custody_verified,
         sell_simulation_status=sell_status,
         sell_simulation_proved=sell_proved,
-        provider_conflict=provider_conflict,
+        provider_conflict=provider_conflict or cluster_sell_conflict,
         provider_incomplete=provider_incomplete,
         risk_flags=tuple(sorted(flags)),
         provider_sources=tuple(
             sorted(_normalize_flags(_coalesce(metadata.get("provider_sources"), risk.get("provider_sources"))))
         ),
         independent_provider_count=int(independent_sources or 0),
+        cluster_sell_share=cluster_sell_share,
+        cluster_sell_severity=cluster_sell_severity,
+        cluster_sell_alert=cluster_sell_alert,
+        cluster_sell_observed_at=cluster_sell_observed_at,
+        cluster_sell_conflict=cluster_sell_conflict,
         event_type=str(metadata.get("event_type")) if metadata.get("event_type") else None,
         price_available=(_as_float(_coalesce(metadata.get("price"), metadata.get("price_usd"))) or 0) > 0,
         demand_observed=demand_observed,
@@ -550,6 +617,16 @@ def _explicit_vetoes(
         elif evidence.holder_concentration >= 0.20:
             findings.add("holder_concentration_elevated")
 
+    if evidence.cluster_sell_alert:
+        if evidence.cluster_sell_severity in {"high", "critical"} or (
+            evidence.cluster_sell_share is not None and evidence.cluster_sell_share >= 0.20
+        ):
+            vetoes.add("cluster_sell_pressure")
+        else:
+            findings.add("cluster_sell_watch")
+        if evidence.cluster_sell_conflict:
+            findings.add("cluster_sell_conflict")
+
     if evidence.liquidity_usd is not None and evidence.liquidity_usd < MIN_LIQUIDITY_USD:
         vetoes.add("liquidity_below_policy")
     if evidence.active_depth_usd is not None and evidence.active_depth_usd < MIN_LIQUIDITY_USD:
@@ -634,6 +711,17 @@ def evaluate_risk(
         if age < -60 or age > max_age:
             stale = True
             findings.add("evidence_stale_or_clock_skewed")
+
+    if evidence.cluster_sell_alert:
+        if evidence.cluster_sell_observed_at is None:
+            missing.add("cluster_sell_freshness")
+        else:
+            cluster_sell_age = (now - evidence.cluster_sell_observed_at).total_seconds()
+            if cluster_sell_age < -60 or cluster_sell_age > max_age:
+                stale = True
+                findings.add("cluster_sell_stale")
+        if evidence.cluster_sell_conflict:
+            missing.add("cluster_sell_reconciliation")
 
     if not evidence.authority_checked:
         missing.add("authority_controls")

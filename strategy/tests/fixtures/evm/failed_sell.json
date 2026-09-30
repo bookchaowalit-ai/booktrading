@@ -1,0 +1,42 @@
+{
+  "chain": "ethereum",
+  "transaction_hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "block_hash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "block_number": 7001,
+  "status": "0x0",
+  "observed_at": "2026-01-02T03:04:05+00:00",
+  "source": "fixture",
+  "finality_status": "finalized",
+  "reorg_status": "canonical",
+  "logs": [
+    {
+      "address": "0x1111111111111111111111111111111111111111",
+      "topics": [
+        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
+      "transactionHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "blockHash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "blockNumber": 7001,
+      "logIndex": 4,
+      "event_index": 0,
+      "discriminator": "fixture.generic.sell.v1",
+      "event_type": "sell",
+      "side": "sell",
+      "orientation": "token_to_quote",
+      "account_roles": {
+        "pool": "0x3333333333333333333333333333333333333333",
+        "seller": "0x4444444444444444444444444444444444444444",
+        "token_source": "0x6666666666666666666666666666666666666666",
+        "quote_destination": "0x7777777777777777777777777777777777777777"
+      },
+      "token": {
+        "address": "0x2222222222222222222222222222222222222222",
+        "amount_raw": "123456789012345678901"
+      },
+      "quote": {
+        "asset": "0x5555555555555555555555555555555555555555",
+        "amount_raw": "987654321"
+      }
+    }
+  ]
+}

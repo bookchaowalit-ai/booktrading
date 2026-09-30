@@ -8,6 +8,11 @@ the `file://` pilot or `s3://` production boundary described in
 The gate keeps source evidence durable before a normalized event is consumed.
 It does not authorize trading, order execution, or a public bucket.
 
+The additive `solana-event.v1` normalized sell contract is documented in
+[`SOLANA-SELL-EVENT-CONTRACT.md`](SOLANA-SELL-EVENT-CONTRACT.md). It requires
+a separate dataset/version and release decision; this gate's landing schema,
+Bronze schema, columns, manifests, keys, and v1 compaction remain unchanged.
+
 ## Required object-storage policy
 
 The production bucket/R2 location must be private and have all of the following

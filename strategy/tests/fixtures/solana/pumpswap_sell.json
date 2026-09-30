@@ -1,0 +1,35 @@
+{
+  "signature": "FakePumpSwapSignature001",
+  "slot": 7002,
+  "observed_at": "2026-01-02T03:04:06+00:00",
+  "source": "fixture",
+  "finality_status": "confirmed",
+  "reorg_status": "pending",
+  "instructions": [
+    {
+      "program_id": "FakePumpSwapProgram1111111111111111111111111111",
+      "instruction_index": 4,
+      "event_index": 1,
+      "discriminator": "pumpswap.swap.sell.v1",
+      "event_type": "sell",
+      "side": "sell",
+      "orientation": "token_to_quote",
+      "account_roles": {
+        "pool": "FakePumpSwapPool11111111111111111111111111111",
+        "user": "FakePumpSwapSeller11111111111111111111111111111",
+        "base_vault": "FakePumpSwapBaseVault1111111111111111111111",
+        "quote_vault": "FakePumpSwapQuoteVault11111111111111111111111",
+        "user_base_source": "FakePumpSwapBaseSource111111111111111111111",
+        "user_quote_destination": "FakePumpSwapQuoteDestination1111111111111111"
+      },
+      "token": {
+        "mint": "FakePumpSwapTokenMint111111111111111111111111",
+        "amount_raw": "222222222222222222222"
+      },
+      "quote": {
+        "mint": "FakePumpSwapQuoteMint111111111111111111111111",
+        "amount_raw": "111111111"
+      }
+    }
+  ]
+}
