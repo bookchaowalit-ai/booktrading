@@ -15,9 +15,6 @@ could reset the kill switch without authentication.
 ## Backlog
 
 ### P0
-- Next 14.2.35 is the last 14.x, but `npm audit` still lists Next advisories
-  fixed only in 15.x/16.x (image optimizer, RSC DoS, middleware bypass).
-  Plan a Next 15 migration (async request APIs, React 19) in its own pass.
 - Grid order placement is synchronous; an order that times out after the
   exchange accepted it is treated as failed. Reconcile open orders/fills from
   the exchange before re-arming a level.
@@ -39,13 +36,28 @@ could reset the kill switch without authentication.
   (imports, pyupgrade). Fix them per package and widen the CI ruff scope
   beyond `E9,F63,F7,F82`.
 - Duplicate re-exports in `app/market_intel/sources/__init__.py` (F811).
-- `frontend/package-lock.json` is gitignored, so installs are not
-  reproducible; commit it and switch CI to `npm ci`.
+- Frontend residual `npm audit` findings: `postcss` bundled inside `next`
+  (build-time only) and `esbuild` under vitest 1.x (dev server only). Move
+  vitest to 3.x; the postcss one clears when Next ships a newer bundle.
+- `next lint` is deprecated in Next 15.5 and removed in 16. Migrate to the
+  ESLint CLI with a flat `eslint.config.mjs` before any Next 16 move.
 - Go `adapter/exchange`, `adapter/repository` and `adapter/grpcserver` have
   no tests. Add table tests around order request construction, using fake
   HTTP servers only.
 
-## Done in this pass (pass 3)
+## Done in this pass (pass 4)
+- Frontend: Next 14.2.35 -> 15.5.27 (latest 15.x), React 18 -> 19,
+  `@types/react*` 19, `eslint-config-next` 15.5.27, `@testing-library/react`
+  16 (+ `@testing-library/dom`), and `lucide-react` 0.469 (first release with
+  a React 19 peer). The only async request API use (`headers()` in
+  `src/app/page.tsx`) is now awaited; `[lang]` params were already awaited.
+  `npm audit` no longer lists Next advisories.
+- Frontend installs are reproducible: `package-lock.json` is tracked, and CI
+  and the Dockerfile use `npm ci`. CI also runs `next build` now.
+- Verified: `npm run lint`, `tsc --noEmit`, `npm test` (37 passed), `npm run
+  build`.
+
+## Done in pass 3
 - Go signal/auto: `executeSignalTrade` now delegates to `signalTradeStep`.
   A failed order is reported as `ORDER_FAILED` activity, is not counted in
   `tradesCount`/`TotalTrades`, is never relabelled `PAPER_SIGNAL_*`, and

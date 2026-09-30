@@ -116,11 +116,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
         run: |
           cd frontend
-          npm install
+          npm ci
 
       - name: Run linter
         run: |
@@ -136,6 +138,13 @@ jobs:
         run: |
           cd frontend
           npm test
+
+      - name: Build
+        run: |
+          cd frontend
+          npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
 
   # ── Strategy Tests ─────────────────────────────────────────────────────────────
   strategy-test:
