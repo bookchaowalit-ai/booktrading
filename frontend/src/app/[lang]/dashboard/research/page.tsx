@@ -9,6 +9,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation, TranslationKey } from '@/i18n/translations';
 import { api } from '@/services/api';
+import { authHeaders } from '@/services/auth-headers';
 import {
   FlaskConical, RefreshCw, AlertTriangle,
   Eye, XCircle, Clock, TrendingUp, Target, Filter, CheckCircle2, Ban,
@@ -283,13 +284,13 @@ export default function ResearchPage() {
 
     // Fetch intelligence data in parallel (all optional)
     const [indRes, sigRes, intelOverview, intelAlerts, intelSources, ccRes, brainRes] = await Promise.allSettled([
-      fetch(STRATEGY_API_URL + '/api/indicators'),
-      fetch(STRATEGY_API_URL + '/api/signals'),
-      fetch(STRATEGY_API_URL + '/api/market-intel/overview'),
-      fetch(STRATEGY_API_URL + '/api/market-intel/alerts?limit=5'),
-      fetch(STRATEGY_API_URL + '/api/market-intel/sources'),
-      fetch(STRATEGY_API_URL + '/api/command-center'),
-      fetch(STRATEGY_API_URL + '/api/brain/status'),
+      fetch(STRATEGY_API_URL + '/api/indicators', { headers: authHeaders() }),
+      fetch(STRATEGY_API_URL + '/api/signals', { headers: authHeaders() }),
+      fetch(STRATEGY_API_URL + '/api/market-intel/overview', { headers: authHeaders() }),
+      fetch(STRATEGY_API_URL + '/api/market-intel/alerts?limit=5', { headers: authHeaders() }),
+      fetch(STRATEGY_API_URL + '/api/market-intel/sources', { headers: authHeaders() }),
+      fetch(STRATEGY_API_URL + '/api/command-center', { headers: authHeaders() }),
+      fetch(STRATEGY_API_URL + '/api/brain/status', { headers: authHeaders() }),
     ]);
 
     // AI Signal from indicators

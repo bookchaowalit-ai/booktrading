@@ -89,7 +89,7 @@ BITKUB_USE_TESTNET=false
 # Real Trading Configuration
 REAL_SYMBOLS=BTCTHB               # Symbol for real trading (Binance TH)
 DISABLE_PAPER_BOT=true            # Disable paper bot to reduce log noise
-AUTH_TOKEN=                       # Leave empty for dev, set for production auth
+AUTH_TOKEN=                       # Service token: strategy checks it, backend /strategy-api proxy sends it. Never in the browser.
 ```
 
 ---

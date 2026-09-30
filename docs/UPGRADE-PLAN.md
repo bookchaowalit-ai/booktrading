@@ -5,7 +5,7 @@ protection mode) first; nothing here authorizes real-money trading.
 
 ## Current state
 
-**Score: 8.5 / 10** (8 after pass 4, 7.5 after pass 3, 7 after pass 2, 6.5 after pass 1, 5 before). Pass 5 closed the last order-safety P0: Bitkub grid orders reconcile through the v3 API instead of pausing the grid, open grid orders are cancelled after a max age, and signal/auto orders reuse the same reconciliation. Pass 4 moved the frontend to Next 15.5 / React 19 with a tracked lockfile, and made grid orders with an unknown outcome reconcile by client order ID instead of re-submitting. Pass 3 fixed failed signal orders being counted as paper trades, made strategy auth fail closed in production, and enforced gofmt/tidy in CI. Pass 2 closed the Go grid P0s (position cap, per-level idempotency, failed orders no longer counted as paper trades) and moved Next to 14.2.35. The three suites (Go, Next.js,
+**Score: 8.7 / 10** (8.5 after pass 7, 8 after pass 4, 7.5 after pass 3, 7 after pass 2, 6.5 after pass 1, 5 before). Pass 5 closed the last order-safety P0: Bitkub grid orders reconcile through the v3 API instead of pausing the grid, open grid orders are cancelled after a max age, and signal/auto orders reuse the same reconciliation. Pass 4 moved the frontend to Next 15.5 / React 19 with a tracked lockfile, and made grid orders with an unknown outcome reconcile by client order ID instead of re-submitting. Pass 3 fixed failed signal orders being counted as paper trades, made strategy auth fail closed in production, and enforced gofmt/tidy in CI. Pass 2 closed the Go grid P0s (position cap, per-level idempotency, failed orders no longer counted as paper trades) and moved Next to 14.2.35. The three suites (Go, Next.js,
 strategy Python) are green, and CI now runs the full offline strategy suite.
 Before this pass, the Go race detector flaked in CI, CI ran only 2 of the
 ~50 strategy test files, the paper grid sync crashed with a `NameError` it
@@ -21,14 +21,6 @@ could reset the kill switch without authentication.
   that cannot attribute every recent row keeps the order pending.
 
 ### P1
-- Strategy auth vs. browser sessions: the frontend sends the signed-in
-  session token (opaque, issued by the Go backend at `/api/auth/login`) to
-  `/strategy-api`, but `require_auth` compares against the static
-  `AUTH_TOKEN`. With `AUTH_TOKEN` set, kill/enable, backtests, airdrop
-  writes and signal evaluation therefore still 401 for normal logins. Fix
-  server-side: either let the strategy verify sessions against the backend
-  (introspection over gRPC/HTTP) or proxy these routes through the Go
-  backend, which injects `AUTH_TOKEN`. Never ship `AUTH_TOKEN` to the browser.
 - Backtester: ATR spacing and grid (re)anchoring still use bar *i*'s own
   close/high/low. Anchor on the bar open or the previous close, and resolve
   same-bar buy→sell round trips pessimistically.
@@ -45,7 +37,14 @@ could reset the kill switch without authentication.
   any accepted order as a fill.
 - Make `gridOrderMaxAge` (15 min) configurable per bot start.
 
+- The strategy service still publishes `8001:8000` on all host interfaces in
+  `docker-compose.yml` (prod binds 127.0.0.1). Bind it to localhost or drop
+  the port now that the browser reaches it only via the backend proxy.
+
 ### P2
+- The proxy allow-list (`strategyAllowedSections`) must be extended when the
+  dashboard starts calling a new strategy `/api/<section>`; `/api/ai`,
+  `/api/arbitrage` and `/api/v1/world` are intentionally not proxied.
 - Strategy ruff debt: about 1,800 findings, most of them auto-fixable
   (imports, pyupgrade). Fix them per package and widen the CI ruff scope
   beyond `E9,F63,F7,F82`.
@@ -59,7 +58,31 @@ could reset the kill switch without authentication.
   no tests. Add table tests around order request construction, using fake
   HTTP servers only.
 
-## Done in this pass (pass 7: frontend strategy auth + World import)
+## Done in this pass (pass 8: backend strategy proxy, P1 closed)
+- P1 "strategy auth vs. browser sessions" done: the Go backend serves
+  `/strategy-api/*` (`backend/internal/adapter/http/strategy_proxy.go`). It
+  validates the session with `AuthHandler.ValidateToken` (the router's auth
+  gate runs first too), drops the caller's `Authorization`/`Cookie`/
+  `X-Forwarded-*`, and forwards to `STRATEGY_URL` with
+  `Authorization: Bearer $AUTH_TOKEN` (server env only). Path allow-list of
+  the `/api/<section>` groups the dashboard uses; dot segments, encoded
+  separators and `//` are rejected; 1 MiB body cap; `STRATEGY_PROXY_TIMEOUT`
+  (25s default, 504 on expiry); only GET/HEAD/POST/PUT/PATCH/DELETE; upstream
+  CORS/Set-Cookie stripped; only `GET /api/health` is public.
+- Frontend rewrite, Caddy and dev compose now send `/strategy-api` to the
+  backend; the frontend no longer knows `STRATEGY_URL`. Backend compose gets
+  `STRATEGY_URL`, `AUTH_TOKEN`, `STRATEGY_PROXY_TIMEOUT`. Reads that sent no
+  session (research, ai-insights, evidence pages, `market-intel.ts`,
+  `trade-journal.ts`, `api.getIndicators`) now send `authHeaders()`, and the
+  last two stopped defaulting to `http://localhost:8001`.
+- Tests: `strategy_proxy_test.go` (unauthenticated -> 401 with no upstream
+  call; upstream sees the service token, never the user token or cookie;
+  traversal/encoded/unlisted paths rejected; body/method/timeout limits;
+  upstream URL validation) and one more vitest. go vet/gofmt/`go test -race`
+  green, golangci-lint clean on the new files, vitest 51, tsc, lint and
+  `next build` green.
+
+## Done in pass 7: frontend strategy auth + World import
 - `frontend/src/services/auth-headers.ts`: the session bearer helper from
   `api.ts` (localStorage `auth_token`, storage errors treated as signed out)
   is now shared; `airdrop-tracker.ts`, `backtest.ts`, `signal-tracker.ts`

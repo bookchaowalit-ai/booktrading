@@ -17,9 +17,10 @@ your-domain.com {
         reverse_proxy backend:8081
     }
 
-    # Strategy Service API
+    # Strategy Service API: proxied by the backend, which checks the user
+    # session and injects AUTH_TOKEN. Never route the browser to strategy:8000.
     handle /strategy-api/* {
-        reverse_proxy strategy:8000
+        reverse_proxy backend:8080
     }
 
     # Health check endpoint

@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import { useTranslation } from '@/i18n/translations';
 import { api } from '@/services/api';
+import { authHeaders } from '@/services/auth-headers';
 import { TechnicalIndicators } from '@/types';
 
 // ---------------------------------------------------------------------------
@@ -926,7 +927,7 @@ export default function AIInsightsPage() {
 
       if (!hasData) {
         try {
-          const signalsRes = await fetch(STRATEGY_API_URL + '/api/signals');
+          const signalsRes = await fetch(STRATEGY_API_URL + '/api/signals', { headers: authHeaders() });
           if (signalsRes.ok) {
             setState({
               prediction: deriveAIPrediction({}, strategyConfig),

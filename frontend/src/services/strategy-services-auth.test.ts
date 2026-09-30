@@ -17,8 +17,10 @@ import {
 import { airdropTrackerService } from './airdrop-tracker';
 import { authHeaders, getAuthToken } from './auth-headers';
 import { backtestService } from './backtest';
+import { marketIntelService } from './market-intel';
 import { monitoringService } from './monitoring';
 import { signalTrackerService } from './signal-tracker';
+import { tradeJournalService } from './trade-journal';
 
 const okJson = () => ({ ok: true, json: async () => ({}), text: async () => '' });
 
@@ -108,6 +110,21 @@ describe('strategy services send the session bearer token', () => {
       '/strategy-api/api/airdrop-tracker/tasks',
       '/strategy-api/api/signal-tracker/stats',
     ]);
+  });
+
+  it('journal and market-intel reads use the proxy with the session token', async () => {
+    // The backend /strategy-api proxy requires a session on every route
+    // except the health probe; these used to call localhost:8001 bare.
+    await tradeJournalService.getStats();
+    await marketIntelService.getOverview();
+    const calls = (fetch as Mock).mock.calls;
+    expect(calls.map(([url]) => url)).toEqual([
+      '/strategy-api/api/journal/stats',
+      '/strategy-api/api/market-intel/overview',
+    ]);
+    for (const [, options] of calls) {
+      expect(options.headers.Authorization).toBe('Bearer fixture-session');
+    }
   });
 });
 

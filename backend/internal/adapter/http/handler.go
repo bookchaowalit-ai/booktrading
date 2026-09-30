@@ -950,7 +950,7 @@ func (r *Router) RegisterFinanceRoutes(handler *FinanceHandler) {
 // Only the exact bootstrap and health endpoints bypass authentication.
 func isPublicRoute(path string) bool {
 	switch path {
-	case "/api/auth/login", "/api/auth/register", "/api/health":
+	case "/api/auth/login", "/api/auth/register", "/api/health", StrategyProxyPrefix + "/api/health":
 		return true
 	default:
 		return false

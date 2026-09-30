@@ -247,7 +247,7 @@ export const api = {
 
   async getIndicators() {
     try {
-      const response = await apiFetch(`${STRATEGY_API_URL}/api/indicators`);
+      const response = await apiFetch(`${STRATEGY_API_URL}/api/indicators`, { headers: authHeaders() });
       if (!response.ok) return {};
       return response.json();
     } catch {

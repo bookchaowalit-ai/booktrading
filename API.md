@@ -173,6 +173,17 @@ Authorization: Bearer <token>
 
 ## 🧠 AI/Strategy Endpoints
 
+Browser calls to `/strategy-api/*` are served by the Go backend, not the
+strategy service directly. The backend requires a valid session
+(`Authorization: Bearer <session token>`; only `GET /strategy-api/api/health`
+is public), drops the caller's `Authorization`/`Cookie`, and forwards to
+`STRATEGY_URL` with `Authorization: Bearer $AUTH_TOKEN`. Only the `/api/<section>`
+groups the dashboard uses are allow-listed (see `strategyAllowedSections` in
+`backend/internal/adapter/http/strategy_proxy.go`); other strategy routes, such
+as the examples below and `/api/v1/world`, are reachable only on the internal
+network with the service token. Bodies are capped at 1 MiB and each call at
+`STRATEGY_PROXY_TIMEOUT` (default 25s).
+
 ### Price Prediction
 ```http
 POST /strategy-api/api/ai/predict

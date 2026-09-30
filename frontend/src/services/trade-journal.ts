@@ -2,9 +2,8 @@
  * Trade Journal Service
  * API client for trade journal entries and stats
  */
+import { authHeaders, STRATEGY_URL } from './auth-headers';
 import type { JournalResponse, JournalStats, DailyReport } from '@/types/trade-journal';
-
-const STRATEGY_URL = process.env.NEXT_PUBLIC_STRATEGY_URL || 'http://localhost:8001';
 
 export const tradeJournalService = {
   /**
@@ -14,7 +13,7 @@ export const tradeJournalService = {
     const params = new URLSearchParams({ limit: limit.toString() });
     if (status) params.set('status', status);
 
-    const res = await fetch(`${STRATEGY_URL}/api/journal/entries?${params}`);
+    const res = await fetch(`${STRATEGY_URL}/api/journal/entries?${params}`, { headers: authHeaders() });
     if (!res.ok) throw new Error('Journal entries fetch failed');
     return res.json();
   },
@@ -23,7 +22,7 @@ export const tradeJournalService = {
    * Get journal stats (DB-backed)
    */
   async getStats(): Promise<JournalStats> {
-    const res = await fetch(`${STRATEGY_URL}/api/journal/stats`);
+    const res = await fetch(`${STRATEGY_URL}/api/journal/stats`, { headers: authHeaders() });
     if (!res.ok) throw new Error('Journal stats fetch failed');
     return res.json();
   },
@@ -32,7 +31,7 @@ export const tradeJournalService = {
    * Get daily report for a symbol
    */
   async getDailyReport(symbol: string): Promise<DailyReport> {
-    const res = await fetch(`${STRATEGY_URL}/api/report/daily?symbol=${symbol}`);
+    const res = await fetch(`${STRATEGY_URL}/api/report/daily?symbol=${symbol}`, { headers: authHeaders() });
     if (!res.ok) throw new Error('Daily report fetch failed');
     return res.json();
   },
