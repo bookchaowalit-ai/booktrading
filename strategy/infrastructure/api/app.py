@@ -50,10 +50,23 @@ SIGNAL_ORDER_EXECUTION_ENABLED = os.getenv(
 ).lower() in ("true", "1", "yes")
 
 
+_PRODUCTION_ENVIRONMENTS = ("production", "prod")
+
+
+def is_production() -> bool:
+    """True when ``ENVIRONMENT`` names a production deployment."""
+    return os.getenv("ENVIRONMENT", "").strip().lower() in _PRODUCTION_ENVIRONMENTS
+
+
 def require_auth(request: Request):
-    """Validate the Authorization header against the configured API token."""
-    if not API_TOKEN:  # None or empty string = dev mode, allow all
-        return True
+    """Validate the Authorization header against the configured API token.
+
+    Without ``AUTH_TOKEN`` the API runs in dev mode and allows every caller,
+    except when ``ENVIRONMENT=production``: then a missing token fails closed
+    so a misconfigured deployment never exposes protected routes anonymously.
+    """
+    if not API_TOKEN:  # None or empty string
+        return not is_production()
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         return False
@@ -868,6 +881,8 @@ def create_app(config: Optional[dict] = None) -> FastAPI:
     # Set auth token from env
     global API_TOKEN
     API_TOKEN = os.getenv("AUTH_TOKEN", None)
+    if not API_TOKEN and is_production():
+        logger.error("AUTH_TOKEN is not set with ENVIRONMENT=production; protected API routes will reject all callers")
 
     # Register routes
     register_routes(app)

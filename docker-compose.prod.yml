@@ -148,6 +148,7 @@ services:
       - GRPC_PORT=9000
       - API_HOST=0.0.0.0
       - API_PORT=8000
+      - ENVIRONMENT=production
       - AUTH_TOKEN=${AUTH_TOKEN:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - ALLOWED_ORIGINS=${FRONTEND_URL:-https://your-domain.com}
