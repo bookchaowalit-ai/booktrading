@@ -33,6 +33,17 @@ import (
 //     orders and the fills made since submission (it has no direct query), and
 //     a lookup it cannot decide keeps the order pending.
 
+// gridOrderMaxAge is how long an accepted grid order may stay open before
+// the grid cancels it. While it is open the grid places nothing, so a limit
+// order the market has moved away from would otherwise block the grid. The
+// cancel is only a request: the order stays pending until a lookup reports
+// it final, so a fill that races the cancel is still recorded.
+const gridOrderMaxAge = 15 * time.Minute
+
+// gridCancelRetry is the minimum time between two cancel requests for the
+// same order.
+const gridCancelRetry = time.Minute
+
 // gridUnknownGrace is how long an unknown order must be absent from the
 // exchange before the grid treats it as never placed.
 const gridUnknownGrace = 60 * time.Second
@@ -60,6 +71,9 @@ type gridExchange interface {
 	// lookup returns the state of an order by client order ID. submittedAt
 	// bounds the search on exchanges that cannot query by client order ID.
 	lookup(ctx context.Context, clientOrderID string, submittedAt time.Time) (gridOrderReport, error)
+	// cancel requests the cancellation of an open order. A nil error does
+	// not mean it is final; the next lookup tells.
+	cancel(ctx context.Context, clientOrderID string, submittedAt time.Time) error
 }
 
 // gridPendingOrder is an order whose outcome is not final yet.
@@ -72,6 +86,8 @@ type gridPendingOrder struct {
 	submittedAt   time.Time
 	// unknown is true while the exchange has never confirmed the order.
 	unknown bool
+	// cancelRequestedAt is when the grid last asked to cancel the order.
+	cancelRequestedAt time.Time
 }
 
 // nextClientOrderID returns a new client order ID for this run.
@@ -200,7 +216,45 @@ func (s *BotServiceImpl) reconcileGridOrder(ctx context.Context, grid gridParams
 		})
 		return ""
 	}
-	return s.applyGridReport(grid, book, order, report)
+	filled := s.applyGridReport(grid, book, order, report)
+	if book.pending == order && report.state == gridOrderOpen {
+		s.cancelStaleGridOrder(ctx, grid, book, order, ex)
+	}
+	return filled
+}
+
+// cancelStaleGridOrder requests the cancellation of an accepted order that
+// has been open longer than gridOrderMaxAge. The order stays pending; the
+// next lookup records any partial fill and frees the grid.
+func (s *BotServiceImpl) cancelStaleGridOrder(ctx context.Context, grid gridParams, book *gridBook, order *gridPendingOrder, ex gridExchange) {
+	now := book.now()
+	if now.Sub(order.submittedAt) < gridOrderMaxAge {
+		return
+	}
+	if !order.cancelRequestedAt.IsZero() && now.Sub(order.cancelRequestedAt) < gridCancelRetry {
+		return
+	}
+	order.cancelRequestedAt = now
+	err := ex.cancel(ctx, order.clientOrderID, order.submittedAt)
+	if err != nil {
+		logger.Warn("Grid stale order cancel failed", "symbol", grid.symbol, "clientOrderId", order.clientOrderID, "error", err)
+		s.broadcaster.BroadcastBotActivity(&model.BotActivity{
+			Timestamp: time.Now(),
+			Activity:  "RECONCILING",
+			Symbol:    grid.symbol,
+			Message:   fmt.Sprintf("Grid %s %s open for %s; cancel failed, will retry: %v", order.side, order.clientOrderID, now.Sub(order.submittedAt).Round(time.Second), err),
+			Level:     "warning",
+		})
+		return
+	}
+	logger.Info("Grid stale order cancel requested", "symbol", grid.symbol, "clientOrderId", order.clientOrderID)
+	s.broadcaster.BroadcastBotActivity(&model.BotActivity{
+		Timestamp: time.Now(),
+		Activity:  "ORDER_CANCELING",
+		Symbol:    grid.symbol,
+		Message:   fmt.Sprintf("Grid %s %s open for %s; cancel requested", order.side, order.clientOrderID, now.Sub(order.submittedAt).Round(time.Second)),
+		Level:     "info",
+	})
 }
 
 // applyGridReport applies one order report to the book and clears or keeps
@@ -326,4 +380,16 @@ func (e *liveGridExchange) lookup(ctx context.Context, clientOrderID string, sub
 		return gridOrderReport{}, err
 	}
 	return gridOrderReport{state: gridStateFromStatus(report.Status), executedQty: report.ExecutedQty}, nil
+}
+
+func (e *liveGridExchange) cancel(ctx context.Context, clientOrderID string, submittedAt time.Time) error {
+	if e.manager == nil {
+		return exchange.ErrReconcileUnsupported
+	}
+	err := e.manager.CancelOrderByClientID(ctx, e.symbol, clientOrderID, submittedAt)
+	if errors.Is(err, exchange.ErrOrderNotFound) {
+		// Not open any more: the next lookup reports the final state.
+		return nil
+	}
+	return err
 }

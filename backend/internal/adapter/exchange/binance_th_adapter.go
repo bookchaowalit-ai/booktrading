@@ -318,6 +318,14 @@ func (b *BinanceTHAdapter) GetOrderByClientID(ctx context.Context, symbol, clien
 	return classifyLookupResponse(b.httpClient.Do(req))
 }
 
+// CancelOrderByClientID cancels an open order by the client order ID it was
+// placed with. ErrOrderNotFound means it is not open any more.
+func (b *BinanceTHAdapter) CancelOrderByClientID(ctx context.Context, symbol, clientOrderID string) error {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return cancelByClientID(ctx, b.httpClient, b.baseURL, "/api/v1/order", b.apiKey, symbol, clientOrderID, b.generateSignature)
+}
+
 // GetOpenOrders retrieves all open orders for a symbol
 func (b *BinanceTHAdapter) GetOpenOrders(ctx context.Context, symbol string) ([]Order, error) {
 	b.mu.RLock()

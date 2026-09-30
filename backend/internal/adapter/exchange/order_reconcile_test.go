@@ -165,3 +165,36 @@ func TestIsOrderStateUnknownPlainErrors(t *testing.T) {
 		t.Fatal("sentinel text changed")
 	}
 }
+
+func TestCancelOrderByClientID(t *testing.T) {
+	var gotMethod, gotID string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotID = r.Method, r.URL.Query().Get("origClientOrderId")
+		switch gotID {
+		case "grid-open-1":
+			w.Write([]byte(`{"clientOrderId":"grid-open-1","status":"CANCELED"}`))
+		case "grid-done-1":
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"code":-2011,"msg":"Unknown order sent."}`))
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"code":-1100,"msg":"bad param"}`))
+		}
+	}))
+	defer srv.Close()
+
+	m := &ExchangeManager{currentProvider: config.ExchangeBinance, binanceExecutor: NewBinanceOrderExecutorWithBaseURL("k", "s", srv.URL)}
+	ctx := context.Background()
+	if err := m.CancelOrderByClientID(ctx, "BTCUSDT", "grid-open-1", time.Now()); err != nil || gotMethod != http.MethodDelete {
+		t.Fatalf("cancel = %v via %s", err, gotMethod)
+	}
+	if err := m.CancelOrderByClientID(ctx, "BTCUSDT", "grid-done-1", time.Now()); !errors.Is(err, ErrOrderNotFound) {
+		t.Fatalf("err = %v, want ErrOrderNotFound", err)
+	}
+	if err := m.CancelOrderByClientID(ctx, "BTCUSDT", "grid-bad-1", time.Now()); err == nil || errors.Is(err, ErrOrderNotFound) {
+		t.Fatalf("err = %v, want a plain error", err)
+	}
+	if err := (&ExchangeManager{currentProvider: "unknown"}).CancelOrderByClientID(ctx, "X", "grid-a-1", time.Now()); !errors.Is(err, ErrReconcileUnsupported) {
+		t.Fatalf("err = %v, want ErrReconcileUnsupported", err)
+	}
+}

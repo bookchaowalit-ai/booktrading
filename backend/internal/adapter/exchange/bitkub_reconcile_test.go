@@ -43,6 +43,8 @@ func fakeBitkubServer(t *testing.T, filled bool) (*ExchangeManager, *[]string) {
 				status, got = "filled", "1000"
 			}
 			w.Write([]byte(`{"error":0,"result":{"amount":1000,"rate":1000000,"filled":` + got + `,"status":"` + status + `"}}`))
+		case "/api/v3/market/cancel-order":
+			w.Write([]byte(`{"error":0}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -92,5 +94,24 @@ func TestBitkubBuyNeedsPrice(t *testing.T) {
 	}
 	if len(*calls) != 0 {
 		t.Fatalf("nothing may be sent: %v", *calls)
+	}
+}
+
+func TestBitkubCancelByClientID(t *testing.T) {
+	m, calls := fakeBitkubServer(t, false)
+	ctx := context.Background()
+	since := time.Now()
+	_, _ = m.PlaceOrderWithClientID(ctx, "THB_BTC", "BUY", 0.001, 1_000_000, "grid-bk-5")
+	if err := m.CancelOrderByClientID(ctx, "THB_BTC", "grid-bk-5", since); err != nil {
+		t.Fatal(err)
+	}
+	if last := (*calls)[len(*calls)-1]; last != "/api/v3/market/cancel-order" {
+		t.Fatalf("calls = %v", *calls)
+	}
+	if err := m.CancelOrderByClientID(ctx, "THB_BTC", "grid-bk-6", since); !errors.Is(err, ErrOrderNotFound) {
+		t.Fatalf("err = %v, want ErrOrderNotFound", err)
+	}
+	if err := m.CancelOrderByClientID(ctx, "THB_BTC", "grid-bk-5", time.Time{}); err == nil {
+		t.Fatal("a Bitkub cancel without a window must fail")
 	}
 }

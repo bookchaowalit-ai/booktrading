@@ -426,6 +426,33 @@ func (m *ExchangeManager) LookupOrderByClientIDSince(ctx context.Context, symbol
 	return reportFromOrder(order), nil
 }
 
+// CancelOrderByClientID cancels an open order placed with
+// PlaceOrderWithClientID. ErrOrderNotFound means it is not open any more;
+// look it up to learn its final state. since is the submission time, used
+// by Bitkub to find the order (see LookupOrderByClientIDSince).
+func (m *ExchangeManager) CancelOrderByClientID(ctx context.Context, symbol, clientOrderID string, since time.Time) error {
+	m.mu.RLock()
+	provider := m.currentProvider
+	executor := m.binanceExecutor
+	thAdapter := m.binanceTHAdapter
+	bk := m.bitkubClient
+	m.mu.RUnlock()
+
+	switch {
+	case provider == config.ExchangeBinance && executor != nil:
+		return executor.CancelOrderByClientID(ctx, symbol, clientOrderID)
+	case provider == config.ExchangeBinanceTH && thAdapter != nil:
+		return thAdapter.CancelOrderByClientID(ctx, symbol, clientOrderID)
+	case provider == config.ExchangeBitkub && bk != nil:
+		if since.IsZero() {
+			return fmt.Errorf("Bitkub cancel of %s needs the submission time", clientOrderID)
+		}
+		return cancelBitkubByClientID(ctx, bk, symbol, clientOrderID, since)
+	default:
+		return fmt.Errorf("%w: %s", ErrReconcileUnsupported, provider)
+	}
+}
+
 // GetTicker returns ticker info for a symbol from the current exchange
 func (m *ExchangeManager) GetTicker(ctx context.Context, symbol string) (*TickerInfo, error) {
 	m.mu.RLock()

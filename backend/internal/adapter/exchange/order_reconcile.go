@@ -139,15 +139,58 @@ func classifyLookupResponse(resp *http.Response, doErr error) (*Order, error) {
 	return &order, nil
 }
 
+// Binance "Unknown order sent." error code, returned by a cancel of an order
+// that is not open (already final or never placed).
+const binanceCodeUnknownOrder = -2011
+
 // signedGet builds a signed GET request for a Binance-style endpoint.
 func signedGet(ctx context.Context, baseURL, path, apiKey, query string, sign func(string) string) (*http.Request, error) {
+	return signedRequest(ctx, http.MethodGet, baseURL, path, apiKey, query, sign)
+}
+
+// signedRequest builds a signed request for a Binance-style endpoint, with
+// every parameter in the query string.
+func signedRequest(ctx context.Context, method, baseURL, path, apiKey, query string, sign func(string) string) (*http.Request, error) {
 	query += "&timestamp=" + strconv.FormatInt(time.Now().UnixMilli(), 10)
 	reqURL := fmt.Sprintf("%s%s?%s&signature=%s", baseURL, path, query, sign(query))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("X-MBX-APIKEY", apiKey)
 	req.Header.Set("Accept", "application/json")
 	return req, nil
+}
+
+// cancelByClientID cancels a Binance-style order by client order ID. It
+// returns ErrOrderNotFound when the order is not open any more (already
+// final, or never placed); the caller learns the final state by lookup.
+func cancelByClientID(ctx context.Context, client *http.Client, baseURL, path, apiKey, symbol, clientOrderID string, sign func(string) string) error {
+	if !ValidClientOrderID(clientOrderID) {
+		return fmt.Errorf("invalid client order ID %q", clientOrderID)
+	}
+	req, err := signedRequest(ctx, http.MethodDelete, baseURL, path, apiKey,
+		fmt.Sprintf("symbol=%s&origClientOrderId=%s", symbol, clientOrderID), sign)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("cancel failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read cancel response: %w", err)
+	}
+	if resp.StatusCode == http.StatusOK {
+		return nil
+	}
+	var apiErr struct {
+		Code int `json:"code"`
+	}
+	if json.Unmarshal(body, &apiErr) == nil && (apiErr.Code == binanceCodeUnknownOrder || apiErr.Code == binanceCodeOrderNotFound) {
+		return ErrOrderNotFound
+	}
+	return fmt.Errorf("cancel returned HTTP %d: %s", resp.StatusCode, string(body))
 }

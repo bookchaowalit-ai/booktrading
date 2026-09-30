@@ -27,6 +27,10 @@ func (f *fakeGridExchange) signal(ctx context.Context, side string, quantity, pr
 	return err
 }
 
+func (f *fakeGridExchange) cancel(ctx context.Context, clientOrderID string, submittedAt time.Time) error {
+	return nil
+}
+
 func (f *fakeGridExchange) lookup(ctx context.Context, clientOrderID string, submittedAt time.Time) (gridOrderReport, error) {
 	return gridOrderReport{state: gridOrderNotFound}, nil
 }

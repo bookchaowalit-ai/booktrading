@@ -548,6 +548,15 @@ func (b *BinanceOrderExecutor) GetOrderByClientID(ctx context.Context, symbol, c
 	return classifyLookupResponse(b.httpClient.Do(req))
 }
 
+// CancelOrderByClientID cancels an open order by the client order ID it was
+// placed with. ErrOrderNotFound means it is not open any more.
+func (b *BinanceOrderExecutor) CancelOrderByClientID(ctx context.Context, symbol, clientOrderID string) error {
+	if b.apiKey == "" || b.apiSecret == "" {
+		return fmt.Errorf("Binance API credentials not configured")
+	}
+	return cancelByClientID(ctx, b.httpClient, b.baseURL, b.orderEndpoint(), b.apiKey, symbol, clientOrderID, b.generateSignature)
+}
+
 // CancelOrder cancels an order on Binance
 func (b *BinanceOrderExecutor) CancelOrder(ctx context.Context, orderID string, symbol model.TradeSymbol) error {
 	if b.apiKey == "" || b.apiSecret == "" {

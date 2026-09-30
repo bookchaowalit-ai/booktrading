@@ -22,6 +22,8 @@ type scriptedExchange struct {
 	status    map[string]gridOrderReport
 	lookupErr error
 	lookups   int
+	cancels   []string
+	cancelErr error
 }
 
 func newScriptedExchange() *scriptedExchange {
@@ -50,6 +52,11 @@ func (e *scriptedExchange) lookup(ctx context.Context, clientOrderID string, sub
 		return r, nil
 	}
 	return gridOrderReport{state: gridOrderNotFound}, nil
+}
+
+func (e *scriptedExchange) cancel(ctx context.Context, clientOrderID string, submittedAt time.Time) error {
+	e.cancels = append(e.cancels, clientOrderID)
+	return e.cancelErr
 }
 
 type timeoutErr struct{}
@@ -272,5 +279,95 @@ func TestGridStateFromStatus(t *testing.T) {
 		if got := gridStateFromStatus(status); got != want {
 			t.Fatalf("gridStateFromStatus(%q) = %v, want %v", status, got, want)
 		}
+	}
+}
+
+func TestGridStaleOpenOrderIsCancelledThenReconciled(t *testing.T) {
+	svc := newGridTestService()
+	book := newGridBook(testGrid)
+	now := fixedClock(book)
+	ex := newScriptedExchange()
+	ctx := context.Background()
+
+	ex.placeResp = gridOrderReport{state: gridOrderOpen}
+	svc.gridStep(ctx, testGrid, book, 110, ex)
+	id := ex.placed[0]
+	ex.status[id] = gridOrderReport{state: gridOrderOpen}
+
+	*now = now.Add(gridOrderMaxAge - time.Second)
+	svc.gridStep(ctx, testGrid, book, 110, ex)
+	if len(ex.cancels) != 0 {
+		t.Fatalf("cancelled before max age: %v", ex.cancels)
+	}
+
+	*now = now.Add(2 * time.Second)
+	svc.gridStep(ctx, testGrid, book, 110, ex)
+	svc.gridStep(ctx, testGrid, book, 110, ex)
+	if len(ex.cancels) != 1 || ex.cancels[0] != id {
+		t.Fatalf("want exactly one cancel of %s, got %v", id, ex.cancels)
+	}
+	if book.pending == nil || len(ex.placed) != 1 {
+		t.Fatal("a cancel request must keep the order pending and place nothing")
+	}
+
+	// The exchange cancels it after a partial fill: the fill is recorded.
+	ex.status[id] = gridOrderReport{state: gridOrderDone, executedQty: 0.4}
+	if got := svc.gridStep(ctx, testGrid, book, 110, ex); got != "BUY" {
+		t.Fatalf("partial fill must be reported, got %q", got)
+	}
+	if book.pending != nil || book.position != 0.4 || svc.tradesCount != 1 {
+		t.Fatalf("pending=%v position=%v trades=%d", book.pending, book.position, svc.tradesCount)
+	}
+}
+
+func TestGridStaleOrderCancelFailureRetriesWithoutPlacing(t *testing.T) {
+	svc := newGridTestService()
+	book := newGridBook(testGrid)
+	now := fixedClock(book)
+	ex := newScriptedExchange()
+	ctx := context.Background()
+
+	ex.placeResp = gridOrderReport{state: gridOrderOpen}
+	svc.gridStep(ctx, testGrid, book, 110, ex)
+	id := ex.placed[0]
+	ex.status[id] = gridOrderReport{state: gridOrderOpen}
+	ex.cancelErr = errors.New("cancel timed out")
+
+	*now = now.Add(gridOrderMaxAge)
+	svc.gridStep(ctx, testGrid, book, 110, ex)
+	svc.gridStep(ctx, testGrid, book, 110, ex)
+	if len(ex.cancels) != 1 {
+		t.Fatalf("cancel retried too soon: %v", ex.cancels)
+	}
+	*now = now.Add(gridCancelRetry)
+	svc.gridStep(ctx, testGrid, book, 110, ex)
+	if len(ex.cancels) != 2 {
+		t.Fatalf("cancel not retried after %s: %v", gridCancelRetry, ex.cancels)
+	}
+	if len(ex.placed) != 1 || book.pending == nil {
+		t.Fatalf("a failed cancel must never lead to a new order: placed=%v", ex.placed)
+	}
+
+	// A fill that races the cancel is still recorded.
+	ex.status[id] = gridOrderReport{state: gridOrderFilled, executedQty: 1}
+	if got := svc.gridStep(ctx, testGrid, book, 110, ex); got != "BUY" || book.position != 1 {
+		t.Fatalf("racing fill lost: got %q position %v", got, book.position)
+	}
+}
+
+func TestGridUnconfirmedOrderIsNeverCancelled(t *testing.T) {
+	svc := newGridTestService()
+	book := newGridBook(testGrid)
+	now := fixedClock(book)
+	ex := newScriptedExchange()
+	ctx := context.Background()
+
+	ex.placeErr = timeoutErr{}
+	svc.gridStep(ctx, testGrid, book, 110, ex)
+	ex.lookupErr = errors.New("lookup timed out")
+	*now = now.Add(2 * gridOrderMaxAge)
+	svc.gridStep(ctx, testGrid, book, 110, ex)
+	if len(ex.cancels) != 0 {
+		t.Fatalf("an order the exchange never confirmed open must not be cancelled: %v", ex.cancels)
 	}
 }
