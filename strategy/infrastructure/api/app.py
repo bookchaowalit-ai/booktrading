@@ -3,6 +3,7 @@ FastAPI application for the strategy service.
 Provides REST API for strategy control and monitoring.
 """
 import asyncio
+import hmac
 import json
 import logging
 import math
@@ -56,7 +57,18 @@ def require_auth(request: Request):
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         return False
-    return auth[7:] == API_TOKEN
+    return hmac.compare_digest(auth[7:].encode(), API_TOKEN.encode())
+
+
+def require_configured_auth(request: Request) -> None:
+    """Fail closed: safety-control resets need a configured token and a match.
+
+    Unlike ``require_auth``, this never falls back to dev-mode "allow all", so a
+    kill switch or circuit breaker cannot be cleared by an anonymous caller
+    just because ``AUTH_TOKEN`` was left unset.
+    """
+    if not API_TOKEN or not require_auth(request):
+        raise HTTPException(status_code=401, detail="Invalid or missing API token")
 
 
 def _world_landing_uri(app: FastAPI) -> str | None:
@@ -1587,8 +1599,9 @@ def register_routes(app: FastAPI):
         return {"status": "refreshed", "message": "Brain signals will refresh on next grid tick"}
 
     @app.post("/api/brain/reset-cb")
-    async def brain_reset_cb(symbol: str = None):
+    async def brain_reset_cb(request: Request, symbol: str = None):
         """Manually reset circuit breaker for a symbol (or all if symbol not specified)."""
+        require_configured_auth(request)
         from app.brain.brain import get_brain
         brain = get_brain()
         brain.circuit_breaker.reset(symbol.upper() if symbol else None)
@@ -1729,7 +1742,7 @@ def register_routes(app: FastAPI):
     # ── Backtester Endpoints ──
 
     @app.post("/api/backtest/run")
-    async def run_backtest(request: dict):
+    async def run_grid_backtest(request: dict):
         """
         Run grid trading backtest with given parameters.
         
@@ -2227,8 +2240,9 @@ def register_routes(app: FastAPI):
         return bot.get_signals(limit=limit)
 
     @app.post("/api/poly-paper/reset-kill-switch")
-    async def poly_paper_reset_kill_switch():
+    async def poly_paper_reset_kill_switch(request: Request):
         """Reset the Polymarket paper bot kill switch after manual review."""
+        require_configured_auth(request)
         from app.polymarket.paper_bot import get_poly_paper_bot
         bot = get_poly_paper_bot()
         bot.reset_kill_switch()
@@ -2244,7 +2258,8 @@ def register_routes(app: FastAPI):
         return bot.get_status()
 
     @app.post("/api/arb-paper/reset")
-    async def arb_paper_reset():
+    @auth_required
+    async def arb_paper_reset(request: Request):
         """Reset arbitrage paper bot state."""
         from app.arbitrage_paper_bot import get_arb_paper_bot
         bot = get_arb_paper_bot()

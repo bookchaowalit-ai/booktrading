@@ -26,7 +26,8 @@ logger = logging.getLogger("trend_bot")
 
 BINANCE_PUBLIC_REST = os.getenv("BINANCE_PRICE_API", "https://api.binance.th")
 BACKEND_API_BASE = os.getenv("BACKEND_API_BASE", "http://backend:8080")
-BINANCE_TH_MAINNET = os.getenv("BINANCE_TH_USE_TESTNET", "false").lower() != "true"
+# Real-money orders require an explicit BINANCE_TH_USE_TESTNET=false; unset means safety mode.
+BINANCE_TH_MAINNET = os.getenv("BINANCE_TH_USE_TESTNET", "true").strip().lower() == "false"
 
 
 @dataclass

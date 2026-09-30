@@ -37,8 +37,9 @@ BINANCE_PUBLIC_REST = os.getenv("BINANCE_PRICE_API", "https://api.binance.th")
 BACKEND_API_BASE = os.getenv("BACKEND_API_BASE", "http://backend:8080")
 
 # Mainnet safety: explicit confirmation required for real money trading
-# Set BINANCE_TH_USE_TESTNET=true to disable real trading (safety mode)
-BINANCE_TH_MAINNET = os.getenv("BINANCE_TH_USE_TESTNET", "false").lower() != "true"
+# BINANCE_TH_USE_TESTNET=true (or unset) keeps real trading disabled (safety mode)
+# Real-money orders require an explicit BINANCE_TH_USE_TESTNET=false; unset means safety mode.
+BINANCE_TH_MAINNET = os.getenv("BINANCE_TH_USE_TESTNET", "true").strip().lower() == "false"
 
 
 @dataclass

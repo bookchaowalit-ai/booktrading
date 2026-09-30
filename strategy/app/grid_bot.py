@@ -783,7 +783,7 @@ class GridBot:
                 newly_fill_sells = []
                 for price, oid in list(state.active_buys.items()):
                     if oid not in pending_ids:
-                        newly_fill_buys.append(price)
+                        newly_filled_buys.append(price)
                         del state.active_buys[price]
                 for price, oid in list(state.active_sells.items()):
                     if oid not in pending_ids:
@@ -791,7 +791,7 @@ class GridBot:
                         del state.active_sells[price]
 
                 # Track newly filled buys (awaiting corresponding sell)
-                for price in newly_fill_buys:
+                for price in newly_filled_buys:
                     if price not in state.filled_buys:
                         # Estimate qty from DGT-adjusted order size
                         base_qty = state.current_order_size if state.current_order_size > 0 else cfg.order_size
@@ -832,11 +832,11 @@ class GridBot:
                             cfg.symbol, price, profit,
                         )
 
-                if newly_fill_buys or newly_fill_sells:
+                if newly_filled_buys or newly_fill_sells:
                     logger.info(
                         "[Grid %s] Synced: %d buys + %d sells filled, "
                         "remaining pending buys=%d sells=%d total_filled_b=%d filled_s=%d",
-                        cfg.symbol, len(newly_fill_buys), len(newly_fill_sells),
+                        cfg.symbol, len(newly_filled_buys), len(newly_fill_sells),
                         len(state.active_buys), len(state.active_sells),
                         len(state.filled_buys), len(state.filled_sells),
                     )
