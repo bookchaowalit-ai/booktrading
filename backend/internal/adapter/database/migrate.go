@@ -2,10 +2,10 @@ package database
 
 import (
 	"fmt"
-	"trading-bot-system/backend/internal/logger"
 	"os"
 	"path/filepath"
 	"strings"
+	"trading-bot-system/backend/internal/logger"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"

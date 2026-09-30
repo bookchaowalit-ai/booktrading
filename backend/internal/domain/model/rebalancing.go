@@ -32,8 +32,8 @@ type PortfolioAllocation struct {
 	CurrentValue   float64 `json:"current_value"`
 	CurrentPercent float64 `json:"current_percent"`
 	TargetPercent  float64 `json:"target_percent"`
-	Deviation      float64 `json:"deviation"`       // current - target
-	ActionNeeded   string  `json:"action_needed"`   // BUY, SELL, HOLD
+	Deviation      float64 `json:"deviation"`     // current - target
+	ActionNeeded   string  `json:"action_needed"` // BUY, SELL, HOLD
 }
 
 // RebalancePlan is the output of analysis showing required trades

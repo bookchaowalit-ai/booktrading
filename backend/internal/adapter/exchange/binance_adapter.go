@@ -8,11 +8,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"trading-bot-system/backend/internal/logger"
 	"net/http"
 	"strconv"
 	"sync"
 	"time"
+	"trading-bot-system/backend/internal/logger"
 
 	"github.com/gorilla/websocket"
 	"trading-bot-system/backend/internal/domain/model"
@@ -395,18 +395,18 @@ func (b *BinanceOrderExecutor) generateSignature(queryString string) string {
 
 // BinanceOrderResponse represents the response from Binance order API
 type BinanceOrderResponse struct {
-	Symbol            string  `json:"symbol"`
-	OrderID           int64   `json:"orderId"`
-	ClientOrderID     string  `json:"clientOrderId"`
-	Price             string  `json:"price"`
-	OrigQty           string  `json:"origQty"`
-	ExecutedQty       string  `json:"executedQty"`
-	Status            string  `json:"status"`
-	TimeInForce       string  `json:"timeInForce"`
-	Type              string  `json:"type"`
-	Side              string  `json:"side"`
-	TransactTime      int64   `json:"transactTime"`
-	CumQuoteQty       string  `json:"cummulativeQuoteQty"`
+	Symbol        string `json:"symbol"`
+	OrderID       int64  `json:"orderId"`
+	ClientOrderID string `json:"clientOrderId"`
+	Price         string `json:"price"`
+	OrigQty       string `json:"origQty"`
+	ExecutedQty   string `json:"executedQty"`
+	Status        string `json:"status"`
+	TimeInForce   string `json:"timeInForce"`
+	Type          string `json:"type"`
+	Side          string `json:"side"`
+	TransactTime  int64  `json:"transactTime"`
+	CumQuoteQty   string `json:"cummulativeQuoteQty"`
 }
 
 // PlaceOrder places a REAL order on Binance via REST API

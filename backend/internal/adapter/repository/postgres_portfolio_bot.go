@@ -112,7 +112,7 @@ func (r *PostgresBotStatusRepository) Get(ctx context.Context) (*model.BotStatus
 		FROM bot_status ORDER BY id DESC LIMIT 1
 	`
 	status := &model.BotStatus{}
-	
+
 	err := r.pool.QueryRow(ctx, query).Scan(
 		&status.IsActive,
 		&status.TotalTrades,
@@ -129,7 +129,7 @@ func (r *PostgresBotStatusRepository) Get(ctx context.Context) (*model.BotStatus
 		}
 		return nil, err
 	}
-	
+
 	return status, nil
 }
 

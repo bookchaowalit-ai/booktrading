@@ -13,7 +13,7 @@ const (
 	AccountTypeSavings    AccountType = "savings"
 	AccountTypeCreditCard AccountType = "credit_card"
 	AccountTypeCash       AccountType = "cash"
-	AccountTypeWallet    AccountType = "wallet"
+	AccountTypeWallet     AccountType = "wallet"
 	AccountTypeInvestment AccountType = "investment"
 	AccountTypeLoan       AccountType = "loan"
 )
@@ -53,17 +53,17 @@ const (
 
 // FinanceCategory represents a transaction category
 type FinanceCategory struct {
-	ID           string        `json:"id"`
-	UserID       string        `json:"user_id"`
-	Name         string        `json:"name"`
-	Type         CategoryType  `json:"type"`
-	ParentID     *string       `json:"parent_id,omitempty"`
-	Color        string        `json:"color,omitempty"`
-	Icon         string        `json:"icon,omitempty"`
-	BudgetAmount float64       `json:"budget_amount"`
-	IsSystem     bool          `json:"is_system"`
-	CreatedAt    time.Time     `json:"created_at"`
-	UpdatedAt    time.Time     `json:"updated_at"`
+	ID           string       `json:"id"`
+	UserID       string       `json:"user_id"`
+	Name         string       `json:"name"`
+	Type         CategoryType `json:"type"`
+	ParentID     *string      `json:"parent_id,omitempty"`
+	Color        string       `json:"color,omitempty"`
+	Icon         string       `json:"icon,omitempty"`
+	BudgetAmount float64      `json:"budget_amount"`
+	IsSystem     bool         `json:"is_system"`
+	CreatedAt    time.Time    `json:"created_at"`
+	UpdatedAt    time.Time    `json:"updated_at"`
 }
 
 // ============================================
@@ -80,25 +80,25 @@ const (
 
 // FinanceTransaction represents a financial transaction
 type FinanceTransaction struct {
-	ID            string          `json:"id"`
-	UserID        string          `json:"user_id"`
-	AccountID     string          `json:"account_id"`
-	CategoryID    *string         `json:"category_id,omitempty"`
-	Type          TransactionType `json:"type"`
-	Amount        float64         `json:"amount"`
-	Currency      string          `json:"currency"`
-	Description   string          `json:"description,omitempty"`
-	Payee         string          `json:"payee,omitempty"`
-	Date          time.Time       `json:"date"`
-	IsRecurring   bool            `json:"is_recurring"`
-	RecurringID   *string         `json:"recurring_id,omitempty"`
-	Tags          []string        `json:"tags,omitempty"`
-	Attachments   []string        `json:"attachments,omitempty"`
-	Latitude      *float64        `json:"latitude,omitempty"`
-	Longitude     *float64        `json:"longitude,omitempty"`
-	LocationName  string          `json:"location_name,omitempty"`
-	CreatedAt     time.Time       `json:"created_at"`
-	UpdatedAt     time.Time       `json:"updated_at"`
+	ID           string          `json:"id"`
+	UserID       string          `json:"user_id"`
+	AccountID    string          `json:"account_id"`
+	CategoryID   *string         `json:"category_id,omitempty"`
+	Type         TransactionType `json:"type"`
+	Amount       float64         `json:"amount"`
+	Currency     string          `json:"currency"`
+	Description  string          `json:"description,omitempty"`
+	Payee        string          `json:"payee,omitempty"`
+	Date         time.Time       `json:"date"`
+	IsRecurring  bool            `json:"is_recurring"`
+	RecurringID  *string         `json:"recurring_id,omitempty"`
+	Tags         []string        `json:"tags,omitempty"`
+	Attachments  []string        `json:"attachments,omitempty"`
+	Latitude     *float64        `json:"latitude,omitempty"`
+	Longitude    *float64        `json:"longitude,omitempty"`
+	LocationName string          `json:"location_name,omitempty"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
 }
 
 // ============================================
@@ -115,19 +115,19 @@ const (
 
 // FinanceBudget represents a budget
 type FinanceBudget struct {
-	ID              string       `json:"id"`
-	UserID          string       `json:"user_id"`
-	Name            string       `json:"name"`
-	CategoryID      *string      `json:"category_id,omitempty"`
-	Amount          float64      `json:"amount"`
-	Currency        string       `json:"currency"`
-	Period          BudgetPeriod `json:"period"`
-	StartDate       time.Time    `json:"start_date"`
-	EndDate         *time.Time   `json:"end_date,omitempty"`
-	IsActive        bool         `json:"is_active"`
-	AlertThreshold  float64      `json:"alert_threshold"`
-	CreatedAt       time.Time    `json:"created_at"`
-	UpdatedAt       time.Time    `json:"updated_at"`
+	ID             string       `json:"id"`
+	UserID         string       `json:"user_id"`
+	Name           string       `json:"name"`
+	CategoryID     *string      `json:"category_id,omitempty"`
+	Amount         float64      `json:"amount"`
+	Currency       string       `json:"currency"`
+	Period         BudgetPeriod `json:"period"`
+	StartDate      time.Time    `json:"start_date"`
+	EndDate        *time.Time   `json:"end_date,omitempty"`
+	IsActive       bool         `json:"is_active"`
+	AlertThreshold float64      `json:"alert_threshold"`
+	CreatedAt      time.Time    `json:"created_at"`
+	UpdatedAt      time.Time    `json:"updated_at"`
 }
 
 // ============================================
@@ -139,40 +139,40 @@ type GoalPriority string
 type GoalStatus string
 
 const (
-	GoalTypeSavings        GoalType = "savings"
-	GoalTypeDebtPayoff     GoalType = "debt_payoff"
-	GoalTypeInvestment     GoalType = "investment"
-	GoalTypeEmergencyFund  GoalType = "emergency_fund"
-	GoalTypeCustom         GoalType = "custom"
+	GoalTypeSavings       GoalType = "savings"
+	GoalTypeDebtPayoff    GoalType = "debt_payoff"
+	GoalTypeInvestment    GoalType = "investment"
+	GoalTypeEmergencyFund GoalType = "emergency_fund"
+	GoalTypeCustom        GoalType = "custom"
 
 	GoalPriorityLow    GoalPriority = "low"
 	GoalPriorityMedium GoalPriority = "medium"
 	GoalPriorityHigh   GoalPriority = "high"
 
 	GoalStatusActive    GoalStatus = "active"
-	GoalStatusCompleted  GoalStatus = "completed"
-	GoalStatusPaused     GoalStatus = "paused"
-	GoalStatusCancelled  GoalStatus = "cancelled"
+	GoalStatusCompleted GoalStatus = "completed"
+	GoalStatusPaused    GoalStatus = "paused"
+	GoalStatusCancelled GoalStatus = "cancelled"
 )
 
 // FinanceGoal represents a financial goal
 type FinanceGoal struct {
-	ID                 string        `json:"id"`
-	UserID             string        `json:"user_id"`
-	Name               string        `json:"name"`
-	Type               GoalType      `json:"type"`
-	TargetAmount       float64       `json:"target_amount"`
-	CurrentAmount      float64       `json:"current_amount"`
-	Currency           string        `json:"currency"`
-	TargetDate         *time.Time    `json:"target_date,omitempty"`
+	ID                  string       `json:"id"`
+	UserID              string       `json:"user_id"`
+	Name                string       `json:"name"`
+	Type                GoalType     `json:"type"`
+	TargetAmount        float64      `json:"target_amount"`
+	CurrentAmount       float64      `json:"current_amount"`
+	Currency            string       `json:"currency"`
+	TargetDate          *time.Time   `json:"target_date,omitempty"`
 	MonthlyContribution float64      `json:"monthly_contribution"`
-	Priority           GoalPriority  `json:"priority"`
-	Status             GoalStatus    `json:"status"`
-	Color              string        `json:"color,omitempty"`
-	Icon               string        `json:"icon,omitempty"`
-	Notes              string        `json:"notes,omitempty"`
-	CreatedAt          time.Time     `json:"created_at"`
-	UpdatedAt          time.Time     `json:"updated_at"`
+	Priority            GoalPriority `json:"priority"`
+	Status              GoalStatus   `json:"status"`
+	Color               string       `json:"color,omitempty"`
+	Icon                string       `json:"icon,omitempty"`
+	Notes               string       `json:"notes,omitempty"`
+	CreatedAt           time.Time    `json:"created_at"`
+	UpdatedAt           time.Time    `json:"updated_at"`
 }
 
 // ============================================
@@ -182,12 +182,12 @@ type FinanceGoal struct {
 type AssetType string
 
 const (
-	AssetTypeRealEstate  AssetType = "real_estate"
-	AssetTypeVehicle     AssetType = "vehicle"
-	AssetTypeJewelry     AssetType = "jewelry"
+	AssetTypeRealEstate   AssetType = "real_estate"
+	AssetTypeVehicle      AssetType = "vehicle"
+	AssetTypeJewelry      AssetType = "jewelry"
 	AssetTypeCollectibles AssetType = "collectibles"
-	AssetTypeBusiness    AssetType = "business"
-	AssetTypeOther       AssetType = "other"
+	AssetTypeBusiness     AssetType = "business"
+	AssetTypeOther        AssetType = "other"
 )
 
 // FinanceAsset represents a non-trading asset
@@ -234,23 +234,23 @@ const (
 
 // FinanceLiability represents a debt or loan
 type FinanceLiability struct {
-	ID              string           `json:"id"`
-	UserID          string           `json:"user_id"`
-	Name            string           `json:"name"`
-	Type            LiabilityType    `json:"type"`
-	Lender          string           `json:"lender,omitempty"`
-	OriginalAmount  float64          `json:"original_amount"`
-	CurrentBalance  float64          `json:"current_balance"`
-	Currency        string           `json:"currency"`
-	InterestRate    *float64         `json:"interest_rate,omitempty"`
-	InterestType    InterestType     `json:"interest_type,omitempty"`
-	MinimumPayment  *float64         `json:"minimum_payment,omitempty"`
-	DueDate         *int             `json:"due_date,omitempty"` // Day of month
-	StartDate       *time.Time       `json:"start_date,omitempty"`
-	EndDate         *time.Time       `json:"end_date,omitempty"`
-	Status          LiabilityStatus  `json:"status"`
-	CreatedAt       time.Time        `json:"created_at"`
-	UpdatedAt       time.Time        `json:"updated_at"`
+	ID             string          `json:"id"`
+	UserID         string          `json:"user_id"`
+	Name           string          `json:"name"`
+	Type           LiabilityType   `json:"type"`
+	Lender         string          `json:"lender,omitempty"`
+	OriginalAmount float64         `json:"original_amount"`
+	CurrentBalance float64         `json:"current_balance"`
+	Currency       string          `json:"currency"`
+	InterestRate   *float64        `json:"interest_rate,omitempty"`
+	InterestType   InterestType    `json:"interest_type,omitempty"`
+	MinimumPayment *float64        `json:"minimum_payment,omitempty"`
+	DueDate        *int            `json:"due_date,omitempty"` // Day of month
+	StartDate      *time.Time      `json:"start_date,omitempty"`
+	EndDate        *time.Time      `json:"end_date,omitempty"`
+	Status         LiabilityStatus `json:"status"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
 // ============================================
@@ -347,24 +347,24 @@ const (
 
 // RecurringTransaction represents a recurring transaction template
 type RecurringTransaction struct {
-	ID              string          `json:"id"`
-	UserID          string          `json:"user_id"`
-	AccountID       *string         `json:"account_id,omitempty"`
-	CategoryID      *string         `json:"category_id,omitempty"`
-	Type            TransactionType `json:"type"`
-	Amount          float64         `json:"amount"`
-	Currency        string          `json:"currency"`
-	Description     string          `json:"description,omitempty"`
-	Payee           string          `json:"payee,omitempty"`
-	Frequency       Frequency       `json:"frequency"`
-	StartDate       time.Time       `json:"start_date"`
-	EndDate         *time.Time      `json:"end_date,omitempty"`
-	NextOccurrence  time.Time       `json:"next_occurrence"`
-	LastOccurrence  *time.Time      `json:"last_occurrence,omitempty"`
-	IsActive        bool            `json:"is_active"`
-	AutoCreate      bool            `json:"auto_create"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
+	ID             string          `json:"id"`
+	UserID         string          `json:"user_id"`
+	AccountID      *string         `json:"account_id,omitempty"`
+	CategoryID     *string         `json:"category_id,omitempty"`
+	Type           TransactionType `json:"type"`
+	Amount         float64         `json:"amount"`
+	Currency       string          `json:"currency"`
+	Description    string          `json:"description,omitempty"`
+	Payee          string          `json:"payee,omitempty"`
+	Frequency      Frequency       `json:"frequency"`
+	StartDate      time.Time       `json:"start_date"`
+	EndDate        *time.Time      `json:"end_date,omitempty"`
+	NextOccurrence time.Time       `json:"next_occurrence"`
+	LastOccurrence *time.Time      `json:"last_occurrence,omitempty"`
+	IsActive       bool            `json:"is_active"`
+	AutoCreate     bool            `json:"auto_create"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
 // ============================================
@@ -374,15 +374,15 @@ type RecurringTransaction struct {
 // NetWorthBreakdown represents the breakdown of net worth by category
 type NetWorthBreakdown struct {
 	Assets struct {
-		Accounts   float64 `json:"accounts"`
+		Accounts    float64 `json:"accounts"`
 		Investments float64 `json:"investments"`
-		Property   float64 `json:"property"`
-		Other      float64 `json:"other"`
+		Property    float64 `json:"property"`
+		Other       float64 `json:"other"`
 	} `json:"assets"`
 	Liabilities struct {
-		Loans      float64 `json:"loans"`
+		Loans       float64 `json:"loans"`
 		CreditCards float64 `json:"credit_cards"`
-		Other      float64 `json:"other"`
+		Other       float64 `json:"other"`
 	} `json:"liabilities"`
 }
 
@@ -420,46 +420,46 @@ type CreateAccountRequest struct {
 
 // CreateTransactionRequest
 type CreateTransactionRequest struct {
-	AccountID     string          `json:"account_id"`
-	CategoryID    *string         `json:"category_id,omitempty"`
-	Type          TransactionType `json:"type"`
-	Amount        float64         `json:"amount"`
-	Currency      string          `json:"currency,omitempty"`
-	Description   string          `json:"description,omitempty"`
-	Payee         string          `json:"payee,omitempty"`
-	Date          *time.Time      `json:"date,omitempty"`
-	IsRecurring   bool            `json:"is_recurring,omitempty"`
-	Tags          []string        `json:"tags,omitempty"`
-	Latitude      *float64        `json:"latitude,omitempty"`
-	Longitude     *float64        `json:"longitude,omitempty"`
-	LocationName  string          `json:"location_name,omitempty"`
+	AccountID    string          `json:"account_id"`
+	CategoryID   *string         `json:"category_id,omitempty"`
+	Type         TransactionType `json:"type"`
+	Amount       float64         `json:"amount"`
+	Currency     string          `json:"currency,omitempty"`
+	Description  string          `json:"description,omitempty"`
+	Payee        string          `json:"payee,omitempty"`
+	Date         *time.Time      `json:"date,omitempty"`
+	IsRecurring  bool            `json:"is_recurring,omitempty"`
+	Tags         []string        `json:"tags,omitempty"`
+	Latitude     *float64        `json:"latitude,omitempty"`
+	Longitude    *float64        `json:"longitude,omitempty"`
+	LocationName string          `json:"location_name,omitempty"`
 }
 
 // CreateBudgetRequest
 type CreateBudgetRequest struct {
-	Name            string       `json:"name"`
-	CategoryID      *string      `json:"category_id,omitempty"`
-	Amount          float64      `json:"amount"`
-	Currency        string       `json:"currency,omitempty"`
-	Period          BudgetPeriod `json:"period"`
-	StartDate       *time.Time   `json:"start_date,omitempty"`
-	EndDate         *time.Time   `json:"end_date,omitempty"`
-	AlertThreshold  *float64     `json:"alert_threshold,omitempty"`
+	Name           string       `json:"name"`
+	CategoryID     *string      `json:"category_id,omitempty"`
+	Amount         float64      `json:"amount"`
+	Currency       string       `json:"currency,omitempty"`
+	Period         BudgetPeriod `json:"period"`
+	StartDate      *time.Time   `json:"start_date,omitempty"`
+	EndDate        *time.Time   `json:"end_date,omitempty"`
+	AlertThreshold *float64     `json:"alert_threshold,omitempty"`
 }
 
 // CreateGoalRequest
 type CreateGoalRequest struct {
-	Name                string        `json:"name"`
-	Type                GoalType      `json:"type"`
-	TargetAmount        float64       `json:"target_amount"`
-	CurrentAmount       float64       `json:"current_amount,omitempty"`
-	Currency            string        `json:"currency,omitempty"`
-	TargetDate          *time.Time    `json:"target_date,omitempty"`
-	MonthlyContribution float64       `json:"monthly_contribution,omitempty"`
-	Priority            GoalPriority  `json:"priority,omitempty"`
-	Color               string        `json:"color,omitempty"`
-	Icon                string        `json:"icon,omitempty"`
-	Notes               string        `json:"notes,omitempty"`
+	Name                string       `json:"name"`
+	Type                GoalType     `json:"type"`
+	TargetAmount        float64      `json:"target_amount"`
+	CurrentAmount       float64      `json:"current_amount,omitempty"`
+	Currency            string       `json:"currency,omitempty"`
+	TargetDate          *time.Time   `json:"target_date,omitempty"`
+	MonthlyContribution float64      `json:"monthly_contribution,omitempty"`
+	Priority            GoalPriority `json:"priority,omitempty"`
+	Color               string       `json:"color,omitempty"`
+	Icon                string       `json:"icon,omitempty"`
+	Notes               string       `json:"notes,omitempty"`
 }
 
 // CreateDiaryEntryRequest
@@ -481,19 +481,19 @@ type CreateDiaryEntryRequest struct {
 
 // DashboardSummary represents the finance dashboard summary
 type DashboardSummary struct {
-	NetWorth           float64                   `json:"net_worth"`
-	TotalAssets        float64                   `json:"total_assets"`
-	TotalLiabilities   float64                   `json:"total_liabilities"`
-	MonthlyIncome      float64                   `json:"monthly_income"`
-	MonthlyExpenses    float64                   `json:"monthly_expenses"`
-	MonthlySavings     float64                   `json:"monthly_savings"`
-	SavingsRate        float64                   `json:"savings_rate"`
-	AccountBalances    []AccountBalance          `json:"account_balances"`
-	RecentTransactions []FinanceTransaction      `json:"recent_transactions"`
-	UpcomingBills     []FinanceSubscription     `json:"upcoming_bills"`
-	GoalsProgress      []GoalProgress            `json:"goals_progress"`
-	BudgetStatus       []BudgetStatus            `json:"budget_status"`
-	SpendingByCategory []CategorySpending        `json:"spending_by_category"`
+	NetWorth           float64               `json:"net_worth"`
+	TotalAssets        float64               `json:"total_assets"`
+	TotalLiabilities   float64               `json:"total_liabilities"`
+	MonthlyIncome      float64               `json:"monthly_income"`
+	MonthlyExpenses    float64               `json:"monthly_expenses"`
+	MonthlySavings     float64               `json:"monthly_savings"`
+	SavingsRate        float64               `json:"savings_rate"`
+	AccountBalances    []AccountBalance      `json:"account_balances"`
+	RecentTransactions []FinanceTransaction  `json:"recent_transactions"`
+	UpcomingBills      []FinanceSubscription `json:"upcoming_bills"`
+	GoalsProgress      []GoalProgress        `json:"goals_progress"`
+	BudgetStatus       []BudgetStatus        `json:"budget_status"`
+	SpendingByCategory []CategorySpending    `json:"spending_by_category"`
 }
 
 type AccountBalance struct {
@@ -505,23 +505,23 @@ type AccountBalance struct {
 }
 
 type GoalProgress struct {
-	GoalID           string  `json:"goal_id"`
-	GoalName         string  `json:"goal_name"`
-	TargetAmount     float64 `json:"target_amount"`
-	CurrentAmount    float64 `json:"current_amount"`
-	Progress         float64 `json:"progress"`
-	DaysRemaining    int     `json:"days_remaining"`
-	OnTrack          bool    `json:"on_track"`
+	GoalID        string  `json:"goal_id"`
+	GoalName      string  `json:"goal_name"`
+	TargetAmount  float64 `json:"target_amount"`
+	CurrentAmount float64 `json:"current_amount"`
+	Progress      float64 `json:"progress"`
+	DaysRemaining int     `json:"days_remaining"`
+	OnTrack       bool    `json:"on_track"`
 }
 
 type BudgetStatus struct {
-	BudgetID      string  `json:"budget_id"`
-	BudgetName    string  `json:"budget_name"`
-	BudgetAmount  float64 `json:"budget_amount"`
-	SpentAmount   float64 `json:"spent_amount"`
-	Remaining     float64 `json:"remaining"`
-	PercentUsed   float64 `json:"percent_used"`
-	IsOverBudget  bool    `json:"is_over_budget"`
+	BudgetID     string  `json:"budget_id"`
+	BudgetName   string  `json:"budget_name"`
+	BudgetAmount float64 `json:"budget_amount"`
+	SpentAmount  float64 `json:"spent_amount"`
+	Remaining    float64 `json:"remaining"`
+	PercentUsed  float64 `json:"percent_used"`
+	IsOverBudget bool    `json:"is_over_budget"`
 }
 
 type CategorySpending struct {
@@ -534,17 +534,17 @@ type CategorySpending struct {
 
 // FinancialCalculatorInputs
 type CompoundInterestInput struct {
-	Principal     float64 `json:"principal"`
-	AnnualRate    float64 `json:"annual_rate"`
-	Years         int     `json:"years"`
-	CompoundsPerYear int   `json:"compounds_per_year"`
+	Principal           float64 `json:"principal"`
+	AnnualRate          float64 `json:"annual_rate"`
+	Years               int     `json:"years"`
+	CompoundsPerYear    int     `json:"compounds_per_year"`
 	MonthlyContribution float64 `json:"monthly_contribution"`
 }
 
 type CompoundInterestResult struct {
-	FutureValue        float64 `json:"future_value"`
-	TotalContributions float64 `json:"total_contributions"`
-	TotalInterest      float64 `json:"total_interest"`
+	FutureValue        float64           `json:"future_value"`
+	TotalContributions float64           `json:"total_contributions"`
+	TotalInterest      float64           `json:"total_interest"`
 	YearlyBreakdown    []YearlyBreakdown `json:"yearly_breakdown"`
 }
 
@@ -557,24 +557,24 @@ type YearlyBreakdown struct {
 }
 
 type LoanCalculatorInput struct {
-	Principal      float64 `json:"principal"`
-	AnnualRate     float64 `json:"annual_rate"`
-	Years          int     `json:"years"`
-	DownPayment    float64 `json:"down_payment,omitempty"`
+	Principal   float64 `json:"principal"`
+	AnnualRate  float64 `json:"annual_rate"`
+	Years       int     `json:"years"`
+	DownPayment float64 `json:"down_payment,omitempty"`
 }
 
 type LoanCalculatorResult struct {
-	MonthlyPayment float64           `json:"monthly_payment"`
-	TotalPayment   float64           `json:"total_payment"`
-	TotalInterest  float64           `json:"total_interest"`
-	LoanAmount     float64           `json:"loan_amount"`
-	Schedule       []LoanPayment    `json:"schedule"`
+	MonthlyPayment float64       `json:"monthly_payment"`
+	TotalPayment   float64       `json:"total_payment"`
+	TotalInterest  float64       `json:"total_interest"`
+	LoanAmount     float64       `json:"loan_amount"`
+	Schedule       []LoanPayment `json:"schedule"`
 }
 
 type LoanPayment struct {
-	Month        int     `json:"month"`
-	Payment      float64 `json:"payment"`
-	Principal    float64 `json:"principal"`
-	Interest     float64 `json:"interest"`
-	Balance      float64 `json:"balance"`
+	Month     int     `json:"month"`
+	Payment   float64 `json:"payment"`
+	Principal float64 `json:"principal"`
+	Interest  float64 `json:"interest"`
+	Balance   float64 `json:"balance"`
 }

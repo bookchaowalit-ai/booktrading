@@ -327,15 +327,15 @@ func (h *FeatureHandler) AlertsConfig(w http.ResponseWriter, r *http.Request) {
 		cfg := h.alertService.GetConfig()
 		safe := map[string]any{
 			"enabled":             cfg.Enabled,
-			"has_discord":        cfg.DiscordWebhookURL != "",
-			"has_telegram":       cfg.TelegramBotToken != "",
-			"has_email":          cfg.EmailSMTPHost != "",
-			"has_webhook":        cfg.CustomWebhookURL != "",
-			"notify_on_trade":    cfg.NotifyOnTrade,
+			"has_discord":         cfg.DiscordWebhookURL != "",
+			"has_telegram":        cfg.TelegramBotToken != "",
+			"has_email":           cfg.EmailSMTPHost != "",
+			"has_webhook":         cfg.CustomWebhookURL != "",
+			"notify_on_trade":     cfg.NotifyOnTrade,
 			"notify_on_bot_start": cfg.NotifyOnBotStart,
-			"notify_on_error":    cfg.NotifyOnError,
-			"notify_on_risk":     cfg.NotifyOnRisk,
-			"notify_on_price":    cfg.NotifyOnPrice,
+			"notify_on_error":     cfg.NotifyOnError,
+			"notify_on_risk":      cfg.NotifyOnRisk,
+			"notify_on_price":     cfg.NotifyOnPrice,
 		}
 		writeJSON(w, http.StatusOK, safe)
 	case http.MethodPost:
@@ -386,18 +386,18 @@ func (h *FeatureHandler) AlertsHistory(w http.ResponseWriter, r *http.Request) {
 // ── Backtest handlers ──
 
 type BacktestRunRequest struct {
-	Symbol          string    `json:"symbol"`
-	StartDate       string    `json:"start_date"`
-	EndDate         string    `json:"end_date"`
-	InitialCapital  float64   `json:"initial_capital"`
-	Commission      float64   `json:"commission"`
-	Slippage        float64   `json:"slippage"`
-	Strategy        string    `json:"strategy"`
-	RSIPeriod       int       `json:"rsi_period"`
-	RSIOversold     float64   `json:"rsi_oversold"`
-	RSIOverbought   float64   `json:"rsi_overbought"`
-	EMAFastPeriod   int       `json:"ema_fast_period"`
-	EMASlowPeriod   int       `json:"ema_slow_period"`
+	Symbol         string  `json:"symbol"`
+	StartDate      string  `json:"start_date"`
+	EndDate        string  `json:"end_date"`
+	InitialCapital float64 `json:"initial_capital"`
+	Commission     float64 `json:"commission"`
+	Slippage       float64 `json:"slippage"`
+	Strategy       string  `json:"strategy"`
+	RSIPeriod      int     `json:"rsi_period"`
+	RSIOversold    float64 `json:"rsi_oversold"`
+	RSIOverbought  float64 `json:"rsi_overbought"`
+	EMAFastPeriod  int     `json:"ema_fast_period"`
+	EMASlowPeriod  int     `json:"ema_slow_period"`
 }
 
 func (h *FeatureHandler) BacktestRun(w http.ResponseWriter, r *http.Request) {
@@ -514,7 +514,7 @@ func (h *FeatureHandler) GetAuditLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"logs": logs,
+		"logs":  logs,
 		"count": len(logs),
 	})
 }
@@ -551,10 +551,10 @@ func (h *FeatureHandler) GetAuditStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"by_action":     byAction,
-		"by_user":       byUser,
+		"by_action":       byAction,
+		"by_user":         byUser,
 		"recent_activity": recent,
-		"total":         len(actionCounts),
+		"total":           len(actionCounts),
 	})
 }
 

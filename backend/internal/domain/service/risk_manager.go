@@ -17,20 +17,20 @@ type RiskManager struct {
 	config *model.RiskConfig
 
 	// Tracking state
-	peakValue     float64
-	currentValue  float64
-	dailyStartVal float64
-	dailyTrades   int
-	totalTrades   int
-	wins          int
-	losses        int
-	grossProfit   float64
-	grossLoss     float64
+	peakValue      float64
+	currentValue   float64
+	dailyStartVal  float64
+	dailyTrades    int
+	totalTrades    int
+	wins           int
+	losses         int
+	grossProfit    float64
+	grossLoss      float64
 	tradeResults   []float64 // PnL per trade
-	stopLossHits  int
+	stopLossHits   int
 	takeProfitHits int
-	lastTradeAt   time.Time
-	dailyResetAt  time.Time
+	lastTradeAt    time.Time
+	dailyResetAt   time.Time
 }
 
 // NewRiskManager creates a new risk manager
@@ -39,11 +39,11 @@ func NewRiskManager(config *model.RiskConfig, initialValue float64) *RiskManager
 		config = model.DefaultRiskConfig()
 	}
 	return &RiskManager{
-		config:       config,
-		peakValue:    initialValue,
-		currentValue: initialValue,
+		config:        config,
+		peakValue:     initialValue,
+		currentValue:  initialValue,
 		dailyStartVal: initialValue,
-		dailyResetAt: time.Now(),
+		dailyResetAt:  time.Now(),
 	}
 }
 

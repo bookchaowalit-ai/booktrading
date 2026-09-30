@@ -52,10 +52,10 @@ type RealOrderRequest struct {
 }
 
 type TradeStatusResponse struct {
-	Provider    string `json:"provider"`
-	HasKeys     bool   `json:"has_keys"`
-	Testnet     bool   `json:"testnet"`
-	ReadyToTrade bool  `json:"ready_to_trade"`
+	Provider     string `json:"provider"`
+	HasKeys      bool   `json:"has_keys"`
+	Testnet      bool   `json:"testnet"`
+	ReadyToTrade bool   `json:"ready_to_trade"`
 }
 
 // PlaceOrder handles POST /api/trade/order
@@ -166,11 +166,11 @@ func (h *TradeHandler) TradeStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	provider := string(h.manager.GetCurrentProvider())
-	
+
 	// Check env config keys first (in-memory apiKeys)
 	hasKeys := false
 	testnet := true
-	
+
 	// Check if we have keys configured (from env or DB)
 	exchanges := h.manager.GetSupportedExchanges()
 	for _, ex := range exchanges {
@@ -424,18 +424,18 @@ func (h *TradeHandler) CancelOrder(w http.ResponseWriter, r *http.Request) {
 // ── Trade Journal Handlers ──────────────────────────────────────────────────
 
 type JournalEntryRequest struct {
-	Symbol           string  `json:"symbol"`
-	Side             string  `json:"side"`
-	Strategy         string  `json:"strategy"`
-	EntryReason      string  `json:"entry_reason"`
-	EntryPrice       float64 `json:"entry_price"`
-	Quantity         float64 `json:"quantity"`
-	ExpectedRiskTHB  float64 `json:"expected_risk_thb"`
+	Symbol            string  `json:"symbol"`
+	Side              string  `json:"side"`
+	Strategy          string  `json:"strategy"`
+	EntryReason       string  `json:"entry_reason"`
+	EntryPrice        float64 `json:"entry_price"`
+	Quantity          float64 `json:"quantity"`
+	ExpectedRiskTHB   float64 `json:"expected_risk_thb"`
 	ExpectedRewardTHB float64 `json:"expected_reward_thb"`
-	StopLossPrice    float64 `json:"stop_loss_price"`
-	TakeProfitPrice  float64 `json:"take_profit_price"`
-	ExchangeOrderID  string  `json:"exchange_order_id"`
-	Notes            string  `json:"notes"`
+	StopLossPrice     float64 `json:"stop_loss_price"`
+	TakeProfitPrice   float64 `json:"take_profit_price"`
+	ExchangeOrderID   string  `json:"exchange_order_id"`
+	Notes             string  `json:"notes"`
 }
 
 type JournalExitRequest struct {
@@ -664,14 +664,14 @@ func (h *TradeHandler) JournalStats(w http.ResponseWriter, r *http.Request) {
 	).Scan(&openEntries)
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"total_entries":    totalEntries + openEntries,
-		"open_entries":     openEntries,
-		"closed_entries":   totalEntries,
-		"winning_trades":   winningTrades,
-		"losing_trades":    losingTrades,
-		"win_rate":         roundTo(winRate, 1),
-		"total_pnl":        roundTo(totalPnL, 2),
-		"total_fees":       roundTo(totalFees, 2),
+		"total_entries":  totalEntries + openEntries,
+		"open_entries":   openEntries,
+		"closed_entries": totalEntries,
+		"winning_trades": winningTrades,
+		"losing_trades":  losingTrades,
+		"win_rate":       roundTo(winRate, 1),
+		"total_pnl":      roundTo(totalPnL, 2),
+		"total_fees":     roundTo(totalFees, 2),
 	})
 }
 

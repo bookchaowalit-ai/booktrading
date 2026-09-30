@@ -49,13 +49,13 @@ type BotPnL struct {
 }
 
 type PortfolioSummary struct {
-	InitialBalance  float64 `json:"initial_balance"`
-	CurrentValue    float64 `json:"current_value"`
-	TotalPnL        float64 `json:"total_pnl"`
-	TotalPnLPct     float64 `json:"total_pnl_pct"`
-	TotalTrades     int     `json:"total_trades"`
-	WinTrades       int     `json:"win_trades"`
-	LossTrades      int     `json:"loss_trades"`
+	InitialBalance float64 `json:"initial_balance"`
+	CurrentValue   float64 `json:"current_value"`
+	TotalPnL       float64 `json:"total_pnl"`
+	TotalPnLPct    float64 `json:"total_pnl_pct"`
+	TotalTrades    int     `json:"total_trades"`
+	WinTrades      int     `json:"win_trades"`
+	LossTrades     int     `json:"loss_trades"`
 }
 
 type BalanceInfo struct {

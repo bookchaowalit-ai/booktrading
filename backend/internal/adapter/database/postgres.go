@@ -3,8 +3,8 @@ package database
 import (
 	"context"
 	"fmt"
-	"trading-bot-system/backend/internal/logger"
 	"time"
+	"trading-bot-system/backend/internal/logger"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )

@@ -217,7 +217,7 @@ func (e *PaperEngine) fillOrder(order *model.PaperOrder, marketPrice float64) {
 
 // applyBuy adds to or creates a position
 func (e *PaperEngine) applyBuy(order *model.PaperOrder) {
-	totalCost := order.Quantity * order.Price + order.Fee
+	totalCost := order.Quantity*order.Price + order.Fee
 	e.portfolio.CurrentBalance -= totalCost
 
 	// Update per-symbol PnL volume tracking

@@ -87,9 +87,9 @@ func (m *AuditMiddleware) Middleware(next http.Handler) http.Handler {
 			r.URL.Path,
 			"",
 			map[string]any{
-				"method":     r.Method,
-				"path":       r.URL.Path,
-				"query":      r.URL.RawQuery,
+				"method":      r.Method,
+				"path":        r.URL.Path,
+				"query":       r.URL.RawQuery,
 				"duration_ms": time.Since(start).Milliseconds(),
 			},
 			ip,
