@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -392,6 +393,10 @@ type gridParams struct {
 	gridLevels int
 	lowerPrice float64
 	upperPrice float64
+	// investment caps the quote notional of grid inventory (0 = no cap).
+	investment float64
+	// maxPosition caps base inventory (0 = quantity * gridLevels).
+	maxPosition float64
 }
 
 // resolveBotMode maps optional start parameters to the operating mode.
@@ -520,6 +525,7 @@ func (s *BotServiceImpl) startGridMode(ctx context.Context, params *input.BotSta
 		gridLevels: params.GridLevels,
 		lowerPrice: params.LowerPrice,
 		upperPrice: params.UpperPrice,
+		investment: params.Investment,
 	}
 
 	// Test API connection first
@@ -936,10 +942,12 @@ func (s *BotServiceImpl) executeSignalTrade(ctx context.Context, symbol string, 
 	return orderErr == nil
 }
 
-// gridTradingLoop is the main grid trading loop
+// gridTradingLoop is the main grid trading loop. The gridBook is owned by
+// this goroutine only, so it needs no locking.
 func (s *BotServiceImpl) gridTradingLoop(ctx context.Context, grid gridParams) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+	book := newGridBook(grid)
 
 	for {
 		select {
@@ -947,7 +955,7 @@ func (s *BotServiceImpl) gridTradingLoop(ctx context.Context, grid gridParams) {
 			return
 		case <-ticker.C:
 			// Execute grid trading logic
-			s.executeGridTrading(ctx, grid)
+			s.executeGridTrading(ctx, grid, book)
 		}
 	}
 }
@@ -969,8 +977,110 @@ func gridAction(grid gridParams, currentPrice float64) (string, float64) {
 	}
 }
 
-// executeGridTrading contains the actual grid trading logic
-func (s *BotServiceImpl) executeGridTrading(ctx context.Context, grid gridParams) {
+// gridLevel returns the grid band index (0 = bottom) that a price falls in,
+// clamped to [0, gridLevels-1].
+func gridLevel(grid gridParams, price float64) int {
+	if grid.gridLevels < 1 || grid.upperPrice <= grid.lowerPrice {
+		return 0
+	}
+	gridSize := (grid.upperPrice - grid.lowerPrice) / float64(grid.gridLevels)
+	level := int(math.Floor((price - grid.lowerPrice) / gridSize))
+	if level < 0 {
+		return 0
+	}
+	if level >= grid.gridLevels {
+		return grid.gridLevels - 1
+	}
+	return level
+}
+
+// positionEpsilon absorbs float rounding when comparing base quantities.
+const positionEpsilon = 1e-12
+
+// gridBook is the per-run inventory and level state of the grid loop.
+//
+//   - Idempotent levels: a BUY is placed at most once per grid level. The level
+//     stays "held" until a SELL releases it, so a price that sits in the buy
+//     band no longer submits an order on every tick.
+//   - Position cap: base inventory never exceeds maxPosition (default
+//     quantity * gridLevels, i.e. one fill per level).
+//   - Exposure cap: when Investment > 0, the quote notional of the inventory
+//     (position * price) never exceeds it.
+//   - No naked sells: a SELL needs at least one quantity of inventory bought
+//     by this run.
+type gridBook struct {
+	position    float64
+	heldLevels  map[int]bool
+	maxPosition float64
+	maxExposure float64
+}
+
+func newGridBook(grid gridParams) *gridBook {
+	maxPosition := grid.maxPosition
+	if maxPosition <= 0 {
+		maxPosition = grid.quantity * float64(grid.gridLevels)
+	}
+	return &gridBook{
+		heldLevels:  make(map[int]bool),
+		maxPosition: maxPosition,
+		maxExposure: grid.investment,
+	}
+}
+
+// check reports whether an order may be placed and, if not, why.
+func (b *gridBook) check(side string, level int, quantity, price float64) (bool, string) {
+	switch side {
+	case "BUY":
+		if b.heldLevels[level] {
+			return false, fmt.Sprintf("level %d already filled", level)
+		}
+		if b.position+quantity > b.maxPosition+positionEpsilon {
+			return false, fmt.Sprintf("position cap %.8f reached", b.maxPosition)
+		}
+		if b.maxExposure > 0 && (b.position+quantity)*price > b.maxExposure+positionEpsilon {
+			return false, fmt.Sprintf("exposure cap %.2f reached", b.maxExposure)
+		}
+		return true, ""
+	case "SELL":
+		if b.position+positionEpsilon < quantity {
+			return false, "no grid inventory to sell"
+		}
+		return true, ""
+	default:
+		return false, "unknown side"
+	}
+}
+
+// record applies a confirmed fill to the book.
+func (b *gridBook) record(side string, level int, quantity float64) {
+	switch side {
+	case "BUY":
+		b.position += quantity
+		b.heldLevels[level] = true
+	case "SELL":
+		b.position -= quantity
+		if b.position < positionEpsilon {
+			b.position = 0
+		}
+		// Release the lowest held level so the grid can buy it again.
+		lowest := -1
+		for l := range b.heldLevels {
+			if lowest == -1 || l < lowest {
+				lowest = l
+			}
+		}
+		if lowest >= 0 {
+			delete(b.heldLevels, lowest)
+		}
+	}
+}
+
+// gridOrderFunc submits one order and returns an error when it did not go
+// through.
+type gridOrderFunc func(ctx context.Context, side string, quantity, price float64) error
+
+// executeGridTrading fetches the price and runs one grid step.
+func (s *BotServiceImpl) executeGridTrading(ctx context.Context, grid gridParams, book *gridBook) {
 	s.runningMu.RLock()
 	running := s.isRunning
 	client := s.tradingClient
@@ -985,14 +1095,28 @@ func (s *BotServiceImpl) executeGridTrading(ctx context.Context, grid gridParams
 		return
 	}
 
-	symbol := grid.symbol
-	quantity := grid.quantity
-
-	currentPrice, err := fetchPrice(ctx, manager, client, symbol)
+	currentPrice, err := fetchPrice(ctx, manager, client, grid.symbol)
 	if err != nil {
 		logger.Info("Error getting ticker", "error", err)
 		return
 	}
+
+	place := func(ctx context.Context, side string, quantity, price float64) error {
+		if manager != nil {
+			_, err := manager.PlaceOrder(ctx, grid.symbol, side, quantity, price)
+			return err
+		}
+		_, err := client.PlaceOrder(grid.symbol, side, "MARKET", quantity, price)
+		return err
+	}
+	s.gridStep(ctx, grid, book, currentPrice, place)
+}
+
+// gridStep decides and (at most once) submits an order for one tick. It
+// returns the side that was filled, or "" when nothing was filled.
+func (s *BotServiceImpl) gridStep(ctx context.Context, grid gridParams, book *gridBook, currentPrice float64, place gridOrderFunc) string {
+	symbol := grid.symbol
+	quantity := grid.quantity
 
 	side, gridSize := gridAction(grid, currentPrice)
 	if side == "" {
@@ -1004,30 +1128,44 @@ func (s *BotServiceImpl) executeGridTrading(ctx context.Context, grid gridParams
 			Message:   fmt.Sprintf("Price: %.2f | Grid: %.2f | Range: %.2f-%.2f", currentPrice, gridSize, grid.lowerPrice, grid.upperPrice),
 			Level:     "info",
 		})
-		return
+		return ""
+	}
+
+	level := gridLevel(grid, currentPrice)
+	if ok, reason := book.check(side, level, quantity, currentPrice); !ok {
+		logger.Info("Grid "+side+" skipped", "symbol", symbol, "price", currentPrice, "reason", reason)
+		s.broadcaster.BroadcastBotActivity(&model.BotActivity{
+			Timestamp: time.Now(),
+			Activity:  "SKIPPED",
+			Symbol:    symbol,
+			Message:   fmt.Sprintf("Grid %s skipped at %.2f: %s", side, currentPrice, reason),
+			Level:     "info",
+		})
+		return ""
 	}
 
 	if ctx.Err() != nil {
-		return
+		return ""
 	}
 
-	logger.Info("Grid "+side+" signal", "symbol", symbol, "price", currentPrice, "qty", quantity)
+	logger.Info("Grid "+side+" signal", "symbol", symbol, "price", currentPrice, "qty", quantity, "level", level)
 
-	var orderErr error
-	if manager != nil {
-		_, orderErr = manager.PlaceOrder(ctx, symbol, side, quantity, currentPrice)
-	} else {
-		_, orderErr = client.PlaceOrder(symbol, side, "MARKET", quantity, currentPrice)
+	if orderErr := place(ctx, side, quantity, currentPrice); orderErr != nil {
+		// A failed order is not a trade: do not count it, do not change the
+		// book, and never relabel it as a paper fill.
+		logger.Warn("Grid order failed", "symbol", symbol, "side", side, "error", orderErr)
+		s.broadcaster.BroadcastBotActivity(&model.BotActivity{
+			Timestamp: time.Now(),
+			Activity:  "ORDER_FAILED",
+			Symbol:    symbol,
+			Message:   fmt.Sprintf("Grid %s %.4f @ %.2f failed: %v", side, quantity, currentPrice, orderErr),
+			Level:     "error",
+		})
+		return ""
 	}
 
-	label := "REAL"
-	if orderErr != nil {
-		// Fall back to paper trading if real order fails
-		logger.Info("Real order failed, simulating paper trade", "error", orderErr)
-		label = "PAPER"
-	} else {
-		logger.Info("Grid "+side+" executed (REAL)", "symbol", symbol, "price", currentPrice)
-	}
+	book.record(side, level, quantity)
+	logger.Info("Grid "+side+" executed", "symbol", symbol, "price", currentPrice, "position", book.position)
 
 	s.broadcaster.BroadcastTradeNotification(&model.TradeNotification{
 		ID:        fmt.Sprintf("trade_%d", time.Now().UnixMilli()),
@@ -1038,7 +1176,7 @@ func (s *BotServiceImpl) executeGridTrading(ctx context.Context, grid gridParams
 		Total:     quantity * currentPrice,
 		Type:      "GRID_" + side,
 		Timestamp: time.Now(),
-		Message:   fmt.Sprintf("[%s] Grid %s %.4f @ %.2f", label, side, quantity, currentPrice),
+		Message:   fmt.Sprintf("Grid %s %.4f @ %.2f (position %.8f)", side, quantity, currentPrice, book.position),
 	})
 
 	// Update bot status
@@ -1047,6 +1185,7 @@ func (s *BotServiceImpl) executeGridTrading(ctx context.Context, grid gridParams
 	s.botStatus.TotalTrades = s.tradesCount
 	s.botStatus.TotalProfit = s.totalProfit
 	s.runningMu.Unlock()
+	return side
 }
 
 // PortfolioServiceImpl implements the PortfolioService interface
