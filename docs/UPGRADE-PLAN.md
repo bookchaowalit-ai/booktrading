@@ -5,7 +5,7 @@ protection mode) first; nothing here authorizes real-money trading.
 
 ## Current state
 
-**Score: 7 / 10** (6.5 after pass 1, 5 before). Pass 2 closed the Go grid P0s (position cap, per-level idempotency, failed orders no longer counted as paper trades) and moved Next to 14.2.35. The three suites (Go, Next.js,
+**Score: 7.5 / 10** (7 after pass 2, 6.5 after pass 1, 5 before). Pass 3 fixed failed signal orders being counted as paper trades, made strategy auth fail closed in production, and enforced gofmt/tidy in CI. Pass 2 closed the Go grid P0s (position cap, per-level idempotency, failed orders no longer counted as paper trades) and moved Next to 14.2.35. The three suites (Go, Next.js,
 strategy Python) are green, and CI now runs the full offline strategy suite.
 Before this pass, the Go race detector flaked in CI, CI ran only 2 of the
 ~50 strategy test files, the paper grid sync crashed with a `NameError` it
@@ -18,27 +18,21 @@ could reset the kill switch without authentication.
 - Next 14.2.35 is the last 14.x, but `npm audit` still lists Next advisories
   fixed only in 15.x/16.x (image optimizer, RSC DoS, middleware bypass).
   Plan a Next 15 migration (async request APIs, React 19) in its own pass.
-- `executeSignalTrade` (SIGNAL/AUTO modes) still labels a failed real order
-  as "PAPER" and counts it in `tradesCount`; apply the same fix as the grid
-  (`gridStep`).
 - Grid order placement is synchronous; an order that times out after the
   exchange accepted it is treated as failed. Reconcile open orders/fills from
   the exchange before re-arming a level.
 
 ### P1
-- `require_auth` in `strategy/infrastructure/api/app.py` allows every caller
-  when `AUTH_TOKEN` is unset (dev mode). Make it fail closed in production, for
-  example by requiring `AUTH_TOKEN` whenever `ENVIRONMENT=production`.
 - Backtester: ATR spacing and grid (re)anchoring still use bar *i*'s own
   close/high/low. Anchor on the bar open or the previous close, and resolve
   same-bar buy→sell round trips pessimistically.
 - Money math uses `float` / `float64` everywhere (Go `model`, Python bots).
   Introduce `Decimal` (Python) or integer minor units at exchange boundaries,
   starting with order quantity/price rounding.
-- `gofmt -l backend/internal` lists 11 files. Format them and add a
-  `gofmt -l` check to CI.
-- CI pins `GO_VERSION: '1.21'` and runs `go mod tidy` before testing. Drop
-  the tidy step (it mutates `go.mod` in CI) and use `go mod verify` only.
+- CI pins `GO_VERSION: '1.21'` (EOL). Move to a supported Go and bump the
+  `go` directive in `go.mod` together.
+- Signal/auto order placement shares the grid's timeout problem (see P0);
+  reconcile before re-sending an exit order.
 
 ### P2
 - Strategy ruff debt: about 1,800 findings, most of them auto-fixable
@@ -51,7 +45,21 @@ could reset the kill switch without authentication.
   no tests. Add table tests around order request construction, using fake
   HTTP servers only.
 
-## Done in this pass (pass 1)
+## Done in this pass (pass 3)
+- Go signal/auto: `executeSignalTrade` now delegates to `signalTradeStep`.
+  A failed order is reported as `ORDER_FAILED` activity, is not counted in
+  `tradesCount`/`TotalTrades`, is never relabelled `PAPER_SIGNAL_*`, and
+  never opens an auto-mode position. Tests: `signal_trade_test.go`.
+- Strategy: `require_auth` fails closed when `AUTH_TOKEN` is empty and
+  `ENVIRONMENT=production` (set in `docker-compose.prod.yml`); startup logs
+  an error. Tests: `tests/test_require_auth_production.py`.
+- CI: `go mod tidy` no longer mutates go.mod silently (tidy + `git diff
+  --exit-code`), and a `gofmt -l` gate was added; all 42 unformatted backend
+  files were formatted.
+- Verified: `go vet`, `go test -race ./...`, strategy `pytest -q` (491
+  passed) and the CI ruff gate.
+
+## Done in pass 1
 - Go: fixed a data race and a stale-goroutine bug in `BotServiceImpl`. Each
   run now gets its own context and config snapshot, so a Stop→Start can no
   longer leave the old loop trading. `Start` validates grid params: before
@@ -76,7 +84,7 @@ could reset the kill switch without authentication.
 - CI: the strategy job runs the full offline pytest suite plus a ruff gate
   for undefined names and syntax errors.
 
-## Done in this pass (pass 2)
+## Done in pass 2
 - Go grid: new per-run `gridBook` (`implementation.go`). A BUY is placed at
   most once per grid level until a SELL releases it (idempotent, no more
   order-per-tick), base inventory is capped at `quantity * gridLevels`, the
