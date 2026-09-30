@@ -3,6 +3,10 @@
  * Robust API client with retry logic, error handling, and type safety
  */
 
+// Session auth headers are shared with the strategy services
+// (monitoring, backtest, airdrop/signal trackers).
+import { authHeaders } from './auth-headers';
+
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 export interface ApiError extends Error {
@@ -25,25 +29,6 @@ const STRATEGY_API_URL = process.env.NEXT_PUBLIC_STRATEGY_URL || '/strategy-api'
 const DEFAULT_TIMEOUT = 15000; // 15 seconds
 const DEFAULT_RETRIES = 2;
 const DEFAULT_RETRY_DELAY = 1000; // 1 second
-
-// ── Auth Helpers ───────────────────────────────────────────────────────────────
-
-function getAuthToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem('auth_token');
-}
-
-function authHeaders(extra?: Record<string, string>): Record<string, string> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  const token = getAuthToken();
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-  if (extra) {
-    Object.assign(headers, extra);
-  }
-  return headers;
-}
 
 // ── Core Fetch with Retry & Timeout ───────────────────────────────────────────
 

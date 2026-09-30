@@ -21,13 +21,14 @@ could reset the kill switch without authentication.
   that cannot attribute every recent row keeps the order pending.
 
 ### P1
-- Frontend services `airdrop-tracker.ts`, `backtest.ts`,
-  `signal-tracker.ts` and `monitoring.ts` (kill/enable) call the strategy
-  API without a bearer token, so with `AUTH_TOKEN` set those UI actions
-  return 401. Proxy them through the Go backend (server-side token) rather
-  than exposing the strategy token to the browser.
-- `POST /api/v1/world/import` has no auth decorator; confirm its intended
-  caller and guard it.
+- Strategy auth vs. browser sessions: the frontend sends the signed-in
+  session token (opaque, issued by the Go backend at `/api/auth/login`) to
+  `/strategy-api`, but `require_auth` compares against the static
+  `AUTH_TOKEN`. With `AUTH_TOKEN` set, kill/enable, backtests, airdrop
+  writes and signal evaluation therefore still 401 for normal logins. Fix
+  server-side: either let the strategy verify sessions against the backend
+  (introspection over gRPC/HTTP) or proxy these routes through the Go
+  backend, which injects `AUTH_TOKEN`. Never ship `AUTH_TOKEN` to the browser.
 - Backtester: ATR spacing and grid (re)anchoring still use bar *i*'s own
   close/high/low. Anchor on the bar open or the previous close, and resolve
   same-bar buy→sell round trips pessimistically.
@@ -58,7 +59,24 @@ could reset the kill switch without authentication.
   no tests. Add table tests around order request construction, using fake
   HTTP servers only.
 
-## Done in this pass (pass 6: route auth + action pinning)
+## Done in this pass (pass 7: frontend strategy auth + World import)
+- `frontend/src/services/auth-headers.ts`: the session bearer helper from
+  `api.ts` (localStorage `auth_token`, storage errors treated as signed out)
+  is now shared; `airdrop-tracker.ts`, `backtest.ts`, `signal-tracker.ts`
+  and `monitoring.ts` (incl. kill/enable) send it on every strategy call,
+  like `api.ts` kill/enable. `airdrop-tracker.ts` and `signal-tracker.ts`
+  defaulted to `http://localhost:8001` in the browser (next.config sets
+  `NEXT_PUBLIC_STRATEGY_URL` to ""), so they never reached the proxy; all
+  four now use the same-origin `/strategy-api`. Tests:
+  `strategy-services-auth.test.ts` (13 vitest).
+- `POST /api/v1/world/import` carries `@auth_required` and keeps its
+  fail-closed check (`require_configured_auth`: no dev-mode allow-all for
+  lake writes). `test_world_api.py` asserts the decorator and 401 for
+  missing/wrong/non-Bearer tokens and for an unset `AUTH_TOKEN`, with
+  nothing landed. Strategy suite 541 passed; ruff CI selection clean;
+  frontend lint/tsc/vitest (50)/next build green.
+
+## Done in pass 6: route auth + action pinning
 - `strategy/infrastructure/api/app.py`: `@auth_required` (same as the
   real-grid kill/enable routes) now guards airdrop-tracker POST/PATCH
   (task + subtask)/DELETE, backtest run/sweep/compare/walk-forward and

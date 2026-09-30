@@ -2,8 +2,8 @@
  * Airdrop Task Tracker Service
  * API client for tracking airdrop tasks and completion status
  */
+import { authHeaders, STRATEGY_URL } from './auth-headers';
 
-const STRATEGY_URL = process.env.NEXT_PUBLIC_STRATEGY_URL || 'http://localhost:8001';
 
 export interface AirdropSubtask {
   title: string;
@@ -38,7 +38,7 @@ export const airdropTrackerService = {
    * List all tracked airdrop tasks
    */
   async getTasks(): Promise<{ tasks: AirdropTask[]; stats: AirdropTrackerStats }> {
-    const res = await fetch(`${STRATEGY_URL}/api/airdrop-tracker/tasks`);
+    const res = await fetch(`${STRATEGY_URL}/api/airdrop-tracker/tasks`, { headers: authHeaders() });
     if (!res.ok) throw new Error('Failed to fetch airdrop tasks');
     return res.json();
   },
@@ -49,7 +49,7 @@ export const airdropTrackerService = {
   async addTask(task: Partial<AirdropTask>): Promise<{ task: AirdropTask }> {
     const res = await fetch(`${STRATEGY_URL}/api/airdrop-tracker/tasks`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify(task),
     });
     if (!res.ok) throw new Error('Failed to add airdrop task');
@@ -62,7 +62,7 @@ export const airdropTrackerService = {
   async updateTask(taskId: string, updates: Partial<AirdropTask>): Promise<{ task: AirdropTask }> {
     const res = await fetch(`${STRATEGY_URL}/api/airdrop-tracker/tasks/${taskId}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify(updates),
     });
     if (!res.ok) throw new Error('Failed to update airdrop task');
@@ -75,7 +75,7 @@ export const airdropTrackerService = {
   async toggleSubtask(taskId: string, subtaskIdx: number, completed: boolean): Promise<{ task: AirdropTask }> {
     const res = await fetch(`${STRATEGY_URL}/api/airdrop-tracker/tasks/${taskId}/subtasks/${subtaskIdx}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({ completed }),
     });
     if (!res.ok) throw new Error('Failed to update subtask');
@@ -88,6 +88,7 @@ export const airdropTrackerService = {
   async deleteTask(taskId: string): Promise<{ deleted: boolean }> {
     const res = await fetch(`${STRATEGY_URL}/api/airdrop-tracker/tasks/${taskId}`, {
       method: 'DELETE',
+      headers: authHeaders(),
     });
     if (!res.ok) throw new Error('Failed to delete airdrop task');
     return res.json();
@@ -97,7 +98,7 @@ export const airdropTrackerService = {
    * Get tracker statistics
    */
   async getStats(): Promise<AirdropTrackerStats> {
-    const res = await fetch(`${STRATEGY_URL}/api/airdrop-tracker/stats`);
+    const res = await fetch(`${STRATEGY_URL}/api/airdrop-tracker/stats`, { headers: authHeaders() });
     if (!res.ok) throw new Error('Failed to fetch stats');
     return res.json();
   },

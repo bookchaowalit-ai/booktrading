@@ -919,14 +919,16 @@ def register_routes(app: FastAPI):
         }
 
     @app.post("/api/v1/world/import", response_model=WorldImportResponse)
+    @auth_required
     async def world_import(
         request: Request,
         received_at: Optional[str] = None,
         endpoint: str = "/events",
     ):
         """Land a producer-supplied World JSON body and return paper signals."""
-        if not API_TOKEN or not require_auth(request):
-            raise HTTPException(status_code=401, detail="Invalid or missing API token")
+        # @auth_required matches the other mutating routes; a lake write also
+        # fails closed when AUTH_TOKEN is unset (no dev-mode allow-all).
+        require_configured_auth(request)
 
         landing_uri = _world_landing_uri(app)
         if not landing_uri:

@@ -3,8 +3,8 @@
  * API client for grid trading backtester
  */
 import type { BacktestConfig, BacktestResult, ParameterSweepResult } from '@/types/backtest';
+import { authHeaders, STRATEGY_URL } from './auth-headers';
 
-const STRATEGY_URL = process.env.NEXT_PUBLIC_STRATEGY_URL || '/strategy-api';
 
 export const backtestService = {
   /**
@@ -13,7 +13,7 @@ export const backtestService = {
   async runBacktest(config: BacktestConfig): Promise<BacktestResult> {
     const res = await fetch(`${STRATEGY_URL}/api/backtest/run`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify(config),
     });
     if (!res.ok) {
@@ -40,7 +40,7 @@ export const backtestService = {
   }): Promise<ParameterSweepResult> {
     const res = await fetch(`${STRATEGY_URL}/api/backtest/sweep`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify(params),
     });
     if (!res.ok) {

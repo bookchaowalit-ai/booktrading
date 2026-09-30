@@ -129,3 +129,41 @@ async def test_world_api_requires_configured_backend_token(tmp_path, monkeypatch
         )
 
     assert response.status_code == 401
+
+
+def test_world_import_route_is_wrapped_by_auth_required():
+    """The import route uses the shared decorator like the other mutating routes."""
+    app = FastAPI()
+    app.state.config = {}
+    api_module.register_routes(app)
+    [route] = [r for r in app.routes if getattr(r, "path", "") == "/api/v1/world/import"]
+    endpoint = route.endpoint
+    assert endpoint.__wrapped__.__name__ == "world_import"
+    assert endpoint.__code__ is api_module.auth_required(lambda: None).__code__
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("configured", "header"),
+    [
+        ("world-api-test-token", None),
+        ("world-api-test-token", "Bearer wrong"),
+        ("world-api-test-token", "world-api-test-token"),
+        (None, "Bearer anything"),  # dev mode still refuses lake writes
+    ],
+)
+async def test_world_import_rejects_bad_or_unconfigured_tokens(
+    tmp_path, monkeypatch, configured, header
+):
+    app = FastAPI()
+    app.state.config = {"world_markets_landing_uri": str(tmp_path / "lake")}
+    monkeypatch.setattr(api_module, "API_TOKEN", configured)
+    monkeypatch.setattr(api_module, "is_production", lambda: False)
+    api_module.register_routes(app)
+    headers = {"Authorization": header} if header else {}
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/api/v1/world/import", content=_world_response(), headers=headers)
+
+    assert response.status_code == 401
+    assert not (tmp_path / "lake").exists()
