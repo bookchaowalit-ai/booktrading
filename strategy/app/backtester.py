@@ -33,6 +33,21 @@ logger = logging.getLogger("backtester")
 
 BINANCE_PUBLIC_REST = "https://api.binance.th"
 
+_INTERVAL_MS = {
+    "1m": 60_000, "5m": 300_000, "15m": 900_000, "30m": 1_800_000,
+    "1h": 3_600_000, "2h": 7_200_000, "4h": 14_400_000, "1d": 86_400_000,
+}
+
+
+def closed_before(klines: List[Dict], interval: str, as_of_ms: int) -> List[Dict]:
+    """Return only candles fully closed at ``as_of_ms`` (kline timestamps are open times).
+
+    A higher-timeframe candle that opened before the current bar is still
+    forming, so its close is future information and must not gate decisions.
+    """
+    duration = _INTERVAL_MS.get(interval, 3_600_000)
+    return [k for k in klines if k["timestamp"] + duration <= as_of_ms]
+
 
 @dataclass
 class BacktestConfig:
@@ -147,6 +162,30 @@ class BacktestResult:
     ses_trades_blocked: int = 0          # trades blocked by scoring
     # Trade history (sample)
     trades: List[BacktestTrade] = field(default_factory=list)
+
+
+TAKER_FEE = 0.001  # 0.1% per fill, applied to both buys and sells
+
+
+def _consume_fifo(lots: List[List[float]], qty: float, fallback_unit_cost: float) -> float:
+    """Pop ``qty`` units from FIFO ``lots`` ([remaining_qty, unit_cost]) and return their cost.
+
+    Quantity not covered by any lot is costed at ``fallback_unit_cost`` so an
+    unmatched sell reports zero gross PnL instead of a fabricated gain.
+    """
+    remaining = qty
+    cost = 0.0
+    while remaining > 1e-15 and lots:
+        lot = lots[0]
+        take = min(lot[0], remaining)
+        cost += take * lot[1]
+        lot[0] -= take
+        remaining -= take
+        if lot[0] <= 1e-15:
+            lots.pop(0)
+    if remaining > 1e-15:
+        cost += remaining * fallback_unit_cost
+    return cost
 
 
 class GridBacktester:
@@ -400,7 +439,9 @@ class GridBacktester:
         peak_capital: float = capital
         max_drawdown: float = 0.0
         atr_spacing_values: List[float] = []
-        buy_cost_queue: List[float] = []  # FIFO: cost basis per unit batch for sells
+        # FIFO lots of [remaining_qty, unit_cost incl. buy fee] matched by quantity on sells
+        buy_lots: List[List[float]] = []
+        total_fees_paid: float = 0.0
 
         # Grid state — anchored to price, shifts when price moves out of range
         pending_buys: Dict[float, float] = {}    # price -> qty (unfilled buy orders)
@@ -520,14 +561,21 @@ class GridBacktester:
             # ── Check buy fills (low price dropped to buy level) ──
             # Apply confluence gate: only buy if indicators agree
             # Estimate order book imbalance from current kline
-            current_imbalance = self._estimate_imbalance(kline) if self.config.enable_orderbook_imbalance else 0.5
+            # Fills on bar i can only be gated by information known when bar i
+            # opens, i.e. indicators on the last *closed* bar (i - 1). Using
+            # bar i's own close/volume here would be look-ahead bias.
+            signal_idx = i - 1
+            if signal_idx >= 0 and self.config.enable_orderbook_imbalance:
+                current_imbalance = self._estimate_imbalance(klines[signal_idx])
+            else:
+                current_imbalance = 0.5
             imbalance_sum += current_imbalance
-            buy_allowed = self._check_buy_confluence(klines, i, current_imbalance)
+            buy_allowed = self._check_buy_confluence(klines, signal_idx, current_imbalance) if signal_idx >= 0 else True
             # Track EMA trend filter blocks
-            if self.config.enable_ema_trend_filter and not buy_allowed:
-                ema_closes_track = [klines[j]["close"] for j in range(max(0, i - self.config.ema_trend_period - 5), i + 1)]
+            if self.config.enable_ema_trend_filter and not buy_allowed and signal_idx >= 0:
+                ema_closes_track = [klines[j]["close"] for j in range(max(0, signal_idx - self.config.ema_trend_period - 5), signal_idx + 1)]
                 ema_vals_track = self._calc_ema(ema_closes_track, self.config.ema_trend_period)
-                if ema_vals_track and klines[i]["close"] < ema_vals_track[-1]:
+                if ema_vals_track and klines[signal_idx]["close"] < ema_vals_track[-1]:
                     ema_trend_blocked += 1
             # ── Anti-Over-Filtering: Desperation Buy ──
             desperation_buy = False
@@ -543,15 +591,15 @@ class GridBacktester:
             # Check if imbalance overrode a borderline RSI
             if self.config.enable_orderbook_imbalance and buy_allowed:
                 warmup_check = max(self.config.rsi_period, self.config.macd_slow + self.config.macd_signal, self.config.volume_sma_period) + 5
-                if i >= warmup_check:
-                    closes_check = [klines[j]["close"] for j in range(max(0, i - self.config.rsi_period - 1), i + 1)]
+                if signal_idx >= warmup_check:
+                    closes_check = [klines[j]["close"] for j in range(max(0, signal_idx - self.config.rsi_period - 1), signal_idx + 1)]
                     rsi_check = self._calc_rsi(closes_check, self.config.rsi_period)
                     if rsi_check is not None and rsi_check >= self.config.rsi_buy_threshold and current_imbalance > self.config.imbalance_threshold:
                         imbalance_overrides += 1
             # ── Multi-Timeframe Confirmation ──
             if self.config.enable_mtf_confirmation and buy_allowed and mtf_klines:
                 # Find the MTF kline closest to current timestamp
-                mtf_slice = [m for m in mtf_klines if m["timestamp"] <= timestamp]
+                mtf_slice = closed_before(mtf_klines, self.config.mtf_interval, timestamp)
                 if len(mtf_slice) >= self.config.mtf_ema_slow:
                     mtf_closes = [m["close"] for m in mtf_slice]
                     mtf_ema_f = self._calc_ema(mtf_closes, self.config.mtf_ema_fast)
@@ -565,7 +613,7 @@ class GridBacktester:
             if self.config.enable_statistical_scoring and buy_allowed:
                 if len(ses_completed_trades) >= self.config.ses_warmup_trades:
                     # Score based: RSI zone + MACD direction + volume + imbalance
-                    closes_ses = [klines[j]["close"] for j in range(max(0, i - self.config.rsi_period - 1), i + 1)]
+                    closes_ses = [klines[j]["close"] for j in range(max(0, signal_idx - self.config.rsi_period - 1), signal_idx + 1)]
                     rsi_ses = self._calc_rsi(closes_ses, self.config.rsi_period) if len(closes_ses) > self.config.rsi_period else None
                     # Feature 1: RSI zone score (lower RSI = better buy)
                     rsi_score = 1.0 - (rsi_ses / 100.0) if rsi_ses is not None else 0.5
@@ -575,7 +623,7 @@ class GridBacktester:
                     # Feature 3: Imbalance
                     imb_score = current_imbalance
                     # Feature 4: MACD momentum
-                    macd_closes_ses = [klines[j]["close"] for j in range(max(0, i - self.config.macd_slow - self.config.macd_signal - 5), i + 1)]
+                    macd_closes_ses = [klines[j]["close"] for j in range(max(0, signal_idx - self.config.macd_slow - self.config.macd_signal - 5), signal_idx + 1)]
                     hist_ses, prev_hist_ses, _ = self._calc_macd(macd_closes_ses)
                     macd_score = 0.7 if (hist_ses is not None and prev_hist_ses is not None and hist_ses > prev_hist_ses) else 0.3
                     # Weighted composite score
@@ -600,17 +648,19 @@ class GridBacktester:
                     qty = qty * self.config.desperation_buy_size_pct
                     desperation_buys_triggered += 1
                 cost = bp * qty
-                if cost > capital:
-                    qty = capital / bp
+                if cost * (1 + TAKER_FEE) > capital:
+                    qty = capital / (bp * (1 + TAKER_FEE))
                     cost = bp * qty
                 if qty <= 0:
                     continue
-                capital -= cost
+                buy_fee = cost * TAKER_FEE
+                capital -= cost + buy_fee
+                total_fees_paid += buy_fee
                 position += qty
-                buy_cost_queue.append(cost)
+                buy_lots.append([qty, (cost + buy_fee) / qty])
                 trades.append(BacktestTrade(
                     timestamp=timestamp, side="BUY", price=bp,
-                    quantity=qty, pnl=0.0, fee=cost * 0.001,
+                    quantity=qty, pnl=0.0, fee=buy_fee,
                 ))
 
             # ── Check sell fills (high price rose to sell level) ──
@@ -621,11 +671,12 @@ class GridBacktester:
                 if qty <= 0:
                     continue
                 revenue = sp_price * qty
-                fee = revenue * 0.001
-                # FIFO PnL: match sell against oldest buy cost
-                buy_cost = buy_cost_queue.pop(0) if buy_cost_queue else revenue
+                fee = revenue * TAKER_FEE
+                # FIFO PnL: match the sold quantity against the oldest lots
+                buy_cost = _consume_fifo(buy_lots, qty, fallback_unit_cost=sp_price)
                 pnl = revenue - buy_cost - fee
-                capital += revenue
+                capital += revenue - fee
+                total_fees_paid += fee
                 position -= qty
                 # ── DGT: Track accumulated profits ──
                 if self.config.dgt_enabled and pnl > 0:
@@ -647,10 +698,12 @@ class GridBacktester:
                 max_drawdown = drawdown
 
         # Calculate final metrics
+        # capital already has every buy and sell fee deducted, so final_value
+        # is net; gross PnL adds the fees back.
         final_value = capital + (position * klines[-1]["close"])
-        total_pnl = final_value - self.config.initial_capital_thb
-        total_fees = sum(t.fee for t in trades if t.side == "SELL")
-        net_pnl = total_pnl - total_fees
+        net_pnl = final_value - self.config.initial_capital_thb
+        total_fees = total_fees_paid
+        total_pnl = net_pnl + total_fees
 
         sell_trades = [t for t in trades if t.side == "SELL"]
         winning_trades = [t for t in sell_trades if t.pnl > 0]
