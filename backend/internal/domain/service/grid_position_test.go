@@ -21,12 +21,6 @@ func (f *fakeGridExchange) place(ctx context.Context, clientOrderID, side string
 	return gridOrderReport{state: gridOrderFilled, executedQty: quantity}, nil
 }
 
-// signal adapts the fake to gridOrderFunc for signal-trade tests.
-func (f *fakeGridExchange) signal(ctx context.Context, side string, quantity, price float64) error {
-	_, err := f.place(ctx, "", side, quantity, price)
-	return err
-}
-
 func (f *fakeGridExchange) cancel(ctx context.Context, clientOrderID string, submittedAt time.Time) error {
 	return nil
 }

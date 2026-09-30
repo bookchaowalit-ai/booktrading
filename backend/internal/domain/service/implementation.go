@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -656,6 +655,7 @@ func (s *BotServiceImpl) listenForOrderSignals(ctx context.Context, cfg input.Si
 		logger.Error("Failed to subscribe to order signals", "error", err)
 		return
 	}
+	orders := newSignalOrderBook()
 
 	for {
 		select {
@@ -688,7 +688,7 @@ func (s *BotServiceImpl) listenForOrderSignals(ctx context.Context, cfg input.Si
 			})
 
 			// Execute the trade
-			s.executeSignalTrade(ctx, string(signal.Symbol), string(signal.Side), cfg)
+			s.executeSignalTrade(ctx, orders, string(signal.Symbol), string(signal.Side), cfg)
 		}
 	}
 }
@@ -700,6 +700,7 @@ func (s *BotServiceImpl) autoTradingLoop(ctx context.Context, cfg input.SignalCo
 		logger.Error("Failed to subscribe to order signals for auto mode", "error", err)
 		return
 	}
+	orders := newSignalOrderBook()
 
 	// Price check ticker for stop-loss/take-profit monitoring
 	priceTicker := time.NewTicker(10 * time.Second)
@@ -717,9 +718,9 @@ func (s *BotServiceImpl) autoTradingLoop(ctx context.Context, cfg input.SignalCo
 			if signal.Strength < cfg.MinStrength {
 				continue
 			}
-			s.handleAutoSignal(ctx, signal, cfg)
+			s.handleAutoSignal(ctx, orders, signal, cfg)
 		case <-priceTicker.C:
-			s.checkStopLossTakeProfit(ctx, cfg)
+			s.checkStopLossTakeProfit(ctx, orders, cfg)
 		}
 	}
 }
@@ -731,7 +732,7 @@ func (s *BotServiceImpl) hasPosition(symbol string) bool {
 	return exists
 }
 
-func (s *BotServiceImpl) handleAutoSignal(ctx context.Context, signal *output.OrderSignal, cfg input.SignalConfig) {
+func (s *BotServiceImpl) handleAutoSignal(ctx context.Context, orders *signalOrderBook, signal *output.OrderSignal, cfg input.SignalConfig) {
 	symbol := string(signal.Symbol)
 
 	// BUY signal — open position
@@ -747,7 +748,7 @@ func (s *BotServiceImpl) handleAutoSignal(ctx context.Context, signal *output.Or
 			return
 		}
 
-		s.executeSignalTrade(ctx, symbol, string(signal.Side), cfg)
+		s.executeSignalTrade(ctx, orders, symbol, string(signal.Side), cfg)
 		return
 	}
 
@@ -757,7 +758,7 @@ func (s *BotServiceImpl) handleAutoSignal(ctx context.Context, signal *output.Or
 			return // no position to close
 		}
 
-		if !s.executeSignalTrade(ctx, symbol, string(signal.Side), cfg) {
+		if !s.executeSignalTrade(ctx, orders, symbol, string(signal.Side), cfg) {
 			return // keep tracking the position; the exit did not go through
 		}
 
@@ -775,7 +776,7 @@ func (s *BotServiceImpl) handleAutoSignal(ctx context.Context, signal *output.Or
 	}
 }
 
-func (s *BotServiceImpl) checkStopLossTakeProfit(ctx context.Context, cfg input.SignalConfig) {
+func (s *BotServiceImpl) checkStopLossTakeProfit(ctx context.Context, orders *signalOrderBook, cfg input.SignalConfig) {
 	s.runningMu.RLock()
 	positions := make(map[string]positionInfo)
 	for k, v := range s.positions {
@@ -810,7 +811,7 @@ func (s *BotServiceImpl) checkStopLossTakeProfit(ctx context.Context, cfg input.
 				Message:   fmt.Sprintf("Stop-loss triggered: %.2f%% loss (threshold %.1f%%)", pnlPct*100, cfg.StopLossPct*100),
 				Level:     "error",
 			})
-			if s.executeSignalTrade(ctx, symbol, "SELL", cfg) {
+			if s.executeSignalTrade(ctx, orders, symbol, "SELL", cfg) {
 				s.runningMu.Lock()
 				delete(s.positions, symbol)
 				s.runningMu.Unlock()
@@ -827,7 +828,7 @@ func (s *BotServiceImpl) checkStopLossTakeProfit(ctx context.Context, cfg input.
 				Message:   fmt.Sprintf("Take-profit triggered: %.2f%% gain (threshold %.1f%%)", pnlPct*100, cfg.TakeProfitPct*100),
 				Level:     "success",
 			})
-			if s.executeSignalTrade(ctx, symbol, "SELL", cfg) {
+			if s.executeSignalTrade(ctx, orders, symbol, "SELL", cfg) {
 				s.runningMu.Lock()
 				delete(s.positions, symbol)
 				s.runningMu.Unlock()
@@ -867,9 +868,9 @@ func fetchPrice(ctx context.Context, manager *exchange.ExchangeManager, client *
 	return price, nil
 }
 
-// executeSignalTrade places one signal-driven order and reports whether the
-// order was accepted by the exchange.
-func (s *BotServiceImpl) executeSignalTrade(ctx context.Context, symbol string, side string, cfg input.SignalConfig) bool {
+// executeSignalTrade places one signal-driven order and reports whether an
+// order of this side filled (see signalTradeStep).
+func (s *BotServiceImpl) executeSignalTrade(ctx context.Context, orders *signalOrderBook, symbol string, side string, cfg input.SignalConfig) bool {
 	// Determine quantity from risk config
 	quantity := cfg.Quantity
 	if quantity <= 0 {
@@ -898,67 +899,8 @@ func (s *BotServiceImpl) executeSignalTrade(ctx context.Context, symbol string, 
 		return false
 	}
 
-	place := func(ctx context.Context, side string, quantity, price float64) error {
-		if manager != nil {
-			_, err := manager.PlaceOrder(ctx, symbol, side, quantity, price)
-			return err
-		}
-		_, err := client.PlaceOrder(symbol, side, "MARKET", quantity, price)
-		return err
-	}
-	return s.signalTradeStep(ctx, symbol, side, quantity, currentPrice, place)
-}
-
-// signalTradeStep submits one signal-driven order and records it. A failed
-// order is not a trade: it is reported as ORDER_FAILED, is not counted in
-// tradesCount/TotalTrades, is never relabelled as a "PAPER" fill, and does not
-// open an auto-mode position. It reports whether the order went through.
-func (s *BotServiceImpl) signalTradeStep(ctx context.Context, symbol, side string, quantity, currentPrice float64, place gridOrderFunc) bool {
-	if ctx.Err() != nil {
-		return false
-	}
-
-	if orderErr := place(ctx, side, quantity, currentPrice); orderErr != nil {
-		logger.Warn("Signal trade order failed", "symbol", symbol, "side", side, "error", orderErr)
-		s.broadcaster.BroadcastBotActivity(&model.BotActivity{
-			Timestamp: time.Now(),
-			Activity:  "ORDER_FAILED",
-			Symbol:    symbol,
-			Message:   fmt.Sprintf("Signal %s %.4f @ %.2f failed: %v", side, quantity, currentPrice, orderErr),
-			Level:     "error",
-		})
-		return false
-	}
-
-	tradeType := fmt.Sprintf("SIGNAL_%s", side)
-	s.broadcaster.BroadcastTradeNotification(&model.TradeNotification{
-		ID:        fmt.Sprintf("signal_trade_%d", time.Now().UnixMilli()),
-		Symbol:    model.TradeSymbol(symbol),
-		Side:      model.OrderSide(side),
-		Quantity:  quantity,
-		Price:     currentPrice,
-		Total:     quantity * currentPrice,
-		Type:      tradeType,
-		Timestamp: time.Now(),
-		Message:   fmt.Sprintf("[%s] %s %.4f @ %.2f", strings.ToUpper(tradeType), side, quantity, currentPrice),
-	})
-
-	s.runningMu.Lock()
-	// Track position in auto mode (only while this run is still active)
-	if s.botMode == model.BotModeAuto && side == "BUY" && ctx.Err() == nil {
-		s.positions[symbol] = &positionInfo{
-			entryPrice: currentPrice,
-			quantity:   quantity,
-			entryTime:  time.Now(),
-		}
-	}
-	s.tradesCount++
-	if s.botMode == model.BotModeSignal || s.botMode == model.BotModeAuto {
-		s.botStatus.TotalTrades = s.tradesCount
-	}
-	s.runningMu.Unlock()
-
-	return true
+	ex := &liveGridExchange{symbol: symbol, manager: manager, client: client}
+	return s.signalTradeStep(ctx, orders, symbol, side, quantity, currentPrice, ex)
 }
 
 // gridTradingLoop is the main grid trading loop. The gridBook is owned by
@@ -1110,10 +1052,6 @@ func (b *gridBook) record(side string, level int, quantity float64) {
 		}
 	}
 }
-
-// gridOrderFunc submits one order and returns an error when it did not go
-// through.
-type gridOrderFunc func(ctx context.Context, side string, quantity, price float64) error
 
 // executeGridTrading fetches the price and runs one grid step.
 func (s *BotServiceImpl) executeGridTrading(ctx context.Context, grid gridParams, book *gridBook) {
