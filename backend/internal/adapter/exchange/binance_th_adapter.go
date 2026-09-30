@@ -230,8 +230,20 @@ type Order struct {
 	CumQuote      string `json:"cummulativeQuoteQty"`
 }
 
-// PlaceOrder creates a new order on Binance TH
+// PlaceOrder creates a new order on Binance TH. A returned error wraps
+// ErrOrderStateUnknown when the order may have been accepted anyway.
 func (b *BinanceTHAdapter) PlaceOrder(ctx context.Context, symbol, side, orderType string, quantity, price float64, timeInForce string) (*Order, error) {
+	return b.PlaceOrderWithClientID(ctx, symbol, side, orderType, quantity, price, timeInForce, "")
+}
+
+// PlaceOrderWithClientID creates a new order tagged with clientOrderID (sent
+// as newClientOrderId when non-empty), so an order whose submission timed out
+// can be looked up with GetOrderByClientID before anything is retried.
+func (b *BinanceTHAdapter) PlaceOrderWithClientID(ctx context.Context, symbol, side, orderType string, quantity, price float64, timeInForce, clientOrderID string) (*Order, error) {
+	if clientOrderID != "" && !ValidClientOrderID(clientOrderID) {
+		return nil, fmt.Errorf("invalid client order ID %q", clientOrderID)
+	}
+
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -240,10 +252,9 @@ func (b *BinanceTHAdapter) PlaceOrder(ctx context.Context, symbol, side, orderTy
 	timestamp := strconv.FormatInt(time.Now().UnixMilli(), 10)
 
 	// Build query string for signing
-	params := fmt.Sprintf("symbol=%s&side=%s&type=%s&quantity=%s&timestamp=%s",
+	params := fmt.Sprintf("symbol=%s&side=%s&type=%s&quantity=%s",
 		symbol, side, orderType,
-		strconv.FormatFloat(quantity, 'f', -1, 64),
-		timestamp)
+		strconv.FormatFloat(quantity, 'f', -1, 64))
 
 	// Add price and timeInForce for LIMIT orders
 	if orderType == "LIMIT" {
@@ -257,6 +268,10 @@ func (b *BinanceTHAdapter) PlaceOrder(ctx context.Context, symbol, side, orderTy
 		params += fmt.Sprintf("&price=%s",
 			strconv.FormatFloat(price, 'f', -1, 64))
 	}
+	if clientOrderID != "" {
+		params += "&newClientOrderId=" + clientOrderID
+	}
+	params += "&timestamp=" + timestamp
 
 	// Generate signature
 	signature := b.generateSignature(params)
@@ -273,45 +288,34 @@ func (b *BinanceTHAdapter) PlaceOrder(ctx context.Context, symbol, side, orderTy
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	logger.Info("Binance TH order request", "url", path, "symbol", symbol, "side", side, "type", orderType, "quantity", quantity, "price", price)
+	logger.Info("Binance TH order request", "url", path, "symbol", symbol, "side", side, "type", orderType, "quantity", quantity, "price", price, "clientOrderId", clientOrderID)
 
-	// Execute request
-	resp, err := b.httpClient.Do(req)
+	order, err := classifyOrderResponse(b.httpClient.Do(req))
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	logger.Info("Binance TH order response", "status", resp.StatusCode, "body", string(body))
-
-	// Check HTTP status code
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Binance TH API returned HTTP %d: %s", resp.StatusCode, string(body))
-	}
-
-	// Check for error response
-	var errorResult struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-	}
-	if err := json.Unmarshal(body, &errorResult); err == nil && errorResult.Code != 0 {
-		return nil, fmt.Errorf("Binance TH API error (code %d): %s", errorResult.Code, errorResult.Msg)
-	}
-
-	// Parse successful response
-	var order Order
-	if err := json.Unmarshal(body, &order); err != nil {
-		return nil, fmt.Errorf("failed to parse order response: %w, body: %s", err, string(body))
+		logger.Warn("Binance TH order not confirmed", "symbol", symbol, "clientOrderId", clientOrderID, "unknown", IsOrderStateUnknown(err), "error", err)
+		return nil, fmt.Errorf("Binance TH order: %w", err)
 	}
 
 	logger.Info("Binance TH order placed", "orderId", order.OrderID, "symbol", order.Symbol, "status", order.Status)
 
-	return &order, nil
+	return order, nil
+}
+
+// GetOrderByClientID looks an order up by the client order ID it was placed
+// with. It returns ErrOrderNotFound when the exchange has no such order.
+func (b *BinanceTHAdapter) GetOrderByClientID(ctx context.Context, symbol, clientOrderID string) (*Order, error) {
+	if !ValidClientOrderID(clientOrderID) {
+		return nil, fmt.Errorf("invalid client order ID %q", clientOrderID)
+	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	req, err := signedGet(ctx, b.baseURL, "/api/v1/order", b.apiKey,
+		fmt.Sprintf("symbol=%s&origClientOrderId=%s", symbol, clientOrderID), b.generateSignature)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	return classifyLookupResponse(b.httpClient.Do(req))
 }
 
 // GetOpenOrders retrieves all open orders for a symbol

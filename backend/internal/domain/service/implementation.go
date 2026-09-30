@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1031,6 +1032,16 @@ type gridBook struct {
 	heldLevels  map[int]bool
 	maxPosition float64
 	maxExposure float64
+	// levelQuantity is the order size of one grid level.
+	levelQuantity float64
+
+	// pending is the order whose outcome is not final yet (accepted but not
+	// filled, or unknown after a timeout). While it is set the grid places
+	// no other order; see reconcileGridOrder.
+	pending *gridPendingOrder
+	runID   string
+	seq     int
+	now     func() time.Time
 }
 
 func newGridBook(grid gridParams) *gridBook {
@@ -1039,9 +1050,12 @@ func newGridBook(grid gridParams) *gridBook {
 		maxPosition = grid.quantity * float64(grid.gridLevels)
 	}
 	return &gridBook{
-		heldLevels:  make(map[int]bool),
-		maxPosition: maxPosition,
-		maxExposure: grid.investment,
+		heldLevels:    make(map[int]bool),
+		maxPosition:   maxPosition,
+		maxExposure:   grid.investment,
+		levelQuantity: grid.quantity,
+		runID:         strconv.FormatInt(time.Now().UnixNano(), 36),
+		now:           time.Now,
 	}
 }
 
@@ -1080,7 +1094,11 @@ func (b *gridBook) record(side string, level int, quantity float64) {
 		if b.position < positionEpsilon {
 			b.position = 0
 		}
-		// Release the lowest held level so the grid can buy it again.
+		// Release the lowest held level so the grid can buy it again. A partial
+		// SELL fill does not free a level.
+		if quantity+positionEpsilon < b.levelQuantity {
+			return
+		}
 		lowest := -1
 		for l := range b.heldLevels {
 			if lowest == -1 || l < lowest {
@@ -1119,91 +1137,7 @@ func (s *BotServiceImpl) executeGridTrading(ctx context.Context, grid gridParams
 		return
 	}
 
-	place := func(ctx context.Context, side string, quantity, price float64) error {
-		if manager != nil {
-			_, err := manager.PlaceOrder(ctx, grid.symbol, side, quantity, price)
-			return err
-		}
-		_, err := client.PlaceOrder(grid.symbol, side, "MARKET", quantity, price)
-		return err
-	}
-	s.gridStep(ctx, grid, book, currentPrice, place)
-}
-
-// gridStep decides and (at most once) submits an order for one tick. It
-// returns the side that was filled, or "" when nothing was filled.
-func (s *BotServiceImpl) gridStep(ctx context.Context, grid gridParams, book *gridBook, currentPrice float64, place gridOrderFunc) string {
-	symbol := grid.symbol
-	quantity := grid.quantity
-
-	side, gridSize := gridAction(grid, currentPrice)
-	if side == "" {
-		// Waiting - price in middle of grid
-		s.broadcaster.BroadcastBotActivity(&model.BotActivity{
-			Timestamp: time.Now(),
-			Activity:  "WAITING",
-			Symbol:    symbol,
-			Message:   fmt.Sprintf("Price: %.2f | Grid: %.2f | Range: %.2f-%.2f", currentPrice, gridSize, grid.lowerPrice, grid.upperPrice),
-			Level:     "info",
-		})
-		return ""
-	}
-
-	level := gridLevel(grid, currentPrice)
-	if ok, reason := book.check(side, level, quantity, currentPrice); !ok {
-		logger.Info("Grid "+side+" skipped", "symbol", symbol, "price", currentPrice, "reason", reason)
-		s.broadcaster.BroadcastBotActivity(&model.BotActivity{
-			Timestamp: time.Now(),
-			Activity:  "SKIPPED",
-			Symbol:    symbol,
-			Message:   fmt.Sprintf("Grid %s skipped at %.2f: %s", side, currentPrice, reason),
-			Level:     "info",
-		})
-		return ""
-	}
-
-	if ctx.Err() != nil {
-		return ""
-	}
-
-	logger.Info("Grid "+side+" signal", "symbol", symbol, "price", currentPrice, "qty", quantity, "level", level)
-
-	if orderErr := place(ctx, side, quantity, currentPrice); orderErr != nil {
-		// A failed order is not a trade: do not count it, do not change the
-		// book, and never relabel it as a paper fill.
-		logger.Warn("Grid order failed", "symbol", symbol, "side", side, "error", orderErr)
-		s.broadcaster.BroadcastBotActivity(&model.BotActivity{
-			Timestamp: time.Now(),
-			Activity:  "ORDER_FAILED",
-			Symbol:    symbol,
-			Message:   fmt.Sprintf("Grid %s %.4f @ %.2f failed: %v", side, quantity, currentPrice, orderErr),
-			Level:     "error",
-		})
-		return ""
-	}
-
-	book.record(side, level, quantity)
-	logger.Info("Grid "+side+" executed", "symbol", symbol, "price", currentPrice, "position", book.position)
-
-	s.broadcaster.BroadcastTradeNotification(&model.TradeNotification{
-		ID:        fmt.Sprintf("trade_%d", time.Now().UnixMilli()),
-		Symbol:    model.TradeSymbol(symbol),
-		Side:      model.OrderSide(side),
-		Quantity:  quantity,
-		Price:     currentPrice,
-		Total:     quantity * currentPrice,
-		Type:      "GRID_" + side,
-		Timestamp: time.Now(),
-		Message:   fmt.Sprintf("Grid %s %.4f @ %.2f (position %.8f)", side, quantity, currentPrice, book.position),
-	})
-
-	// Update bot status
-	s.runningMu.Lock()
-	s.tradesCount++
-	s.botStatus.TotalTrades = s.tradesCount
-	s.botStatus.TotalProfit = s.totalProfit
-	s.runningMu.Unlock()
-	return side
+	s.gridStep(ctx, grid, book, currentPrice, &liveGridExchange{symbol: grid.symbol, manager: manager, client: client})
 }
 
 // PortfolioServiceImpl implements the PortfolioService interface

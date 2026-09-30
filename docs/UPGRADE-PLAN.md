@@ -5,7 +5,7 @@ protection mode) first; nothing here authorizes real-money trading.
 
 ## Current state
 
-**Score: 7.5 / 10** (7 after pass 2, 6.5 after pass 1, 5 before). Pass 3 fixed failed signal orders being counted as paper trades, made strategy auth fail closed in production, and enforced gofmt/tidy in CI. Pass 2 closed the Go grid P0s (position cap, per-level idempotency, failed orders no longer counted as paper trades) and moved Next to 14.2.35. The three suites (Go, Next.js,
+**Score: 8 / 10** (7.5 after pass 3, 7 after pass 2, 6.5 after pass 1, 5 before). Pass 4 moved the frontend to Next 15.5 / React 19 with a tracked lockfile, and made grid orders with an unknown outcome reconcile by client order ID instead of re-submitting. Pass 3 fixed failed signal orders being counted as paper trades, made strategy auth fail closed in production, and enforced gofmt/tidy in CI. Pass 2 closed the Go grid P0s (position cap, per-level idempotency, failed orders no longer counted as paper trades) and moved Next to 14.2.35. The three suites (Go, Next.js,
 strategy Python) are green, and CI now runs the full offline strategy suite.
 Before this pass, the Go race detector flaked in CI, CI ran only 2 of the
 ~50 strategy test files, the paper grid sync crashed with a `NameError` it
@@ -15,9 +15,9 @@ could reset the kill switch without authentication.
 ## Backlog
 
 ### P0
-- Grid order placement is synchronous; an order that times out after the
-  exchange accepted it is treated as failed. Reconcile open orders/fills from
-  the exchange before re-arming a level.
+- Bitkub has no client-order-ID lookup here, so a Bitkub grid order with an
+  unknown outcome pauses the grid until an operator reconciles and restarts
+  it. Add a Bitkub order-history lookup (by order hash) to close that gap.
 
 ### P1
 - Backtester: ATR spacing and grid (re)anchoring still use bar *i*'s own
@@ -28,8 +28,12 @@ could reset the kill switch without authentication.
   starting with order quantity/price rounding.
 - CI pins `GO_VERSION: '1.21'` (EOL). Move to a supported Go and bump the
   `go` directive in `go.mod` together.
-- Signal/auto order placement shares the grid's timeout problem (see P0);
-  reconcile before re-sending an exit order.
+- Signal/auto order placement still treats a timeout as a failure. Reuse the
+  grid's client-order-ID reconciliation (`grid_orders.go`) before re-sending
+  an exit order.
+- A grid LIMIT order that stays open blocks the grid (by design, no
+  double-submit). Add a max age after which the open order is cancelled and
+  reconciled.
 
 ### P2
 - Strategy ruff debt: about 1,800 findings, most of them auto-fixable
@@ -56,6 +60,19 @@ could reset the kill switch without authentication.
   and the Dockerfile use `npm ci`. CI also runs `next build` now.
 - Verified: `npm run lint`, `tsc --noEmit`, `npm test` (37 passed), `npm run
   build`.
+- Go grid: orders whose outcome is unknown are reconciled, never re-sent.
+  Every grid order has a client order ID (`newClientOrderId`). A timeout,
+  transport error, 5xx or unparsable 200 wraps `exchange.ErrOrderStateUnknown`
+  and becomes the book's pending order. An accepted order that is not filled
+  yet (NEW/PARTIALLY_FILLED) is pending too, so it is no longer counted as a
+  fill. While an order is pending the grid places nothing and looks it up
+  (`origClientOrderId`) each tick. FILLED records the fill, CANCELED/EXPIRED
+  records any partial fill, and "not found" frees the level only after a 60 s
+  grace. A lookup that fails or is unsupported keeps the order pending.
+  Supported on Binance and Binance TH; Bitkub pauses on an unknown outcome.
+  Tests: `grid_reconcile_test.go` and `exchange/order_reconcile_test.go`
+  (httptest fakes only). Verified with `go vet`, `gofmt -l`,
+  `go test -race ./...`.
 
 ## Done in pass 3
 - Go signal/auto: `executeSignalTrade` now delegates to `signalTradeStep`.

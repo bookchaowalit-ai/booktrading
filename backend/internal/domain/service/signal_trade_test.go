@@ -37,7 +37,7 @@ func TestSignalTradeFailedOrderIsNotCountedOrLabelledPaper(t *testing.T) {
 		svc, rb := newSignalTestService(mode)
 		ex := &fakeGridExchange{fail: errors.New("exchange rejected order")}
 
-		if ok := svc.signalTradeStep(context.Background(), "BTCUSDT", "BUY", 0.01, 100, ex.place); ok {
+		if ok := svc.signalTradeStep(context.Background(), "BTCUSDT", "BUY", 0.01, 100, ex.signal); ok {
 			t.Fatalf("%s: failed order reported as success", mode)
 		}
 		if svc.tradesCount != 0 || svc.botStatus.TotalTrades != 0 {
@@ -64,7 +64,7 @@ func TestSignalTradeSuccessIsCountedAndTracked(t *testing.T) {
 	svc, rb := newSignalTestService(model.BotModeAuto)
 	ex := &fakeGridExchange{}
 
-	if ok := svc.signalTradeStep(context.Background(), "BTCUSDT", "BUY", 0.01, 100, ex.place); !ok {
+	if ok := svc.signalTradeStep(context.Background(), "BTCUSDT", "BUY", 0.01, 100, ex.signal); !ok {
 		t.Fatal("successful order reported as failure")
 	}
 	if svc.tradesCount != 1 || svc.botStatus.TotalTrades != 1 {
@@ -84,7 +84,7 @@ func TestSignalTradeNotPlacedAfterStop(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if svc.signalTradeStep(ctx, "BTCUSDT", "BUY", 0.01, 100, ex.place) {
+	if svc.signalTradeStep(ctx, "BTCUSDT", "BUY", 0.01, 100, ex.signal) {
 		t.Fatal("order reported after stop")
 	}
 	if len(ex.orders) != 0 || svc.tradesCount != 0 {

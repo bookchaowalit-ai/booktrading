@@ -6,17 +6,28 @@ import (
 	"testing"
 )
 
+// fakeGridExchange fills every accepted order immediately unless fail is set.
 type fakeGridExchange struct {
 	orders []string
 	fail   error
 }
 
-func (f *fakeGridExchange) place(ctx context.Context, side string, quantity, price float64) error {
+func (f *fakeGridExchange) place(ctx context.Context, clientOrderID, side string, quantity, price float64) (gridOrderReport, error) {
 	if f.fail != nil {
-		return f.fail
+		return gridOrderReport{}, f.fail
 	}
 	f.orders = append(f.orders, side)
-	return nil
+	return gridOrderReport{state: gridOrderFilled, executedQty: quantity}, nil
+}
+
+// signal adapts the fake to gridOrderFunc for signal-trade tests.
+func (f *fakeGridExchange) signal(ctx context.Context, side string, quantity, price float64) error {
+	_, err := f.place(ctx, "", side, quantity, price)
+	return err
+}
+
+func (f *fakeGridExchange) lookup(ctx context.Context, clientOrderID string) (gridOrderReport, error) {
+	return gridOrderReport{state: gridOrderNotFound}, nil
 }
 
 func newGridTestService() *BotServiceImpl {
@@ -32,7 +43,7 @@ func TestGridBuyIsPlacedOncePerLevelWhilePriceStaysInBand(t *testing.T) {
 	ex := &fakeGridExchange{}
 
 	for tick := 0; tick < 50; tick++ {
-		svc.gridStep(context.Background(), testGrid, book, 110, ex.place)
+		svc.gridStep(context.Background(), testGrid, book, 110, ex)
 	}
 	if len(ex.orders) != 1 {
 		t.Fatalf("expected exactly 1 BUY while price sits in the buy band, got %d", len(ex.orders))
@@ -53,16 +64,16 @@ func TestGridSellRequiresInventoryAndReleasesLevel(t *testing.T) {
 
 	// No naked sells: nothing bought yet.
 	for tick := 0; tick < 10; tick++ {
-		svc.gridStep(ctx, testGrid, book, 190, ex.place)
+		svc.gridStep(ctx, testGrid, book, 190, ex)
 	}
 	if len(ex.orders) != 0 {
 		t.Fatalf("SELL without inventory must not be submitted, got %v", ex.orders)
 	}
 
-	svc.gridStep(ctx, testGrid, book, 110, ex.place) // BUY
-	svc.gridStep(ctx, testGrid, book, 190, ex.place) // SELL
-	svc.gridStep(ctx, testGrid, book, 190, ex.place) // no inventory left
-	svc.gridStep(ctx, testGrid, book, 110, ex.place) // level released -> BUY again
+	svc.gridStep(ctx, testGrid, book, 110, ex) // BUY
+	svc.gridStep(ctx, testGrid, book, 190, ex) // SELL
+	svc.gridStep(ctx, testGrid, book, 190, ex) // no inventory left
+	svc.gridStep(ctx, testGrid, book, 110, ex) // level released -> BUY again
 
 	want := []string{"BUY", "SELL", "BUY"}
 	if len(ex.orders) != len(want) {
@@ -125,7 +136,7 @@ func TestGridFailedOrderIsNotCountedOrRelabelled(t *testing.T) {
 	book := newGridBook(testGrid)
 	ex := &fakeGridExchange{fail: errors.New("exchange rejected")}
 
-	if got := svc.gridStep(context.Background(), testGrid, book, 110, ex.place); got != "" {
+	if got := svc.gridStep(context.Background(), testGrid, book, 110, ex); got != "" {
 		t.Fatalf("failed order must not report a fill, got %q", got)
 	}
 	if svc.tradesCount != 0 {
@@ -136,7 +147,7 @@ func TestGridFailedOrderIsNotCountedOrRelabelled(t *testing.T) {
 	}
 
 	ex.fail = nil
-	if got := svc.gridStep(context.Background(), testGrid, book, 110, ex.place); got != "BUY" {
+	if got := svc.gridStep(context.Background(), testGrid, book, 110, ex); got != "BUY" {
 		t.Fatalf("level must stay open after a failed order, got %q", got)
 	}
 }
@@ -147,7 +158,7 @@ func TestGridStepDoesNothingAfterCancel(t *testing.T) {
 	ex := &fakeGridExchange{}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	svc.gridStep(ctx, testGrid, book, 110, ex.place)
+	svc.gridStep(ctx, testGrid, book, 110, ex)
 	if len(ex.orders) != 0 {
 		t.Fatal("no order may be placed after the run context is cancelled")
 	}
