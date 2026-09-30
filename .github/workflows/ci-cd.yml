@@ -142,12 +142,14 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r strategy/requirements.txt
 
-      - name: Run strategy tests
-        run: >-
-          python -m pytest
-          strategy/tests/test_futures_safety.py
-          strategy/tests/test_futures_backtest.py
-          -q
+      - name: Run strategy tests (full offline suite)
+        working-directory: strategy
+        # pyproject.toml deselects `integration` tests, which need live services.
+        run: python -m pytest -q
+
+      - name: Check strategy for undefined names and syntax errors
+        working-directory: strategy
+        run: python -m ruff check . --select E9,F63,F7,F82
 
       - name: Check strategy formatting and lint
         run: >-
