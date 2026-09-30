@@ -85,6 +85,17 @@ could reset the kill switch without authentication.
 - Real-grid preflight `_as_float` treats NaN/inf as missing, so a NaN 24h
   volume or price move no longer skips the liquidity/volatility warnings
   (`test_preflight_treats_nan_market_data_as_missing`).
+- Go paper engine: a marketable limit order fills at the market price (a
+  SELL limit far below the market booked an invented loss at the limit).
+  Cash and position are re-checked at fill time, so two resting orders can
+  no longer oversell a position or drive the balance negative (the second is
+  cancelled). Realized PnL is read before a full close removes the position,
+  so the trade event no longer reports 0. `paper_engine_fill_test.go`.
+- Go finance: goal progress, budget used and category share go through
+  `boundedPercent`, so a zero target/budget/expense month yields 0 instead of
+  NaN/Inf (which made the dashboard JSON fail to encode). `goalOnTrack` uses
+  fractional months: goals due within 30 days divided by `days/30 == 0`.
+  The dashboard's `OnTrack` uses the same rule. `finance_percent_test.go`.
 
 ## Done in pass 4
 - Frontend: Next 14.2.35 -> 15.5.27 (latest 15.x), React 18 -> 19,
