@@ -2,11 +2,13 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 // caddyAddr is a Docker-network peer, trusted by the default TRUSTED_PROXIES.
@@ -138,40 +140,158 @@ func TestLoginLockoutBehindSharedProxyIsPerClient(t *testing.T) {
 	}
 }
 
-// Rotating source IPs must not allow unlimited guesses against one account.
-func TestLoginPerAccountLockout(t *testing.T) {
+// recordSleeps replaces the login delay with a recorder, so tests see the
+// per-account delay without sleeping.
+func recordSleeps(h *AuthHandler) *[]time.Duration {
+	var got []time.Duration
+	h.loginSleep = func(_ context.Context, d time.Duration) error {
+		got = append(got, d)
+		return nil
+	}
+	return &got
+}
+
+func lastSleep(t *testing.T, sleeps *[]time.Duration) time.Duration {
+	t.Helper()
+	if len(*sleeps) == 0 {
+		t.Fatal("login did not go through the delay")
+	}
+	return (*sleeps)[len(*sleeps)-1]
+}
+
+// An attacker hammering the admin's email from many IPs must not lock the
+// admin out: per-account failures only add a bounded delay, while rotating
+// IPs still cannot guess quickly.
+func TestAccountAttackFromManyIPsCannotBlockAdmin(t *testing.T) {
 	h := newLockoutHandler(t)
-	for i := 0; i < accountMaxAttempts; i++ {
-		w := loginFrom(t, h, fmt.Sprintf("203.0.113.%d:1000", i+1), nil, "Victim@Example.test ", "wrong")
+	sleeps := recordSleeps(h)
+	const attempts = 12
+	for i := 0; i < attempts; i++ {
+		w := loginFrom(t, h, fmt.Sprintf("203.0.113.%d:1000", i+1), nil, " Admin@Example.test", "wrong")
 		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: %d, want 401 (never a block across IPs)", i+1, w.Code)
+		}
+		want := time.Duration(0)
+		if i >= accountDelayFreeFailures {
+			want = accountDelayBase << (i - accountDelayFreeFailures)
+			if want > accountDelayMax || want <= 0 {
+				want = accountDelayMax
+			}
+		}
+		if got := lastSleep(t, sleeps); got != want {
+			t.Fatalf("attempt %d: delay %v, want %v", i+1, got, want)
+		}
+	}
+
+	w := loginFrom(t, h, "198.51.100.10:1000", nil, "admin@example.test", "AdminSecret123")
+	if w.Code != http.StatusOK {
+		t.Fatalf("admin from a fresh IP: %d %s, want 200", w.Code, w.Body)
+	}
+	if got := lastSleep(t, sleeps); got != accountDelayMax {
+		t.Fatalf("admin delay %v, want the cap %v", got, accountDelayMax)
+	}
+	// Other accounts are not slowed down.
+	if w := loginFrom(t, h, "198.51.100.11:1000", nil, "victim@example.test", "Secret123"); w.Code != http.StatusOK {
+		t.Fatalf("other account: %d, want 200", w.Code)
+	}
+	if got := lastSleep(t, sleeps); got != 0 {
+		t.Fatalf("other account delay %v, want 0", got)
+	}
+}
+
+// Guessing one account from one IP still hits a hard lockout that a correct
+// password cannot bypass, and only that IP is locked for the account.
+func TestSameIPBruteForceLocks(t *testing.T) {
+	h := newLockoutHandler(t)
+	recordSleeps(h)
+	const ip = "203.0.113.70:1000"
+	for i := 0; i < pairMaxAttempts; i++ {
+		if w := loginFrom(t, h, ip, nil, "victim@example.test", "wrong"); w.Code != http.StatusUnauthorized {
 			t.Fatalf("attempt %d: %d, want 401", i+1, w.Code)
 		}
 	}
-	w := loginFrom(t, h, "203.0.113.200:1000", nil, "victim@example.test", "Secret123")
-	if w.Code != http.StatusTooManyRequests {
-		t.Fatalf("locked account from fresh IP: %d, want 429", w.Code)
+	w := loginFrom(t, h, ip, nil, "victim@example.test", "Secret123")
+	if w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") == "" {
+		t.Fatalf("locked pair: %d (Retry-After %q), want 429 with Retry-After", w.Code, w.Header().Get("Retry-After"))
 	}
-	lockedBody := w.Body.String()
-	if w.Header().Get("Retry-After") == "" {
-		t.Fatal("missing Retry-After")
+	if blocked, _ := h.checkPairRate("VICTIM@example.test ", "203.0.113.70"); !blocked {
+		t.Fatal("(email, IP) pair is not locked")
 	}
+	if w := loginFrom(t, h, "203.0.113.71:1000", nil, "victim@example.test", "Secret123"); w.Code != http.StatusOK {
+		t.Fatalf("same account from another IP: %d, want 200", w.Code)
+	}
+}
 
-	// The admin (and other accounts) still log in.
-	if w := loginFrom(t, h, "203.0.113.201:1000", nil, "admin@example.test", "AdminSecret123"); w.Code != http.StatusOK {
-		t.Fatalf("admin while another account is locked: %d %s, want 200", w.Code, w.Body)
+// A success clears only that (email, IP) counter: failures recorded from
+// other IPs keep slowing the account down.
+func TestSuccessfulLoginClearsOnlyThePair(t *testing.T) {
+	h := newLockoutHandler(t)
+	sleeps := recordSleeps(h)
+	for i := 0; i < accountDelayFreeFailures+2; i++ {
+		loginFrom(t, h, fmt.Sprintf("203.0.113.%d:1000", i+80), nil, "victim@example.test", "wrong")
 	}
-	if w := loginFrom(t, h, "203.0.113.202:1000", nil, "attacker@example.test", "Secret123"); w.Code != http.StatusOK {
-		t.Fatalf("other account: %d, want 200", w.Code)
+	const ip = "203.0.113.80"
+	if w := loginFrom(t, h, ip+":1000", nil, "victim@example.test", "Secret123"); w.Code != http.StatusOK {
+		t.Fatalf("login: %d", w.Code)
 	}
+	h.loginMu.Lock()
+	_, pairLeft := h.loginAttempts[pairLoginKey("victim@example.test", ip)]
+	_, otherPairLeft := h.loginAttempts[pairLoginKey("victim@example.test", "203.0.113.81")]
+	h.loginMu.Unlock()
+	if pairLeft || !otherPairLeft {
+		t.Fatalf("pair counters after success: own=%v other=%v, want false/true", pairLeft, otherPairLeft)
+	}
+	loginFrom(t, h, "203.0.113.99:1000", nil, "victim@example.test", "wrong")
+	if got := lastSleep(t, sleeps); got == 0 {
+		t.Fatal("account delay was reset by one successful login")
+	}
+}
 
-	// An unknown email locks the same way with the same body, so the 429
-	// does not reveal whether an account exists.
-	for i := 0; i < accountMaxAttempts; i++ {
-		loginFrom(t, h, fmt.Sprintf("203.0.113.%d:2000", i+100), nil, "ghost@example.test", "wrong")
+// Unknown and known emails get the same statuses, bodies, delays and
+// lockouts, so neither reveals whether an account exists.
+func TestLoginUnknownEmailParity(t *testing.T) {
+	type result struct {
+		code  int
+		body  string
+		delay time.Duration
 	}
-	w = loginFrom(t, h, "203.0.113.203:1000", nil, "ghost@example.test", "whatever")
-	if w.Code != http.StatusTooManyRequests || w.Body.String() != lockedBody {
-		t.Fatalf("unknown email lockout: %d %q, want 429 %q", w.Code, w.Body, lockedBody)
+	run := func(email string) []result {
+		h := newLockoutHandler(t)
+		sleeps := recordSleeps(h)
+		var out []result
+		for i := 0; i < accountDelayFreeFailures+3; i++ {
+			w := loginFrom(t, h, fmt.Sprintf("203.0.113.%d:1000", i+1), nil, email, "wrong")
+			out = append(out, result{w.Code, w.Body.String(), lastSleep(t, sleeps)})
+		}
+		for i := 0; i <= pairMaxAttempts; i++ {
+			w := loginFrom(t, h, "198.51.100.20:1000", nil, email, "wrong")
+			out = append(out, result{w.Code, w.Body.String() + w.Header().Get("Retry-After"), 0})
+		}
+		return out
+	}
+	known, unknown := run("victim@example.test"), run("ghost@example.test")
+	if len(known) != len(unknown) {
+		t.Fatalf("result count differs: %d vs %d", len(known), len(unknown))
+	}
+	for i := range known {
+		if known[i] != unknown[i] {
+			t.Fatalf("step %d: known %+v, unknown %+v", i, known[i], unknown[i])
+		}
+	}
+	if last := known[len(known)-1]; last.code != http.StatusTooManyRequests {
+		t.Fatalf("final step: %d, want 429", last.code)
+	}
+}
+
+func TestSleepContextStopsWhenClientLeaves(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	start := time.Now()
+	if err := sleepContext(ctx, time.Hour); err == nil {
+		t.Fatal("want ctx error")
+	}
+	if time.Since(start) > time.Second {
+		t.Fatal("sleepContext ignored cancellation")
 	}
 }
 

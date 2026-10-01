@@ -44,11 +44,11 @@ could reset the kill switch without authentication.
   on the timescale service container and sets that variable.
 - Login answers faster for unknown emails than for wrong passwords (no
   bcrypt work), which leaks account existence; compare against a dummy hash.
-- Login/invite lockout (per IP and per account) is in process memory: it
+- Login/invite lockout and the per-account delay are in process memory: it
   resets on restart and is not shared between replicas. Move it to Redis.
-- Per-account lockout lets anyone lock a known email for 15 minutes with
-  10 wrong passwords (including the admin's). If that is abused, add a
-  per-(IP, account) tier or a CAPTCHA instead of raising the threshold.
+- The (email, IP) lockout uses the same limit (5) as the per-IP lockout,
+  so today it only adds a tier if the per-IP limit is raised (e.g. for
+  NAT-heavy users). Revisit both together.
 
 ### P2
 - If registration is ever opened in production (`ALLOW_REGISTRATION=true`),
@@ -73,6 +73,18 @@ could reset the kill switch without authentication.
   HTTP servers only.
 
 ## Done in this pass (pass 13: client IP trust, account lockout)
+- Follow-up: the per-account hard lockout let anyone lock the admin's email
+  for 15 minutes with 10 wrong passwords. Replaced by the standard pattern:
+  hard lockout per (normalized email, client IP) pair (5 failures) plus the
+  per-IP limit; failures against one email from any IPs only add a
+  progressive delay before password verification (free for 3, then 250 ms
+  doubling, capped at 4 s; no lock held while waiting, aborted when the
+  client leaves). Success clears only that (email, IP) counter. The delay
+  is injectable (`AuthHandler.loginSleep`). Tests: many-IP attack on the
+  admin (all 401, delays as specified, admin then logs in from a fresh IP
+  with the capped delay), same-IP brute force locks only that IP, success
+  clears only its pair, unknown/known email parity (status, body, delay,
+  lockout), cancelled delay.
 - Forwarding headers are trusted only from `TRUSTED_PROXIES` (CIDRs/IPs or
   `*`; default loopback + private ranges, i.e. the Caddy/Next.js
   containers). X-Forwarded-For is walked right-to-left (first untrusted hop),
@@ -83,8 +95,9 @@ could reset the kill switch without authentication.
 - The Caddyfile sets `header_up X-Real-IP {remote_host}` on every upstream;
   `TRUSTED_PROXIES` is passed through both compose files and documented in
   `.env.example`.
-- Per-account lockout: 10 failures against one normalized email (from any
-  IPs) block that email for 15 minutes, on top of the per-IP 5. Unknown
+- Per-account lockout (superseded by the follow-up above): 10 failures
+  against one normalized email (from any IPs) blocked that email for 15
+  minutes, on top of the per-IP 5. Unknown
   emails are tracked the same way and every lockout answers the same generic
   429 with `Retry-After`, so it does not reveal whether an account exists. A
   successful login clears the account counter but no longer the IP counter

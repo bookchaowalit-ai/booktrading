@@ -51,9 +51,14 @@ count toward the per-IP login lockout (5 failures, then `429` for 15 min).
 ### Login lockout
 `POST /api/auth/login` answers `429` with `Retry-After` and a generic
 `{"error": "Too many login attempts. Try again later."}` after 5 failures
-from one client IP or 10 failures against one email (from any IPs) within
-15 minutes; the block lasts 15 minutes. Unknown emails are counted the same
-way, so the response does not reveal whether an account exists. The client
+from one client IP (logins and invite codes together) or 5 failures for one
+email from one client IP within 15 minutes; the block lasts 15 minutes and
+covers only that IP / (email, IP) pair. Failures against one email from any
+IPs never block it: after 3 they only delay each further login to that email
+(250 ms, doubling per failure, capped at 4 s, applied before the password is
+checked), so an attacker cannot lock the owner out. A successful login clears
+only its own (email, IP) counter. Unknown emails are counted and delayed the
+same way, so the response does not reveal whether an account exists. The client
 IP comes from `X-Forwarded-For` / `X-Real-IP` only when the TCP peer is in
 `TRUSTED_PROXIES` (default: loopback and private ranges, i.e. Caddy).
 

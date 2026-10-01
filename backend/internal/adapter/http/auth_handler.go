@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -144,9 +145,12 @@ type AuthHandler struct {
 	mu            sync.RWMutex
 	users         UserStore
 	sessions      sessionStore
-	loginAttempts map[string]*loginAttempt // "ip:<ip>" / "acct:<email>" -> attempt tracking
+	loginAttempts map[string]*loginAttempt // "ip:<ip>" / "pair:<ip>|<email>" / "acct:<email>" -> attempt tracking
 	loginMu       sync.Mutex               // separate lock for login attempts
-	registration  RegistrationPolicy       // who may self-register (guarded by mu)
+	// loginSleep waits out the per-account login delay (sleepContext;
+	// tests replace it to record delays without sleeping).
+	loginSleep   func(ctx context.Context, d time.Duration) error
+	registration RegistrationPolicy // who may self-register (guarded by mu)
 }
 
 type loginAttempt struct {
@@ -174,6 +178,7 @@ func NewAuthHandlerWithUsers(store sessionStore, users UserStore) *AuthHandler {
 		sessions:      store,
 		users:         users,
 		loginAttempts: make(map[string]*loginAttempt),
+		loginSleep:    sleepContext,
 		registration:  RegistrationPolicyFromEnv(os.Getenv),
 	}
 	logger.Info("Self-registration policy", "mode", h.registration.Mode.String())
@@ -302,7 +307,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Rate limit login attempts per IP (5 failures per 15 minutes, then a
-	// 15 minute block) and per account (see accountMaxAttempts).
+	// 15 minute block), per (email, IP) pair and, as a delay only, per
+	// account (see pairMaxAttempts and accountDelayBase).
 	clientIP := extractClientIPForLogin(r)
 	if blocked, remaining := h.checkLoginRate(clientIP); blocked {
 		writeLoginRateLimited(w, remaining)
@@ -313,15 +319,23 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request"})
 		return
 	}
 
-	// Checked before the password so a locked account cannot be guessed;
-	// unknown emails are tracked too, so the 429 reveals nothing.
-	if blocked, remaining := h.checkAccountRate(req.Email); blocked {
+	// Hard lockout per (email, client IP): checked before the password so a
+	// locked pair cannot keep guessing. Unknown emails are tracked too, so
+	// the 429 reveals nothing.
+	if blocked, remaining := h.checkPairRate(req.Email, clientIP); blocked {
 		writeLoginRateLimited(w, remaining)
 		return
+	}
+
+	// Per account (any IP): a bounded progressive delay, never a block, so
+	// an attacker hammering the admin's email from other IPs only slows the
+	// admin's own login down. No lock is held while waiting.
+	if err := h.loginSleep(r.Context(), h.accountLoginDelay(req.Email)); err != nil {
+		return // client went away
 	}
 
 	found, err := h.users.GetUserByEmail(r.Context(), normalizeEmail(req.Email))
@@ -331,17 +345,16 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if found == nil || bcrypt.CompareHashAndPassword([]byte(found.PasswordHash), []byte(req.Password)) != nil {
-		// Record the failure against both the IP and the account.
 		h.recordFailedLogin(clientIP)
-		h.recordFailedAccountLogin(req.Email)
+		h.recordFailedAccountLogin(req.Email, clientIP)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid email or password"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "Invalid email or password"})
 		return
 	}
 
-	// Successful login: clear the account counter (the IP budget stays).
-	h.resetAccountAttempts(req.Email)
+	// Successful login: clear only this (email, IP) counter.
+	h.resetPairAttempts(req.Email, clientIP)
 
 	token, err := generateToken()
 	if err != nil {
@@ -357,7 +370,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	h.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(LoginResponse{
+	_ = json.NewEncoder(w).Encode(LoginResponse{
 		Token: token,
 		User: UserInfo{
 			ID:    found.ID,
@@ -611,24 +624,37 @@ const (
 	loginMaxAttempts   = 5
 	loginWindowMinutes = 15
 	loginBlockMinutes  = 15
-	// accountMaxAttempts failures against one email (from any IPs) block
-	// logins to that email. It is higher than the per-IP limit so a single
-	// IP's typos never lock the account, while rotating IPs cannot brute-force
-	// one password. Unknown emails are tracked the same way, so a lockout
-	// does not reveal whether an account exists.
-	accountMaxAttempts = 10
+	// pairMaxAttempts failures for one (normalized email, client IP) pair
+	// block that pair for loginBlockMinutes. This is the only per-account
+	// hard lockout: it never blocks the same email from another IP, so an
+	// attacker cannot lock the admin out of their own network.
+	pairMaxAttempts = 5
+	// Per account (from any IPs) failures only slow logins down: after
+	// accountDelayFreeFailures failures inside loginWindowMinutes, each
+	// further attempt on that email waits accountDelayBase doubled per
+	// extra failure, capped at accountDelayMax. Rotating IPs therefore
+	// cannot brute-force one password quickly, but the owner still gets in.
+	// Unknown emails are tracked the same way, so the delay does not reveal
+	// whether an account exists.
+	accountDelayFreeFailures = 3
+	accountDelayBase         = 250 * time.Millisecond
+	accountDelayMax          = 4 * time.Second
 	// maxTrackedLoginKeys bounds the attempt map; stale entries are pruned
 	// when it is exceeded.
 	maxTrackedLoginKeys = 100000
 )
 
-// loginRateLimitMessage is the same for IP and account lockouts and for
+// loginRateLimitMessage is the same for IP and pair lockouts and for
 // existing and unknown emails.
 const loginRateLimitMessage = "Too many login attempts. Try again later."
 
 func ipLoginKey(ip string) string { return "ip:" + ip }
 
 func accountLoginKey(email string) string { return "acct:" + normalizeEmail(email) }
+
+func pairLoginKey(email, ip string) string {
+	return "pair:" + ip + "|" + normalizeEmail(email)
+}
 
 // writeLoginRateLimited sends the generic 429 for a blocked login.
 func writeLoginRateLimited(w http.ResponseWriter, remaining int) {
@@ -651,24 +677,67 @@ func (h *AuthHandler) recordFailedLogin(ip string) {
 	h.recordFailedKey(ipLoginKey(ip), loginMaxAttempts)
 }
 
-// checkAccountRate reports whether logins to email are blocked.
-func (h *AuthHandler) checkAccountRate(email string) (bool, int) {
-	return h.checkLoginKey(accountLoginKey(email), accountMaxAttempts)
+// checkPairRate reports whether logins to email from ip are blocked.
+func (h *AuthHandler) checkPairRate(email, ip string) (bool, int) {
+	return h.checkLoginKey(pairLoginKey(email, ip), pairMaxAttempts)
 }
 
-// recordFailedAccountLogin counts a failed login against email.
-func (h *AuthHandler) recordFailedAccountLogin(email string) {
-	h.recordFailedKey(accountLoginKey(email), accountMaxAttempts)
+// recordFailedAccountLogin counts a failed login against the (email, ip)
+// pair (hard lockout) and against email alone (progressive delay).
+func (h *AuthHandler) recordFailedAccountLogin(email, ip string) {
+	h.recordFailedKey(pairLoginKey(email, ip), pairMaxAttempts)
+	h.recordFailedKey(accountLoginKey(email), math.MaxInt)
 }
 
-// resetAccountAttempts clears the counter for email after a successful login.
-// The per-IP counter is deliberately left alone: otherwise an attacker could
-// interleave logins to their own account to reset the IP budget while
-// spraying passwords across other accounts.
-func (h *AuthHandler) resetAccountAttempts(email string) {
+// resetPairAttempts clears the (email, ip) counter after a successful login.
+// The per-IP counter is deliberately left alone (an attacker could otherwise
+// interleave logins to their own account to refill the IP budget while
+// spraying passwords across other accounts), and so is the per-account
+// delay counter (a login from one IP must not erase failures from others).
+func (h *AuthHandler) resetPairAttempts(email, ip string) {
 	h.loginMu.Lock()
 	defer h.loginMu.Unlock()
-	delete(h.loginAttempts, accountLoginKey(email))
+	delete(h.loginAttempts, pairLoginKey(email, ip))
+}
+
+// accountLoginDelay is how long a login to email waits before its password
+// is checked: zero for the first accountDelayFreeFailures failures inside
+// the window, then accountDelayBase doubling per failure up to
+// accountDelayMax.
+func (h *AuthHandler) accountLoginDelay(email string) time.Duration {
+	h.loginMu.Lock()
+	defer h.loginMu.Unlock()
+	attempt, ok := h.loginAttempts[accountLoginKey(email)]
+	if !ok || time.Now().After(attempt.lastReset.Add(loginWindowMinutes*time.Minute)) {
+		return 0
+	}
+	extra := attempt.count - accountDelayFreeFailures
+	if extra < 0 {
+		return 0
+	}
+	d := accountDelayBase
+	for i := 0; i < extra && d < accountDelayMax; i++ {
+		d *= 2
+	}
+	if d > accountDelayMax {
+		d = accountDelayMax
+	}
+	return d
+}
+
+// sleepContext waits for d or until ctx is done; it holds no locks.
+func sleepContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // checkLoginKey returns (blocked, remainingSeconds). A key is blocked for
@@ -699,7 +768,8 @@ func (h *AuthHandler) checkLoginKey(key string, max int) (bool, int) {
 	return false, 0
 }
 
-// recordFailedKey increments the failed attempt counter for key.
+// recordFailedKey increments the failed attempt counter for key. With
+// max = math.MaxInt the key only counts and never blocks.
 func (h *AuthHandler) recordFailedKey(key string, max int) {
 	h.loginMu.Lock()
 	defer h.loginMu.Unlock()
