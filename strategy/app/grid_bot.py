@@ -25,6 +25,8 @@ from typing import Dict, List, Optional
 
 import httpx
 
+from app.backend_auth import backend_event_hooks
+
 logger = logging.getLogger("paper_grid_bot")
 
 # ── Configuration ─────────────────────────────────────────────────────────────
@@ -358,7 +360,7 @@ class GridBot:
     async def start(self):
         """Start the grid bot."""
         self._running = True
-        self._http = httpx.AsyncClient(timeout=10.0)
+        self._http = httpx.AsyncClient(timeout=10.0, event_hooks=backend_event_hooks())
         self._kline_http = httpx.AsyncClient(timeout=15.0)
         logger.info(
             "Grid Bot started with %d symbol(s) | mode=%s dgt=%s confluence=%s",

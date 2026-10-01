@@ -31,6 +31,7 @@ from core.service.anomaly_detector import AnomalyDetector
 from core.service.param_optimizer import ParamOptimizer
 from infrastructure.redis.redis_adapter import RedisAdapter
 from infrastructure.grpc.grpc_client import GRPCClientManager
+from app.backend_auth import backend_event_hooks
 from app.polymarket.state import (
     PAPER_STATE_KEY,
     overlay_paper_performance,
@@ -1533,16 +1534,20 @@ def register_routes(app: FastAPI):
 
     @app.put("/api/real-grid/config/{symbol}")
     @auth_required
-    async def real_grid_config_update(symbol: str, request: dict):
+    async def real_grid_config_update(symbol: str, request: Request, body: dict = Body(...)):
         """Update grid config for a symbol.
-        
+
         Body: {"grid_spacing_pct": 2.0, "grid_levels": 3, "order_size": 0.00005, ...}
+
+        The JSON body is ``body``: ``@auth_required`` reads the Starlette
+        ``request`` for the bearer token. Naming the body ``request`` made
+        every call fail with 500 before the auth check.
         """
         from app.real_grid_bot import get_real_grid_bot
         bot = get_real_grid_bot()
-        success = bot.update_config(symbol.upper(), **request)
+        success = bot.update_config(symbol.upper(), **body)
         if success:
-            return {"status": "updated", "symbol": symbol.upper(), "config": request}
+            return {"status": "updated", "symbol": symbol.upper(), "config": body}
         raise HTTPException(status_code=404, detail=f"Symbol {symbol} not found")
 
     # ── Performance Metrics Endpoint ──
@@ -1641,7 +1646,7 @@ def register_routes(app: FastAPI):
         db_entries = []
         db_stats = {}
         try:
-            async with _httpx.AsyncClient(timeout=10.0) as client:
+            async with _httpx.AsyncClient(timeout=10.0, event_hooks=backend_event_hooks()) as client:
                 # List entries
                 params = {"limit": str(limit)}
                 if status:
@@ -1672,7 +1677,7 @@ def register_routes(app: FastAPI):
         from app.real_grid_bot import BACKEND_API_BASE
         import httpx as _httpx
         try:
-            async with _httpx.AsyncClient(timeout=10.0) as client:
+            async with _httpx.AsyncClient(timeout=10.0, event_hooks=backend_event_hooks()) as client:
                 resp = await client.get(f"{BACKEND_API_BASE}/api/journal/stats")
                 if resp.status_code == 200:
                     return resp.json()
@@ -1698,7 +1703,7 @@ def register_routes(app: FastAPI):
         # Fetch open orders from backend
         open_orders = []
         try:
-            async with _httpx.AsyncClient(timeout=10.0) as client:
+            async with _httpx.AsyncClient(timeout=10.0, event_hooks=backend_event_hooks()) as client:
                 resp = await client.get(
                     f"{BACKEND_API_BASE}/api/trade/open-orders",
                     params={"symbol": symbol},
@@ -1711,7 +1716,7 @@ def register_routes(app: FastAPI):
         # Fetch filled trades from backend
         filled_trades = []
         try:
-            async with _httpx.AsyncClient(timeout=10.0) as client:
+            async with _httpx.AsyncClient(timeout=10.0, event_hooks=backend_event_hooks()) as client:
                 resp = await client.get(
                     f"{BACKEND_API_BASE}/api/trade/history",
                     params={"limit": "100"},
@@ -2500,7 +2505,7 @@ def register_routes(app: FastAPI):
         balances_raw = []
         try:
             from app.real_grid_bot import BACKEND_API_BASE
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=10.0, event_hooks=backend_event_hooks()) as client:
                 resp = await client.get(f"{BACKEND_API_BASE}/api/trade/balances")
                 if resp.status_code == 200:
                     balances_raw = resp.json().get("balances", [])

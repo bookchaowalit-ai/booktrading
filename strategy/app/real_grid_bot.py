@@ -25,6 +25,8 @@ from typing import Dict, List, Optional, Set
 
 import httpx
 
+from app.backend_auth import backend_event_hooks
+
 from app.risk_manager import get_risk_manager
 from app.trade_journal import get_trade_journal, JournalEntry
 from app.webhook_notifier import get_webhook_notifier
@@ -432,7 +434,7 @@ class RealGridBot:
     async def start(self):
         """Start the real grid bot."""
         self._running = True
-        self._http = httpx.AsyncClient(timeout=15.0)
+        self._http = httpx.AsyncClient(timeout=15.0, event_hooks=backend_event_hooks())
 
         # Initialize risk manager and trade journal
         self._risk = get_risk_manager()

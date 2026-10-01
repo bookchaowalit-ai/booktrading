@@ -24,6 +24,8 @@ from typing import Dict, List, Optional
 
 import httpx
 
+from app.backend_auth import backend_event_hooks
+
 logger = logging.getLogger("dca_bot")
 
 BINANCE_PUBLIC_REST = os.getenv("BINANCE_PRICE_API", "https://api.binance.th")
@@ -112,7 +114,7 @@ class DCABot:
     async def start(self):
         """Start the DCA bot."""
         self._running = True
-        self._http = httpx.AsyncClient(timeout=30)
+        self._http = httpx.AsyncClient(timeout=30, event_hooks=backend_event_hooks())
 
         # Load existing states from Redis
         await self._load_states()

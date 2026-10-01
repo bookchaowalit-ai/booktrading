@@ -115,10 +115,10 @@ func (h *SLTPHandler) DeleteSLTP(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
 }
 
-// getUserIDFromContext extracts userID from request — reads it from a header
-// set by the auth middleware (future: use context value).
+// getUserIDFromContext returns the session user the router authenticated.
+// It never trusts a client-supplied header (X-User-ID was spoofable).
 func getUserIDFromContext(r *http.Request) string {
-	if uid := r.Header.Get("X-User-ID"); uid != "" {
+	if uid := sessionUserID(r); uid != "" {
 		return uid
 	}
 	return "default"

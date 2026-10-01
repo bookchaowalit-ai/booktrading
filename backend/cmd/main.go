@@ -399,6 +399,9 @@ func main() {
 
 	// Setup router
 	router := httpadapter.NewRouter(authHandler)
+	// The strategy service calls the Service routes (route_access.go) with the
+	// same shared AUTH_TOKEN the backend uses to call it.
+	router.SetServiceToken(os.Getenv("AUTH_TOKEN"))
 	router.RegisterOrderRoutes(orderHandler)
 	router.RegisterBotRoutes(botHandler)
 	router.RegisterPortfolioRoutes(portfolioHandler)

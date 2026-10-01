@@ -335,8 +335,9 @@ func (h *HealthHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 
 // Router configures HTTP routes
 type Router struct {
-	mux         *http.ServeMux
-	authHandler *AuthHandler
+	mux          *http.ServeMux
+	authHandler  *AuthHandler
+	serviceToken string // strategy AUTH_TOKEN; accepted on Service routes only
 }
 
 // NewRouter creates a new router
@@ -1090,24 +1091,38 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// Enforce authentication on all non-public routes
-	if !isPublicRoute(req.URL.Path) {
+	// Enforce the access matrix (route_access.go) on every route.
+	rule := r.ruleFor(req)
+	level := rule.levelFor(req.Method)
+	if level != AccessPublic {
 		token := extractBearerToken(req)
 		if token == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Unauthorized"})
+			writeAuthError(w, http.StatusUnauthorized, "Unauthorized")
 			return
 		}
-		if _, ok := r.authHandler.ValidateToken(token); !ok {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid or expired token"})
+		if rule.Service && r.isServiceToken(token) {
+			r.mux.ServeHTTP(w, req)
 			return
 		}
+		userID, ok := r.authHandler.ValidateToken(token)
+		if !ok {
+			writeAuthError(w, http.StatusUnauthorized, "Invalid or expired token")
+			return
+		}
+		if level == AccessAdmin && !r.authHandler.IsAdmin(userID) {
+			writeAuthError(w, http.StatusForbidden, "Admin role required")
+			return
+		}
+		req = withUserID(req, userID)
 	}
 
 	r.mux.ServeHTTP(w, req)
+}
+
+func writeAuthError(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
 // getEnv reads an environment variable with a fallback default

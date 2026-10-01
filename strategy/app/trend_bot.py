@@ -22,6 +22,8 @@ from typing import Dict, List, Optional
 
 import httpx
 
+from app.backend_auth import backend_event_hooks
+
 logger = logging.getLogger("trend_bot")
 
 BINANCE_PUBLIC_REST = os.getenv("BINANCE_PRICE_API", "https://api.binance.th")
@@ -156,7 +158,7 @@ class TrendFollowingBot:
 
     async def start(self):
         self._running = True
-        self._http = httpx.AsyncClient(timeout=30)
+        self._http = httpx.AsyncClient(timeout=30, event_hooks=backend_event_hooks())
         await self._load_states()
 
         logger.info("Trend Following Bot started with %d symbols: %s",

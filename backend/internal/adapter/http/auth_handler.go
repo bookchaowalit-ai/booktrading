@@ -436,7 +436,7 @@ func (h *AuthHandler) ValidateToken(token string) (string, bool) {
 // always creates the non-admin "trader" role. A lookup failure counts as
 // not admin.
 func (h *AuthHandler) IsAdmin(userID string) bool {
-	if userID == "" {
+	if userID == "" || h.users == nil {
 		return false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
