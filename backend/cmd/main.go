@@ -465,6 +465,7 @@ func main() {
 		UpstreamURL:  strategyUpstream,
 		ServiceToken: strategyToken,
 		Validate:     authHandler.ValidateToken,
+		IsAdmin:      authHandler.IsAdmin,
 		Timeout:      strategyTimeout,
 	})
 	if err != nil {

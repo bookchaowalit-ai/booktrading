@@ -5,7 +5,7 @@ protection mode) first; nothing here authorizes real-money trading.
 
 ## Current state
 
-**Score: 8.7 / 10** (8.5 after pass 7, 8 after pass 4, 7.5 after pass 3, 7 after pass 2, 6.5 after pass 1, 5 before). Pass 5 closed the last order-safety P0: Bitkub grid orders reconcile through the v3 API instead of pausing the grid, open grid orders are cancelled after a max age, and signal/auto orders reuse the same reconciliation. Pass 4 moved the frontend to Next 15.5 / React 19 with a tracked lockfile, and made grid orders with an unknown outcome reconcile by client order ID instead of re-submitting. Pass 3 fixed failed signal orders being counted as paper trades, made strategy auth fail closed in production, and enforced gofmt/tidy in CI. Pass 2 closed the Go grid P0s (position cap, per-level idempotency, failed orders no longer counted as paper trades) and moved Next to 14.2.35. The three suites (Go, Next.js,
+**Score: 8.8 / 10** (8.7 after pass 8, 8.5 after pass 7, 8 after pass 4, 7.5 after pass 3, 7 after pass 2, 6.5 after pass 1, 5 before). Pass 5 closed the last order-safety P0: Bitkub grid orders reconcile through the v3 API instead of pausing the grid, open grid orders are cancelled after a max age, and signal/auto orders reuse the same reconciliation. Pass 4 moved the frontend to Next 15.5 / React 19 with a tracked lockfile, and made grid orders with an unknown outcome reconcile by client order ID instead of re-submitting. Pass 3 fixed failed signal orders being counted as paper trades, made strategy auth fail closed in production, and enforced gofmt/tidy in CI. Pass 2 closed the Go grid P0s (position cap, per-level idempotency, failed orders no longer counted as paper trades) and moved Next to 14.2.35. The three suites (Go, Next.js,
 strategy Python) are green, and CI now runs the full offline strategy suite.
 Before this pass, the Go race detector flaked in CI, CI ran only 2 of the
 ~50 strategy test files, the paper grid sync crashed with a `NameError` it
@@ -37,9 +37,10 @@ could reset the kill switch without authentication.
   any accepted order as a fill.
 - Make `gridOrderMaxAge` (15 min) configurable per bot start.
 
-- The strategy service still publishes `8001:8000` on all host interfaces in
-  `docker-compose.yml` (prod binds 127.0.0.1). Bind it to localhost or drop
-  the port now that the browser reaches it only via the backend proxy.
+- Users live only in `AuthHandler` memory (lost on restart; the `users`
+  table from migration 008 is unused). Persist them, then add an admin-only
+  role management endpoint; today the only admin is the
+  `FIRST_ADMIN_EMAIL`/`FIRST_ADMIN_PASSWORD` bootstrap account.
 
 ### P2
 - The proxy allow-list (`strategyAllowedSections`) must be extended when the
@@ -58,7 +59,28 @@ could reset the kill switch without authentication.
   no tests. Add table tests around order request construction, using fake
   HTTP servers only.
 
-## Done in this pass (pass 8: backend strategy proxy, P1 closed)
+## Done in this pass (pass 9: admin-only strategy controls)
+- `/strategy-api/*` now enforces roles: every GET/HEAD in the allow-list is a
+  read for any authenticated user; every write method is admin-only and
+  returns 403 before any upstream call (kill/enable/restart, real-grid config
+  PUT, strategy config/reset, risk reset, brain refresh/reset-cb, paper
+  kill-switch resets, backtest run/sweep/compare/walk-forward, airdrop-tracker
+  writes, signal evaluation). Fail-closed: a new upstream write route is
+  admin-only until reclassified; a proxy built without `IsAdmin` denies all
+  writes. The route table lives in the `strategy_proxy.go` doc comment.
+- Role source: the existing `authUser.Role` (`admin` only for the
+  `FIRST_ADMIN_EMAIL` env bootstrap, `trader` for self-registration, so no
+  migration was needed). An email-list bootstrap (`ADMIN_EMAILS`) was not
+  added because registration is open and unverified: it would let anyone
+  who registers such an address first become admin.
+- `docker-compose.yml` publishes the strategy service on `127.0.0.1:8001`
+  only.
+- Frontend: `isAdmin()` in `services/auth.ts`; the monitoring page disables
+  the kill/enable buttons for non-admins.
+- Verified: gofmt, go vet, `go test -race ./...`, golangci-lint (no new
+  findings; 70 pre-existing), vitest 53, tsc, `next build`.
+
+## Done in pass 8: backend strategy proxy, P1 closed
 - P1 "strategy auth vs. browser sessions" done: the Go backend serves
   `/strategy-api/*` (`backend/internal/adapter/http/strategy_proxy.go`). It
   validates the session with `AuthHandler.ValidateToken` (the router's auth

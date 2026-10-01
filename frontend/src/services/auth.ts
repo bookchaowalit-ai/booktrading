@@ -106,6 +106,15 @@ export function getCurrentUser(): User | null {
 }
 
 /**
+ * Whether a user may use admin-only strategy controls (kill switch, config
+ * writes, backtests, tracker writes). The backend enforces this with a 403;
+ * the UI only hides/disables controls so non-admins are not offered them.
+ */
+export function isAdmin(user: Pick<User, 'role'> | null | undefined = getCurrentUser()): boolean {
+  return user?.role === 'admin';
+}
+
+/**
  * Check if user is authenticated
  */
 export function isAuthenticated(): boolean {

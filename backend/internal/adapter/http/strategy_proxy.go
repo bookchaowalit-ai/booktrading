@@ -52,6 +52,39 @@ var strategyAllowedSections = map[string]bool{
 	"strategy":        true,
 }
 
+// Route classification (derived from strategy/infrastructure/api/app.py).
+//
+// Read routes: every GET/HEAD inside an allowed section (status, config,
+// journal, reports, market intel, tracker listings, ...). Any authenticated
+// user may call them.
+//
+// Privileged routes: every state-changing method. In the current route list
+// these are, all admin-only:
+//
+//	POST   /api/real-grid/kill | enable | restart     (kill switch / trading control)
+//	PUT    /api/real-grid/config/{symbol}             (live grid config)
+//	POST   /api/strategy/config | reset               (strategy config writes)
+//	POST   /api/risk/reset                            (risk halt reset)
+//	POST   /api/brain/refresh | reset-cb              (circuit breaker)
+//	POST   /api/poly-paper/reset-kill-switch
+//	POST   /api/arb-paper/reset
+//	POST   /api/backtest | backtest/run | sweep | compare | walk-forward
+//	POST/PATCH/DELETE /api/airdrop-tracker/tasks...   (tracker writes)
+//	POST   /api/signal-tracker/evaluate               (outbound price fetch + writes)
+//
+// The /api/v1/world import route is outside the allow-list entirely. The rule
+// is fail-closed: a new write route added upstream is admin-only until it is
+// deliberately reclassified here.
+
+// RoleAdmin is the user role allowed to call privileged strategy routes.
+const RoleAdmin = "admin"
+
+// strategyRouteIsPrivileged reports whether a proxied request needs the
+// admin role. Reads are open to any authenticated user; all writes are not.
+func strategyRouteIsPrivileged(method string) bool {
+	return method != http.MethodGet && method != http.MethodHead
+}
+
 // StrategyProxy forwards authenticated browser calls under /strategy-api/* to
 // the strategy service. The caller's session token is validated here and
 // never forwarded; the upstream receives the server-side service token
@@ -60,6 +93,7 @@ type StrategyProxy struct {
 	upstream     *url.URL
 	serviceToken string
 	validate     func(token string) (string, bool)
+	isAdmin      func(userID string) bool
 	timeout      time.Duration
 	maxBody      int64
 	proxy        *httputil.ReverseProxy
@@ -73,6 +107,9 @@ type StrategyProxyConfig struct {
 	ServiceToken string
 	// Validate checks a user session token (AuthHandler.ValidateToken).
 	Validate func(token string) (string, bool)
+	// IsAdmin reports whether a validated user may call privileged routes
+	// (AuthHandler.IsAdmin). Nil denies every privileged route.
+	IsAdmin func(userID string) bool
 	// Timeout bounds one proxied request (default DefaultStrategyProxyTimeout).
 	Timeout time.Duration
 	// MaxBody caps the request body (default DefaultStrategyProxyMaxBody).
@@ -101,6 +138,7 @@ func NewStrategyProxy(cfg StrategyProxyConfig) (*StrategyProxy, error) {
 		upstream:     u,
 		serviceToken: cfg.ServiceToken,
 		validate:     cfg.Validate,
+		isAdmin:      cfg.IsAdmin,
 		timeout:      cfg.Timeout,
 		maxBody:      cfg.MaxBody,
 	}
@@ -180,8 +218,13 @@ func (p *StrategyProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeProxyError(w, http.StatusUnauthorized, "Unauthorized")
 			return
 		}
-		if _, ok := p.validate(token); !ok {
+		userID, ok := p.validate(token)
+		if !ok {
 			writeProxyError(w, http.StatusUnauthorized, "Invalid or expired token")
+			return
+		}
+		if strategyRouteIsPrivileged(r.Method) && (p.isAdmin == nil || !p.isAdmin(userID)) {
+			writeProxyError(w, http.StatusForbidden, "Admin role required")
 			return
 		}
 	}

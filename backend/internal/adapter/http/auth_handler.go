@@ -123,7 +123,7 @@ func NewAuthHandler(store sessionStore) *AuthHandler {
 				ID:           "1",
 				Email:        adminEmail,
 				Name:         envOrDefault("FIRST_ADMIN_NAME", "Admin"),
-				Role:         "admin",
+				Role:         RoleAdmin,
 				PasswordHash: string(hash),
 			})
 			logger.Info("Default admin user created from environment variables")
@@ -307,6 +307,23 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 // ValidateToken checks if the given token is valid and returns the associated userID
 func (h *AuthHandler) ValidateToken(token string) (string, bool) {
 	return h.sessions.GetSession(context.Background(), token)
+}
+
+// IsAdmin reports whether userID belongs to a user with the admin role.
+// Only the FIRST_ADMIN_EMAIL bootstrap account is admin; self-registration
+// always creates the non-admin "trader" role.
+func (h *AuthHandler) IsAdmin(userID string) bool {
+	if userID == "" {
+		return false
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for i := range h.users {
+		if h.users[i].ID == userID {
+			return h.users[i].Role == RoleAdmin
+		}
+	}
+	return false
 }
 
 // extractBearerToken gets the token from Authorization header only (NOT query params for security)

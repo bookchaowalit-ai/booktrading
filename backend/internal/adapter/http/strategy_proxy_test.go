@@ -15,6 +15,7 @@ import (
 const (
 	testServiceToken = "fixture-service-token"
 	testUserSession  = "fixture-user-session"
+	testTraderSess   = "fixture-trader-session"
 )
 
 type upstreamRecorder struct {
@@ -56,10 +57,16 @@ func newTestStrategyProxy(t *testing.T, upstream string, timeout time.Duration) 
 	t.Helper()
 	sessions := &memorySessionStore{}
 	_ = sessions.SetSession(context.Background(), testUserSession, "fixture-user", time.Hour)
+	_ = sessions.SetSession(context.Background(), testTraderSess, "fixture-trader", time.Hour)
+	auth := &AuthHandler{sessions: sessions, users: []authUser{
+		{ID: "fixture-user", Email: "admin@example.test", Role: RoleAdmin},
+		{ID: "fixture-trader", Email: "trader@example.test", Role: "trader"},
+	}}
 	p, err := NewStrategyProxy(StrategyProxyConfig{
 		UpstreamURL:  upstream,
 		ServiceToken: testServiceToken,
-		Validate:     (&AuthHandler{sessions: sessions}).ValidateToken,
+		Validate:     auth.ValidateToken,
+		IsAdmin:      auth.IsAdmin,
 		Timeout:      timeout,
 		MaxBody:      64,
 	})
@@ -254,6 +261,119 @@ func TestStrategyProxyUpstreamValidation(t *testing.T) {
 
 // setRawPath sets the request path from an already-escaped form, the way the
 // server would parse it off the wire.
+// privilegedStrategyRoutes mirrors the write routes of the strategy service
+// that are reachable through the allow-list.
+var privilegedStrategyRoutes = []struct{ method, path string }{
+	{http.MethodPost, "/strategy-api/api/real-grid/kill"},
+	{http.MethodPost, "/strategy-api/api/real-grid/enable"},
+	{http.MethodPost, "/strategy-api/api/real-grid/restart"},
+	{http.MethodPut, "/strategy-api/api/real-grid/config/BTCTHB"},
+	{http.MethodPost, "/strategy-api/api/strategy/config"},
+	{http.MethodPost, "/strategy-api/api/strategy/reset"},
+	{http.MethodPost, "/strategy-api/api/risk/reset"},
+	{http.MethodPost, "/strategy-api/api/brain/refresh"},
+	{http.MethodPost, "/strategy-api/api/brain/reset-cb"},
+	{http.MethodPost, "/strategy-api/api/poly-paper/reset-kill-switch"},
+	{http.MethodPost, "/strategy-api/api/arb-paper/reset"},
+	{http.MethodPost, "/strategy-api/api/backtest"},
+	{http.MethodPost, "/strategy-api/api/backtest/run"},
+	{http.MethodPost, "/strategy-api/api/backtest/sweep"},
+	{http.MethodPost, "/strategy-api/api/backtest/compare"},
+	{http.MethodPost, "/strategy-api/api/backtest/walk-forward"},
+	{http.MethodPost, "/strategy-api/api/airdrop-tracker/tasks"},
+	{http.MethodPatch, "/strategy-api/api/airdrop-tracker/tasks/t1"},
+	{http.MethodPatch, "/strategy-api/api/airdrop-tracker/tasks/t1/subtasks/0"},
+	{http.MethodDelete, "/strategy-api/api/airdrop-tracker/tasks/t1"},
+	{http.MethodPost, "/strategy-api/api/signal-tracker/evaluate"},
+}
+
+func TestStrategyProxyPrivilegedRoutesRequireAdmin(t *testing.T) {
+	rec := &upstreamRecorder{}
+	srv := newStrategyUpstream(t, rec)
+	p := newTestStrategyProxy(t, srv.URL, time.Second)
+
+	for _, rt := range privilegedStrategyRoutes {
+		req := httptest.NewRequest(rt.method, rt.path, strings.NewReader(`{}`))
+		req.Header.Set("Authorization", "Bearer "+testTraderSess)
+		w := httptest.NewRecorder()
+		p.ServeHTTP(w, req)
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("trader %s %s: status %d, want 403", rt.method, rt.path, w.Code)
+		}
+	}
+	if n := rec.calls.Load(); n != 0 {
+		t.Fatalf("upstream called %d times for forbidden requests", n)
+	}
+
+	for _, rt := range privilegedStrategyRoutes {
+		req := httptest.NewRequest(rt.method, rt.path, strings.NewReader(`{}`))
+		req.Header.Set("Authorization", "Bearer "+testUserSession)
+		w := httptest.NewRecorder()
+		p.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("admin %s %s: status %d, want 200", rt.method, rt.path, w.Code)
+		}
+	}
+	if n := int(rec.calls.Load()); n != len(privilegedStrategyRoutes) {
+		t.Fatalf("upstream calls = %d, want %d", n, len(privilegedStrategyRoutes))
+	}
+}
+
+func TestStrategyProxyReadRoutesOpenToAnyUser(t *testing.T) {
+	rec := &upstreamRecorder{}
+	srv := newStrategyUpstream(t, rec)
+	p := newTestStrategyProxy(t, srv.URL, time.Second)
+
+	for _, path := range []string{
+		"/strategy-api/api/real-grid/status",
+		"/strategy-api/api/real-grid/config/BTCTHB",
+		"/strategy-api/api/strategy/config",
+		"/strategy-api/api/airdrop-tracker/tasks",
+		"/strategy-api/api/command-center",
+	} {
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			req := httptest.NewRequest(method, path, nil)
+			req.Header.Set("Authorization", "Bearer "+testTraderSess)
+			w := httptest.NewRecorder()
+			p.ServeHTTP(w, req)
+			if w.Code != http.StatusOK {
+				t.Fatalf("trader %s %s: status %d, want 200", method, path, w.Code)
+			}
+		}
+	}
+}
+
+func TestStrategyProxyWithoutRoleCheckDeniesWrites(t *testing.T) {
+	rec := &upstreamRecorder{}
+	srv := newStrategyUpstream(t, rec)
+	sessions := &memorySessionStore{}
+	_ = sessions.SetSession(context.Background(), testUserSession, "fixture-user", time.Hour)
+	p, err := NewStrategyProxy(StrategyProxyConfig{
+		UpstreamURL: srv.URL,
+		Validate:    (&AuthHandler{sessions: sessions}).ValidateToken,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/strategy-api/api/real-grid/kill", nil)
+	req.Header.Set("Authorization", "Bearer "+testUserSession)
+	w := httptest.NewRecorder()
+	p.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden || rec.calls.Load() != 0 {
+		t.Fatalf("status %d calls %d, want 403 and no upstream call", w.Code, rec.calls.Load())
+	}
+}
+
+func TestAuthHandlerIsAdmin(t *testing.T) {
+	h := &AuthHandler{users: []authUser{
+		{ID: "a", Role: RoleAdmin},
+		{ID: "b", Role: "trader"},
+	}}
+	if !h.IsAdmin("a") || h.IsAdmin("b") || h.IsAdmin("") || h.IsAdmin("missing") {
+		t.Fatal("IsAdmin classification wrong")
+	}
+}
+
 func setRawPath(r *http.Request, escaped string) error {
 	u, err := url.Parse(escaped)
 	if err != nil {
