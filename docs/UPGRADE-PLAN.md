@@ -5,7 +5,7 @@ protection mode) first; nothing here authorizes real-money trading.
 
 ## Current state
 
-**Score: 8.8 / 10** (8.7 after pass 8, 8.5 after pass 7, 8 after pass 4, 7.5 after pass 3, 7 after pass 2, 6.5 after pass 1, 5 before). Pass 5 closed the last order-safety P0: Bitkub grid orders reconcile through the v3 API instead of pausing the grid, open grid orders are cancelled after a max age, and signal/auto orders reuse the same reconciliation. Pass 4 moved the frontend to Next 15.5 / React 19 with a tracked lockfile, and made grid orders with an unknown outcome reconcile by client order ID instead of re-submitting. Pass 3 fixed failed signal orders being counted as paper trades, made strategy auth fail closed in production, and enforced gofmt/tidy in CI. Pass 2 closed the Go grid P0s (position cap, per-level idempotency, failed orders no longer counted as paper trades) and moved Next to 14.2.35. The three suites (Go, Next.js,
+**Score: 8.9 / 10** (8.8 after pass 9, 8.7 after pass 8, 8.5 after pass 7, 8 after pass 4, 7.5 after pass 3, 7 after pass 2, 6.5 after pass 1, 5 before). Pass 5 closed the last order-safety P0: Bitkub grid orders reconcile through the v3 API instead of pausing the grid, open grid orders are cancelled after a max age, and signal/auto orders reuse the same reconciliation. Pass 4 moved the frontend to Next 15.5 / React 19 with a tracked lockfile, and made grid orders with an unknown outcome reconcile by client order ID instead of re-submitting. Pass 3 fixed failed signal orders being counted as paper trades, made strategy auth fail closed in production, and enforced gofmt/tidy in CI. Pass 2 closed the Go grid P0s (position cap, per-level idempotency, failed orders no longer counted as paper trades) and moved Next to 14.2.35. The three suites (Go, Next.js,
 strategy Python) are green, and CI now runs the full offline strategy suite.
 Before this pass, the Go race detector flaked in CI, CI ran only 2 of the
 ~50 strategy test files, the paper grid sync crashed with a `NameError` it
@@ -37,10 +37,13 @@ could reset the kill switch without authentication.
   any accepted order as a fill.
 - Make `gridOrderMaxAge` (15 min) configurable per bot start.
 
-- Users live only in `AuthHandler` memory (lost on restart; the `users`
-  table from migration 008 is unused). Persist them, then add an admin-only
-  role management endpoint; today the only admin is the
+- Admin-only role management endpoint; today the only admin is the
   `FIRST_ADMIN_EMAIL`/`FIRST_ADMIN_PASSWORD` bootstrap account.
+- Users table has no DB-backed test in CI: `users_db_test.go` runs only with
+  `BOOKTRADING_TEST_DATABASE_URL`. Add a CI step that runs `cmd/migrate up`
+  on the timescale service container and sets that variable.
+- Login answers faster for unknown emails than for wrong passwords (no
+  bcrypt work), which leaks account existence; compare against a dummy hash.
 
 ### P2
 - The proxy allow-list (`strategyAllowedSections`) must be extended when the
@@ -59,7 +62,28 @@ could reset the kill switch without authentication.
   no tests. Add table tests around order request construction, using fake
   HTTP servers only.
 
-## Done in this pass (pass 9: admin-only strategy controls)
+## Done in this pass (pass 10: persistent users)
+- Accounts persist in the `users` table (migration 008, previously unused):
+  `database.UserRepository` (pgx; duplicate email -> `ErrEmailTaken`),
+  wired in `cmd/main.go` via `NewAuthHandlerWithUsers`; sessions stay in
+  Redis. `AuthHandler` talks to a `UserStore` interface with an in-memory
+  fallback for tests. Emails are trimmed and lower-cased. The DEX tables'
+  `REFERENCES users(id)` and `fk_orders_user_id` now have real rows to point
+  at.
+- `FIRST_ADMIN_*` bootstrap keeps its semantics across restarts: created
+  once (ID "1" when free, so data it owns keeps its owner), its password
+  follows `FIRST_ADMIN_PASSWORD`, and a self-registered non-admin account
+  holding that email is never promoted (registration does not verify
+  email). A user-store outage fails closed (login 500, `IsAdmin` false).
+- Tests: restart survival, idempotent bootstrap, env password change,
+  squatted admin email, ID "1" taken, store outage (fake store); repository
+  test against Postgres 16 with migration 008 applied (env-gated).
+- Deploy note: users registered before this pass were in memory only and
+  must register again; migration 008 must be applied or login returns 500.
+- Verified: gofmt, go vet, `go test -race ./...`, golangci-lint (70 issues,
+  same as before; none new), DB test on Postgres 16.
+
+## Done in pass 9: admin-only strategy controls
 - `/strategy-api/*` now enforces roles: every GET/HEAD in the allow-list is a
   read for any authenticated user; every write method is admin-only and
   returns 403 before any upstream call (kill/enable/restart, real-grid config
