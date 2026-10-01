@@ -48,6 +48,15 @@ A rejected sign-up answers `403` with `{"error": "...", "code":
 "registration_closed"}` or `{"code": "invite_invalid"}`. Wrong invite codes
 count toward the per-IP login lockout (5 failures, then `429` for 15 min).
 
+### Login lockout
+`POST /api/auth/login` answers `429` with `Retry-After` and a generic
+`{"error": "Too many login attempts. Try again later."}` after 5 failures
+from one client IP or 10 failures against one email (from any IPs) within
+15 minutes; the block lasts 15 minutes. Unknown emails are counted the same
+way, so the response does not reveal whether an account exists. The client
+IP comes from `X-Forwarded-For` / `X-Real-IP` only when the TCP peer is in
+`TRUSTED_PROXIES` (default: loopback and private ranges, i.e. Caddy).
+
 ### Admin-only routes
 Writes that move money or change server-wide state (orders, exchange keys,
 bots, settings, paper reset, risk config) and audit-log reads need the admin

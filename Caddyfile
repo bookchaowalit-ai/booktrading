@@ -1,26 +1,39 @@
 # Caddy Reverse Proxy Configuration
 # Automatic HTTPS with Let's Encrypt
+#
+# Every upstream gets X-Real-IP set to the client's TCP address (overwriting
+# anything the client sent). The backend honors X-Real-IP / X-Forwarded-For
+# only from TRUSTED_PROXIES (default: loopback + private Docker ranges), so
+# login lockout and rate limits key on the real client, not on Caddy.
 
 your-domain.com {
     # Frontend (Next.js)
     handle /* {
-        reverse_proxy frontend:3000
+        reverse_proxy frontend:3000 {
+            header_up X-Real-IP {remote_host}
+        }
     }
 
     # Backend API
     handle /api/* {
-        reverse_proxy backend:8080
+        reverse_proxy backend:8080 {
+            header_up X-Real-IP {remote_host}
+        }
     }
 
     # WebSocket
     handle /ws {
-        reverse_proxy backend:8081
+        reverse_proxy backend:8081 {
+            header_up X-Real-IP {remote_host}
+        }
     }
 
     # Strategy Service API: proxied by the backend, which checks the user
     # session and injects AUTH_TOKEN. Never route the browser to strategy:8000.
     handle /strategy-api/* {
-        reverse_proxy backend:8080
+        reverse_proxy backend:8080 {
+            header_up X-Real-IP {remote_host}
+        }
     }
 
     # Health check endpoint
@@ -30,7 +43,9 @@ your-domain.com {
 
     # Default - Frontend
     handle {
-        reverse_proxy frontend:3000
+        reverse_proxy frontend:3000 {
+            header_up X-Real-IP {remote_host}
+        }
     }
 
     # TLS settings (automatic with Let's Encrypt)

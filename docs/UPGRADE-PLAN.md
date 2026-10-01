@@ -5,7 +5,7 @@ protection mode) first; nothing here authorizes real-money trading.
 
 ## Current state
 
-**Score: 9.1 / 10** (9.0 after pass 11, 8.9 after pass 10, 8.8 after pass 9, 8.7 after pass 8, 8.5 after pass 7, 8 after pass 4, 7.5 after pass 3, 7 after pass 2, 6.5 after pass 1, 5 before). Pass 5 closed the last order-safety P0: Bitkub grid orders reconcile through the v3 API instead of pausing the grid, open grid orders are cancelled after a max age, and signal/auto orders reuse the same reconciliation. Pass 4 moved the frontend to Next 15.5 / React 19 with a tracked lockfile, and made grid orders with an unknown outcome reconcile by client order ID instead of re-submitting. Pass 3 fixed failed signal orders being counted as paper trades, made strategy auth fail closed in production, and enforced gofmt/tidy in CI. Pass 2 closed the Go grid P0s (position cap, per-level idempotency, failed orders no longer counted as paper trades) and moved Next to 14.2.35. The three suites (Go, Next.js,
+**Score: 9.2 / 10** (9.1 after pass 12, 9.0 after pass 11, 8.9 after pass 10, 8.8 after pass 9, 8.7 after pass 8, 8.5 after pass 7, 8 after pass 4, 7.5 after pass 3, 7 after pass 2, 6.5 after pass 1, 5 before). Pass 5 closed the last order-safety P0: Bitkub grid orders reconcile through the v3 API instead of pausing the grid, open grid orders are cancelled after a max age, and signal/auto orders reuse the same reconciliation. Pass 4 moved the frontend to Next 15.5 / React 19 with a tracked lockfile, and made grid orders with an unknown outcome reconcile by client order ID instead of re-submitting. Pass 3 fixed failed signal orders being counted as paper trades, made strategy auth fail closed in production, and enforced gofmt/tidy in CI. Pass 2 closed the Go grid P0s (position cap, per-level idempotency, failed orders no longer counted as paper trades) and moved Next to 14.2.35. The three suites (Go, Next.js,
 strategy Python) are green, and CI now runs the full offline strategy suite.
 Before this pass, the Go race detector flaked in CI, CI ran only 2 of the
 ~50 strategy test files, the paper grid sync crashed with a `NameError` it
@@ -44,9 +44,11 @@ could reset the kill switch without authentication.
   on the timescale service container and sets that variable.
 - Login answers faster for unknown emails than for wrong passwords (no
   bcrypt work), which leaks account existence; compare against a dummy hash.
-- Login/invite lockout is per process and keyed by `X-Real-IP`, which the
-  backend trusts as sent; move it to Redis and trust the header only from
-  the Caddy hop.
+- Login/invite lockout (per IP and per account) is in process memory: it
+  resets on restart and is not shared between replicas. Move it to Redis.
+- Per-account lockout lets anyone lock a known email for 15 minutes with
+  10 wrong passwords (including the admin's). If that is abused, add a
+  per-(IP, account) tier or a CAPTCHA instead of raising the threshold.
 
 ### P2
 - If registration is ever opened in production (`ALLOW_REGISTRATION=true`),
@@ -70,7 +72,34 @@ could reset the kill switch without authentication.
   no tests. Add table tests around order request construction, using fake
   HTTP servers only.
 
-## Done in this pass (pass 12: registration gate, 403 UX)
+## Done in this pass (pass 13: client IP trust, account lockout)
+- Forwarding headers are trusted only from `TRUSTED_PROXIES` (CIDRs/IPs or
+  `*`; default loopback + private ranges, i.e. the Caddy/Next.js
+  containers). X-Forwarded-For is walked right-to-left (first untrusted hop),
+  X-Real-IP is the fallback. One helper (`client_ip.go`) now feeds the login
+  lockout, the global rate limiter and audit logs. Before, any client could
+  rotate `X-Real-IP` to dodge the lockout, and header-less traffic through a
+  proxy shared one bucket, so 5 bad logins locked everyone (admin included).
+- The Caddyfile sets `header_up X-Real-IP {remote_host}` on every upstream;
+  `TRUSTED_PROXIES` is passed through both compose files and documented in
+  `.env.example`.
+- Per-account lockout: 10 failures against one normalized email (from any
+  IPs) block that email for 15 minutes, on top of the per-IP 5. Unknown
+  emails are tracked the same way and every lockout answers the same generic
+  429 with `Retry-After`, so it does not reveal whether an account exists. A
+  successful login clears the account counter but no longer the IP counter
+  (an attacker could otherwise refill the IP budget with their own account).
+  The attempt map is pruned past 100k keys.
+- `GET /api/market-intel/scan` (outbound scans + signal writes) is now
+  `POST` + `@auth_required`, so the `/strategy-api` proxy makes it admin-only;
+  the frontend service, route matrix, proxy privileged-route list and tests
+  were updated.
+- Tests (all fail on the previous code): `login_lockout_test.go` (spoofed
+  headers, shared proxy, trusted-proxy parsing, per-account lockout with the
+  admin still able to log in, IP budget not refilled by success);
+  `test_market_intel_scan_is_a_protected_post`; the frontend scan call.
+
+## Done in pass 12: registration gate, 403 UX
 - Owner decision resolved: self-registration is **closed by default when
   `ENVIRONMENT=production`** and open in development. `ALLOW_REGISTRATION`
   (true/false; unparsable fails closed) overrides; `REGISTRATION_INVITE_CODE`

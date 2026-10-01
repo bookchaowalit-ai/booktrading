@@ -2,7 +2,6 @@ package http
 
 import (
 	"encoding/json"
-	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -1032,21 +1031,10 @@ func (rl *rateLimiter) Allow(key string) bool {
 // requests for 10+ paper symbols + 5 real symbols + balance/ticker queries
 var globalRateLimiter = newRateLimiter(1000, time.Minute, 10000)
 
-// extractClientIP extracts the real client IP from the request.
-// Behind a trusted proxy, use X-Real-IP (set by the proxy, not the client).
-// Never trust X-Forwarded-For from untrusted sources.
+// extractClientIP extracts the real client IP for the global rate limiter.
+// Forwarding headers count only from TRUSTED_PROXIES; see clientIPFromRequest.
 func extractClientIP(r *http.Request) string {
-	// If behind a trusted reverse proxy (Caddy/nginx), X-Real-IP is set by the proxy
-	if ip := r.Header.Get("X-Real-IP"); ip != "" {
-		return ip
-	}
-
-	// Fallback to RemoteAddr (strips port if present)
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
+	return clientIPFromRequest(r)
 }
 
 // ServeHTTP implements http.Handler

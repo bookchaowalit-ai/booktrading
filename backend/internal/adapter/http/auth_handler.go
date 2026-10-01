@@ -8,9 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -144,7 +144,7 @@ type AuthHandler struct {
 	mu            sync.RWMutex
 	users         UserStore
 	sessions      sessionStore
-	loginAttempts map[string]*loginAttempt // IP -> attempt tracking
+	loginAttempts map[string]*loginAttempt // "ip:<ip>" / "acct:<email>" -> attempt tracking
 	loginMu       sync.Mutex               // separate lock for login attempts
 	registration  RegistrationPolicy       // who may self-register (guarded by mu)
 }
@@ -301,15 +301,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Rate limit login attempts per IP (5 attempts per 15 minutes, then 15 min block)
+	// Rate limit login attempts per IP (5 failures per 15 minutes, then a
+	// 15 minute block) and per account (see accountMaxAttempts).
 	clientIP := extractClientIPForLogin(r)
 	if blocked, remaining := h.checkLoginRate(clientIP); blocked {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Retry-After", "900")
-		w.WriteHeader(http.StatusTooManyRequests)
-		json.NewEncoder(w).Encode(map[string]string{
-			"error": fmt.Sprintf("Too many login attempts. Try again in %d minutes.", remaining/60+1),
-		})
+		writeLoginRateLimited(w, remaining)
 		return
 	}
 
@@ -321,6 +317,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Checked before the password so a locked account cannot be guessed;
+	// unknown emails are tracked too, so the 429 reveals nothing.
+	if blocked, remaining := h.checkAccountRate(req.Email); blocked {
+		writeLoginRateLimited(w, remaining)
+		return
+	}
+
 	found, err := h.users.GetUserByEmail(r.Context(), normalizeEmail(req.Email))
 	if err != nil && !errors.Is(err, database.ErrUserNotFound) {
 		logger.Error("Login user lookup failed", "error", err)
@@ -328,16 +331,17 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if found == nil || bcrypt.CompareHashAndPassword([]byte(found.PasswordHash), []byte(req.Password)) != nil {
-		// Record failed attempt for rate limiting
+		// Record the failure against both the IP and the account.
 		h.recordFailedLogin(clientIP)
+		h.recordFailedAccountLogin(req.Email)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid email or password"})
 		return
 	}
 
-	// Successful login - reset attempt counter
-	h.resetLoginAttempts(clientIP)
+	// Successful login: clear the account counter (the IP budget stays).
+	h.resetAccountAttempts(req.Email)
 
 	token, err := generateToken()
 	if err != nil {
@@ -595,63 +599,122 @@ func generateID() string {
 // ── Login Rate Limiting ──────────────────────────────────────────────
 
 // extractClientIPForLogin extracts the client IP for login rate limiting.
-// Uses X-Real-IP (set by trusted proxy) or falls back to RemoteAddr.
+// Forwarding headers count only from TRUSTED_PROXIES; see clientIPFromRequest.
 func extractClientIPForLogin(r *http.Request) string {
-	if ip := r.Header.Get("X-Real-IP"); ip != "" {
-		return ip
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
+	return clientIPFromRequest(r)
 }
 
 const (
+	// loginMaxAttempts failures from one IP within loginWindowMinutes block
+	// that IP for loginBlockMinutes (logins and invite codes share the
+	// budget).
 	loginMaxAttempts   = 5
 	loginWindowMinutes = 15
 	loginBlockMinutes  = 15
+	// accountMaxAttempts failures against one email (from any IPs) block
+	// logins to that email. It is higher than the per-IP limit so a single
+	// IP's typos never lock the account, while rotating IPs cannot brute-force
+	// one password. Unknown emails are tracked the same way, so a lockout
+	// does not reveal whether an account exists.
+	accountMaxAttempts = 10
+	// maxTrackedLoginKeys bounds the attempt map; stale entries are pruned
+	// when it is exceeded.
+	maxTrackedLoginKeys = 100000
 )
 
-// checkLoginRate returns (blocked, remainingSeconds). An IP is blocked for
-// loginBlockMinutes once it reaches loginMaxAttempts failures within
-// loginWindowMinutes.
+// loginRateLimitMessage is the same for IP and account lockouts and for
+// existing and unknown emails.
+const loginRateLimitMessage = "Too many login attempts. Try again later."
+
+func ipLoginKey(ip string) string { return "ip:" + ip }
+
+func accountLoginKey(email string) string { return "acct:" + normalizeEmail(email) }
+
+// writeLoginRateLimited sends the generic 429 for a blocked login.
+func writeLoginRateLimited(w http.ResponseWriter, remaining int) {
+	if remaining < 1 {
+		remaining = 1
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", strconv.Itoa(remaining))
+	w.WriteHeader(http.StatusTooManyRequests)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": loginRateLimitMessage})
+}
+
+// checkLoginRate reports whether the client IP is blocked; see checkLoginKey.
 func (h *AuthHandler) checkLoginRate(ip string) (bool, int) {
+	return h.checkLoginKey(ipLoginKey(ip), loginMaxAttempts)
+}
+
+// recordFailedLogin counts a failed login or invite code for the client IP.
+func (h *AuthHandler) recordFailedLogin(ip string) {
+	h.recordFailedKey(ipLoginKey(ip), loginMaxAttempts)
+}
+
+// checkAccountRate reports whether logins to email are blocked.
+func (h *AuthHandler) checkAccountRate(email string) (bool, int) {
+	return h.checkLoginKey(accountLoginKey(email), accountMaxAttempts)
+}
+
+// recordFailedAccountLogin counts a failed login against email.
+func (h *AuthHandler) recordFailedAccountLogin(email string) {
+	h.recordFailedKey(accountLoginKey(email), accountMaxAttempts)
+}
+
+// resetAccountAttempts clears the counter for email after a successful login.
+// The per-IP counter is deliberately left alone: otherwise an attacker could
+// interleave logins to their own account to reset the IP budget while
+// spraying passwords across other accounts.
+func (h *AuthHandler) resetAccountAttempts(email string) {
+	h.loginMu.Lock()
+	defer h.loginMu.Unlock()
+	delete(h.loginAttempts, accountLoginKey(email))
+}
+
+// checkLoginKey returns (blocked, remainingSeconds). A key is blocked for
+// loginBlockMinutes once it reaches max failures within loginWindowMinutes.
+func (h *AuthHandler) checkLoginKey(key string, max int) (bool, int) {
 	h.loginMu.Lock()
 	defer h.loginMu.Unlock()
 
 	now := time.Now()
-	attempt, exists := h.loginAttempts[ip]
+	attempt, exists := h.loginAttempts[key]
 	if !exists {
 		return false, 0
 	}
 
-	if attempt.count >= loginMaxAttempts {
+	if attempt.count >= max {
 		if now.Before(attempt.blockedUntil) {
 			return true, int(attempt.blockedUntil.Sub(now).Seconds())
 		}
 		// Block served: start over.
-		delete(h.loginAttempts, ip)
+		delete(h.loginAttempts, key)
 		return false, 0
 	}
 
 	// Failures older than the window no longer count.
 	if now.After(attempt.lastReset.Add(loginWindowMinutes * time.Minute)) {
-		delete(h.loginAttempts, ip)
+		delete(h.loginAttempts, key)
 	}
 	return false, 0
 }
 
-// recordFailedLogin increments the failed attempt counter for an IP
-func (h *AuthHandler) recordFailedLogin(ip string) {
+// recordFailedKey increments the failed attempt counter for key.
+func (h *AuthHandler) recordFailedKey(key string, max int) {
 	h.loginMu.Lock()
 	defer h.loginMu.Unlock()
 
 	now := time.Now()
-	attempt, exists := h.loginAttempts[ip]
+	attempt, exists := h.loginAttempts[key]
+	if exists && attempt.count < max && now.After(attempt.lastReset.Add(loginWindowMinutes*time.Minute)) {
+		exists = false // window elapsed: start a fresh count
+	}
 
 	if !exists {
-		h.loginAttempts[ip] = &loginAttempt{
+		if len(h.loginAttempts) >= maxTrackedLoginKeys {
+			h.pruneLoginAttemptsLocked(now)
+		}
+		h.loginAttempts[key] = &loginAttempt{
 			count:        1,
 			lastReset:    now,
 			blockedUntil: now,
@@ -662,14 +725,17 @@ func (h *AuthHandler) recordFailedLogin(ip string) {
 	attempt.count++
 
 	// If max attempts reached, set block period
-	if attempt.count >= loginMaxAttempts {
+	if attempt.count >= max {
 		attempt.blockedUntil = now.Add(loginBlockMinutes * time.Minute)
 	}
 }
 
-// resetLoginAttempts clears the failed attempt counter for an IP (successful login)
-func (h *AuthHandler) resetLoginAttempts(ip string) {
-	h.loginMu.Lock()
-	defer h.loginMu.Unlock()
-	delete(h.loginAttempts, ip)
+// pruneLoginAttemptsLocked drops entries that are neither blocked nor inside
+// their counting window. Callers hold loginMu.
+func (h *AuthHandler) pruneLoginAttemptsLocked(now time.Time) {
+	for k, a := range h.loginAttempts {
+		if now.After(a.blockedUntil) && now.After(a.lastReset.Add(loginWindowMinutes*time.Minute)) {
+			delete(h.loginAttempts, k)
+		}
+	}
 }

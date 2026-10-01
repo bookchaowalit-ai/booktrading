@@ -96,6 +96,8 @@ services:
       - ENVIRONMENT=${ENVIRONMENT:-development}
       - ALLOW_REGISTRATION=${ALLOW_REGISTRATION:-}
       - REGISTRATION_INVITE_CODE=${REGISTRATION_INVITE_CODE:-}
+      # Proxies allowed to set X-Forwarded-For / X-Real-IP (empty = private ranges).
+      - TRUSTED_PROXIES=${TRUSTED_PROXIES:-}
       # Exchange Provider Selection
       - EXCHANGE_PROVIDER=${EXCHANGE_PROVIDER:-binance_th}
       # Binance Global API Credentials
