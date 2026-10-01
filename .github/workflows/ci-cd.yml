@@ -169,6 +169,15 @@ jobs:
         # pyproject.toml deselects `integration` tests, which need live services.
         run: python -m pytest -q
 
+      - name: Run strategy research tests (stdlib, offline)
+        working-directory: strategy/research
+        # The lake round-trip test skips without the Solo Empire data_lake runtime.
+        run: |
+          python tests/futures_backtest_test.py
+          python tests/walk_forward_test.py
+          python tests/data_test.py
+          python tests/lake_signal_test.py
+
       - name: Check strategy for undefined names and syntax errors
         working-directory: strategy
         run: python -m ruff check . --select E9,F63,F7,F82
