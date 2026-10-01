@@ -5,7 +5,7 @@ protection mode) first; nothing here authorizes real-money trading.
 
 ## Current state
 
-**Score: 8.9 / 10** (8.8 after pass 9, 8.7 after pass 8, 8.5 after pass 7, 8 after pass 4, 7.5 after pass 3, 7 after pass 2, 6.5 after pass 1, 5 before). Pass 5 closed the last order-safety P0: Bitkub grid orders reconcile through the v3 API instead of pausing the grid, open grid orders are cancelled after a max age, and signal/auto orders reuse the same reconciliation. Pass 4 moved the frontend to Next 15.5 / React 19 with a tracked lockfile, and made grid orders with an unknown outcome reconcile by client order ID instead of re-submitting. Pass 3 fixed failed signal orders being counted as paper trades, made strategy auth fail closed in production, and enforced gofmt/tidy in CI. Pass 2 closed the Go grid P0s (position cap, per-level idempotency, failed orders no longer counted as paper trades) and moved Next to 14.2.35. The three suites (Go, Next.js,
+**Score: 9.0 / 10** (8.9 after pass 10, 8.8 after pass 9, 8.7 after pass 8, 8.5 after pass 7, 8 after pass 4, 7.5 after pass 3, 7 after pass 2, 6.5 after pass 1, 5 before). Pass 5 closed the last order-safety P0: Bitkub grid orders reconcile through the v3 API instead of pausing the grid, open grid orders are cancelled after a max age, and signal/auto orders reuse the same reconciliation. Pass 4 moved the frontend to Next 15.5 / React 19 with a tracked lockfile, and made grid orders with an unknown outcome reconcile by client order ID instead of re-submitting. Pass 3 fixed failed signal orders being counted as paper trades, made strategy auth fail closed in production, and enforced gofmt/tidy in CI. Pass 2 closed the Go grid P0s (position cap, per-level idempotency, failed orders no longer counted as paper trades) and moved Next to 14.2.35. The three suites (Go, Next.js,
 strategy Python) are green, and CI now runs the full offline strategy suite.
 Before this pass, the Go race detector flaked in CI, CI ran only 2 of the
 ~50 strategy test files, the paper grid sync crashed with a `NameError` it
@@ -46,6 +46,12 @@ could reset the kill switch without authentication.
   bcrypt work), which leaks account existence; compare against a dummy hash.
 
 ### P2
+- Reads of the operator's exchange balances, orders, trades and settings
+  are still open to any self-registered session (`userReadAdmin` rows in
+  `route_access.go`). Decide whether to close registration or make those
+  reads admin-only, and teach the frontend to show 403 states.
+- `/api/metrics` needs a session, so a Prometheus scraper cannot read it;
+  add a scrape token (service-level) if monitoring/ expects it.
 - The proxy allow-list (`strategyAllowedSections`) must be extended when the
   dashboard starts calling a new strategy `/api/<section>`; `/api/ai`,
   `/api/arbitrage` and `/api/v1/world` are intentionally not proxied.
@@ -62,7 +68,42 @@ could reset the kill switch without authentication.
   no tests. Add table tests around order request construction, using fake
   HTTP servers only.
 
-## Done in this pass (pass 10: persistent users)
+## Done in this pass (pass 11: route access matrix, loopback ports)
+- Go backend: `internal/adapter/http/route_access.go` is the access matrix
+  for every ServeMux pattern (public / user / admin, plus `Service` for the
+  routes the strategy bots call with `AUTH_TOKEN`). The router gate looks up
+  the matched pattern; an unlisted pattern fails closed (reads need a
+  session, writes an admin). Open self-registration could previously place
+  real orders, change exchange keys, start/stop bots, import/reset settings,
+  reset the paper engine, send test alerts and read every user's audit log:
+  those writes (and audit reads) are now admin-only. Per-user routes
+  (finance, DEX wallets, DCA, copy, rebalance, SL/TP) stay user-level.
+- `routes_access_test.go` parses the package and `cmd/main.go` for every
+  `HandleFunc`/`Handle` pattern, fails on unclassified or stale entries,
+  forbids public routes beyond login/register/health, pins the money-moving
+  routes, and drives the real gate over every pattern x 6 methods x 5
+  callers (anonymous, bad token, service, trader, admin).
+- Fixed: strategy -> backend calls (real grid, DCA, trend, paper grid, trade
+  journal, portfolio) sent no credentials and got 401 from the session gate.
+  `strategy/app/backend_auth.py` adds an httpx hook that attaches
+  `Bearer $AUTH_TOKEN` only to `BACKEND_API_BASE`/`PAPER_API_BASE` URLs.
+- Fixed: SL/TP configs were keyed by the client-supplied `X-User-ID` header
+  (any user could read/delete another's); now the session user.
+- Strategy API: `tests/test_route_access_matrix.py` lists all 81 FastAPI
+  method/path pairs as public/service/strict, forbids public writes and checks every
+  protected route answers 401 to anonymous, wrong and non-Bearer tokens.
+  Fixed `PUT /api/real-grid/config/{symbol}`: its JSON body was named
+  `request`, so `@auth_required` got a dict and every call returned 500.
+- Compose: Postgres, Redis, backend HTTP/WS, gRPC and strategy publish on
+  `127.0.0.1` by default in `docker-compose.yml` and `.dev.yml`
+  (`POSTGRES_BIND`, `REDIS_BIND`, `BACKEND_BIND`, `GRPC_BIND`,
+  `STRATEGY_BIND` override); dev strategy now gets `AUTH_TOKEN`.
+- Deploy note: the operator must use the `FIRST_ADMIN_*` account for
+  trading/exchange/settings writes; trader accounts get 403 there.
+- Verified: gofmt, go vet, `go test -race ./...`, golangci-lint (70, none
+  new), strategy pytest 655 passed, ruff, `docker compose config` x3.
+
+## Done in pass 10: persistent users
 - Accounts persist in the `users` table (migration 008, previously unused):
   `database.UserRepository` (pgx; duplicate email -> `ErrEmailTaken`),
   wired in `cmd/main.go` via `NewAuthHandlerWithUsers`; sessions stay in
