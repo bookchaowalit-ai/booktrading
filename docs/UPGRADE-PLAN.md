@@ -5,7 +5,7 @@ protection mode) first; nothing here authorizes real-money trading.
 
 ## Current state
 
-**Score: 9.0 / 10** (8.9 after pass 10, 8.8 after pass 9, 8.7 after pass 8, 8.5 after pass 7, 8 after pass 4, 7.5 after pass 3, 7 after pass 2, 6.5 after pass 1, 5 before). Pass 5 closed the last order-safety P0: Bitkub grid orders reconcile through the v3 API instead of pausing the grid, open grid orders are cancelled after a max age, and signal/auto orders reuse the same reconciliation. Pass 4 moved the frontend to Next 15.5 / React 19 with a tracked lockfile, and made grid orders with an unknown outcome reconcile by client order ID instead of re-submitting. Pass 3 fixed failed signal orders being counted as paper trades, made strategy auth fail closed in production, and enforced gofmt/tidy in CI. Pass 2 closed the Go grid P0s (position cap, per-level idempotency, failed orders no longer counted as paper trades) and moved Next to 14.2.35. The three suites (Go, Next.js,
+**Score: 9.1 / 10** (9.0 after pass 11, 8.9 after pass 10, 8.8 after pass 9, 8.7 after pass 8, 8.5 after pass 7, 8 after pass 4, 7.5 after pass 3, 7 after pass 2, 6.5 after pass 1, 5 before). Pass 5 closed the last order-safety P0: Bitkub grid orders reconcile through the v3 API instead of pausing the grid, open grid orders are cancelled after a max age, and signal/auto orders reuse the same reconciliation. Pass 4 moved the frontend to Next 15.5 / React 19 with a tracked lockfile, and made grid orders with an unknown outcome reconcile by client order ID instead of re-submitting. Pass 3 fixed failed signal orders being counted as paper trades, made strategy auth fail closed in production, and enforced gofmt/tidy in CI. Pass 2 closed the Go grid P0s (position cap, per-level idempotency, failed orders no longer counted as paper trades) and moved Next to 14.2.35. The three suites (Go, Next.js,
 strategy Python) are green, and CI now runs the full offline strategy suite.
 Before this pass, the Go race detector flaked in CI, CI ran only 2 of the
 ~50 strategy test files, the paper grid sync crashed with a `NameError` it
@@ -44,12 +44,14 @@ could reset the kill switch without authentication.
   on the timescale service container and sets that variable.
 - Login answers faster for unknown emails than for wrong passwords (no
   bcrypt work), which leaks account existence; compare against a dummy hash.
+- Login/invite lockout is per process and keyed by `X-Real-IP`, which the
+  backend trusts as sent; move it to Redis and trust the header only from
+  the Caddy hop.
 
 ### P2
-- Reads of the operator's exchange balances, orders, trades and settings
-  are still open to any self-registered session (`userReadAdmin` rows in
-  `route_access.go`). Decide whether to close registration or make those
-  reads admin-only, and teach the frontend to show 403 states.
+- If registration is ever opened in production (`ALLOW_REGISTRATION=true`),
+  the `userReadAdmin` reads (operator balances, orders, trades, settings)
+  become visible to every account again: make them admin-only first.
 - `/api/metrics` needs a session, so a Prometheus scraper cannot read it;
   add a scrape token (service-level) if monitoring/ expects it.
 - The proxy allow-list (`strategyAllowedSections`) must be extended when the
@@ -68,7 +70,39 @@ could reset the kill switch without authentication.
   no tests. Add table tests around order request construction, using fake
   HTTP servers only.
 
-## Done in this pass (pass 11: route access matrix, loopback ports)
+## Done in this pass (pass 12: registration gate, 403 UX)
+- Owner decision resolved: self-registration is **closed by default when
+  `ENVIRONMENT=production`** and open in development. `ALLOW_REGISTRATION`
+  (true/false; unparsable fails closed) overrides; `REGISTRATION_INVITE_CODE`
+  makes sign-up invite-only (sha256 + `subtle.ConstantTimeCompare`), and an
+  explicit `ALLOW_REGISTRATION=false` beats the code. Rejected sign-ups get
+  `403 {error, code: registration_closed|invite_invalid}`; wrong invite
+  codes count toward the per-IP lockout. `backend/internal/adapter/http/registration.go`.
+- `docker-compose.prod.yml` now sets `ENVIRONMENT=production` on the backend
+  (it was only set on strategy) and passes both variables through;
+  `docker-compose.yml` defaults to `development`.
+- New public `GET /api/auth/config` -> `{registrationOpen, inviteRequired}`;
+  added to the route matrix, `isPublicRoute`, the public allow-list and the
+  pinned critical levels.
+- Fixed: the login lockout never engaged (the first failure stored
+  `blockedUntil=now`, so the next check reset the counter).
+- Frontend: `LoginModal` reads `/api/auth/config` (fails closed), hides the
+  sign-up link when closed, shows an invite-code field when invite-only, and
+  maps the register 403 codes to Thai. `services/forbidden.ts` wraps
+  `window.fetch` (installed by `ForbiddenNotice` in the dashboard layout) so
+  any backend 403 outside `/api/auth/*` shows one Thai toast per 3 s;
+  `api.ts` and `financeApi.ts` errors use the Thai message for 403.
+- Tests: `registration_test.go` (env matrix, prod closed, dev open, invite
+  code, invite lockout, `/api/auth/config` through the real router),
+  `TestLoginLockoutAfterRepeatedFailures`; vitest `forbidden.test.ts`,
+  `auth-config.test.ts`, `LoginModal.test.tsx`.
+- Docs: `.env.example`, `API.md` (registration + admin-only 403),
+  `PRODUCTION.md`.
+- Verified: gofmt, go vet, `go test -race ./...`, golangci-lint (70, none
+  new), vitest 69 passed, `tsc --noEmit`, `next lint`, `next build`,
+  `docker compose config` (dev + prod).
+
+## Done in pass 11: route access matrix, loopback ports
 - Go backend: `internal/adapter/http/route_access.go` is the access matrix
   for every ServeMux pattern (public / user / admin, plus `Service` for the
   routes the strategy bots call with `AUTH_TOKEN`). The router gate looks up

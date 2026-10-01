@@ -92,6 +92,10 @@ services:
       - FIRST_ADMIN_EMAIL=${FIRST_ADMIN_EMAIL:-}
       - FIRST_ADMIN_PASSWORD=${FIRST_ADMIN_PASSWORD:-}
       - FIRST_ADMIN_NAME=${FIRST_ADMIN_NAME:-Admin}
+      # Self-registration: open unless ENVIRONMENT=production (see .env.example).
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - ALLOW_REGISTRATION=${ALLOW_REGISTRATION:-}
+      - REGISTRATION_INVITE_CODE=${REGISTRATION_INVITE_CODE:-}
       # Exchange Provider Selection
       - EXCHANGE_PROVIDER=${EXCHANGE_PROVIDER:-binance_th}
       # Binance Global API Credentials

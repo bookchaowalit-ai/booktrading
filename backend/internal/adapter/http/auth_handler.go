@@ -146,6 +146,7 @@ type AuthHandler struct {
 	sessions      sessionStore
 	loginAttempts map[string]*loginAttempt // IP -> attempt tracking
 	loginMu       sync.Mutex               // separate lock for login attempts
+	registration  RegistrationPolicy       // who may self-register (guarded by mu)
 }
 
 type loginAttempt struct {
@@ -173,7 +174,9 @@ func NewAuthHandlerWithUsers(store sessionStore, users UserStore) *AuthHandler {
 		sessions:      store,
 		users:         users,
 		loginAttempts: make(map[string]*loginAttempt),
+		registration:  RegistrationPolicyFromEnv(os.Getenv),
 	}
+	logger.Info("Self-registration policy", "mode", h.registration.Mode.String())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -465,12 +468,20 @@ type RegisterRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
 	Name     string `json:"name"`
+	// InviteCode is required when REGISTRATION_INVITE_CODE is set.
+	InviteCode string `json:"inviteCode,omitempty"`
 }
 
-// Register handles POST /api/auth/register
+// Register handles POST /api/auth/register. It answers 403 when the
+// registration policy (ALLOW_REGISTRATION / REGISTRATION_INVITE_CODE) rejects
+// the sign-up; see registration.go.
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if h.registrationPolicy().Mode == RegistrationClosed {
+		h.checkRegistrationAllowed(w, r, "")
 		return
 	}
 
@@ -479,6 +490,10 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request"})
+		return
+	}
+
+	if !h.checkRegistrationAllowed(w, r, req.InviteCode) {
 		return
 	}
 
@@ -598,38 +613,32 @@ const (
 	loginBlockMinutes  = 15
 )
 
-// checkLoginRate returns (blocked, remainingSeconds)
+// checkLoginRate returns (blocked, remainingSeconds). An IP is blocked for
+// loginBlockMinutes once it reaches loginMaxAttempts failures within
+// loginWindowMinutes.
 func (h *AuthHandler) checkLoginRate(ip string) (bool, int) {
 	h.loginMu.Lock()
 	defer h.loginMu.Unlock()
 
 	now := time.Now()
 	attempt, exists := h.loginAttempts[ip]
-
 	if !exists {
 		return false, 0
 	}
 
-	// Check if block period has expired
-	if now.After(attempt.blockedUntil) {
-		// Reset the counter
-		delete(h.loginAttempts, ip)
-		return false, 0
-	}
-
-	// Still blocked
 	if attempt.count >= loginMaxAttempts {
-		remaining := int(attempt.blockedUntil.Sub(now).Seconds())
-		return true, remaining
-	}
-
-	// Check if window has expired
-	if now.After(attempt.lastReset.Add(loginWindowMinutes * time.Minute)) {
-		// Reset the counter after window expires
+		if now.Before(attempt.blockedUntil) {
+			return true, int(attempt.blockedUntil.Sub(now).Seconds())
+		}
+		// Block served: start over.
 		delete(h.loginAttempts, ip)
 		return false, 0
 	}
 
+	// Failures older than the window no longer count.
+	if now.After(attempt.lastReset.Add(loginWindowMinutes * time.Minute)) {
+		delete(h.loginAttempts, ip)
+	}
 	return false, 0
 }
 

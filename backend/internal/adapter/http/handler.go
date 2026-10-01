@@ -609,6 +609,13 @@ func (r *Router) RegisterAuthRoutes(handler *AuthHandler) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
+	r.mux.HandleFunc("/api/auth/config", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodGet {
+			handler.Config(w, req)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
 	r.mux.HandleFunc("/api/auth/logout", func(w http.ResponseWriter, req *http.Request) {
 		if req.Method == http.MethodPost {
 			handler.Logout(w, req)
@@ -951,7 +958,7 @@ func (r *Router) RegisterFinanceRoutes(handler *FinanceHandler) {
 // Only the exact bootstrap and health endpoints bypass authentication.
 func isPublicRoute(path string) bool {
 	switch path {
-	case "/api/auth/login", "/api/auth/register", "/api/health", StrategyProxyPrefix + "/api/health":
+	case "/api/auth/login", "/api/auth/register", "/api/auth/config", "/api/health", StrategyProxyPrefix + "/api/health":
 		return true
 	default:
 		return false

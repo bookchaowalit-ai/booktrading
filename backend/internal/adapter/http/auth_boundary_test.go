@@ -44,7 +44,7 @@ func TestSensitiveRoutesRequireSession(t *testing.T) {
 }
 
 func TestPublicRoutesAreExact(t *testing.T) {
-	for _, path := range []string{"/api/auth/login", "/api/auth/register", "/api/health"} {
+	for _, path := range []string{"/api/auth/login", "/api/auth/register", "/api/auth/config", "/api/health"} {
 		if !isPublicRoute(path) {
 			t.Fatalf("bootstrap endpoint protected: %s", path)
 		}

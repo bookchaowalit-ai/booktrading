@@ -108,7 +108,7 @@ func TestRouteTableIsFullyClassified(t *testing.T) {
 
 // Only the bootstrap endpoints may be reached without credentials.
 func TestOnlyBootstrapRoutesArePublic(t *testing.T) {
-	allowed := map[string]bool{"/api/health": true, "/api/auth/login": true, "/api/auth/register": true}
+	allowed := map[string]bool{"/api/health": true, "/api/auth/login": true, "/api/auth/register": true, "/api/auth/config": true}
 	for p, rule := range routeAccess {
 		if (rule.Read == AccessPublic || rule.Write == AccessPublic) && !allowed[p] {
 			t.Errorf("%s is reachable anonymously; only %v may be public", p, allowed)
@@ -149,6 +149,7 @@ func TestCriticalRouteLevels(t *testing.T) {
 		{"/api/finance/accounts", http.MethodPost, AccessUser, false},
 		{"/api/dex/swap", http.MethodPost, AccessUser, false},
 		{"/api/health", http.MethodGet, AccessPublic, false},
+		{"/api/auth/config", http.MethodGet, AccessPublic, false},
 	}
 	for _, c := range cases {
 		rule, ok := routeAccess[c.pattern]

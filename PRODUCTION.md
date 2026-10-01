@@ -72,6 +72,15 @@ FIRST_ADMIN_EMAIL=admin@your-domain.com
 FIRST_ADMIN_PASSWORD=secure-admin-password
 FIRST_ADMIN_NAME=Admin
 
+# Self-registration: closed by default in production (docker-compose.prod.yml
+# sets ENVIRONMENT=production for the backend). Leave both empty for a
+# single-operator server; a self-registered account can read the operator's
+# exchange balances, orders, trades and settings. To invite someone, set a
+# long random REGISTRATION_INVITE_CODE and share it out of band; remove it
+# again afterwards. ALLOW_REGISTRATION=true opens sign-up to anyone.
+ALLOW_REGISTRATION=
+REGISTRATION_INVITE_CODE=
+
 # Frontend URL (your domain)
 FRONTEND_URL=https://your-domain.com
 

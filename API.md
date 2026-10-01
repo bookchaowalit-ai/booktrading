@@ -20,6 +20,40 @@ Authorization: Bearer <your-token>
 
 Get token from `POST /api/auth/login`
 
+### Registration
+```http
+GET /api/auth/config            (public)
+```
+**Response:** `{"registrationOpen": false, "inviteRequired": false}`. The
+login screen uses it to show or hide the sign-up form; it exposes nothing else.
+
+```http
+POST /api/auth/register         (public, gated)
+Content-Type: application/json
+
+{"email": "you@example.com", "password": "Secret123", "name": "You", "inviteCode": "..."}
+```
+**Response:** `201 Created` with `{token, user}` (role `trader`).
+
+The backend reads two variables:
+
+| Setting | Effect |
+|---|---|
+| `ALLOW_REGISTRATION` unset | closed when `ENVIRONMENT=production`, open otherwise |
+| `ALLOW_REGISTRATION=true` | open (unless an invite code is set) |
+| `ALLOW_REGISTRATION=false` | closed, invite code ignored |
+| `REGISTRATION_INVITE_CODE=<code>` | invite-only: `inviteCode` must match (constant-time compare) |
+
+A rejected sign-up answers `403` with `{"error": "...", "code":
+"registration_closed"}` or `{"code": "invite_invalid"}`. Wrong invite codes
+count toward the per-IP login lockout (5 failures, then `429` for 15 min).
+
+### Admin-only routes
+Writes that move money or change server-wide state (orders, exchange keys,
+bots, settings, paper reset, risk config) and audit-log reads need the admin
+role. Other accounts get `403 {"error": "Admin role required"}`. The full
+matrix is `backend/internal/adapter/http/route_access.go`.
+
 ---
 
 ## 🤖 Bot Endpoints

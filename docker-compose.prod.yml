@@ -102,6 +102,11 @@ services:
       - FIRST_ADMIN_EMAIL=${FIRST_ADMIN_EMAIL:-admin@your-domain.com}
       - FIRST_ADMIN_PASSWORD=${FIRST_ADMIN_PASSWORD:?FIRST_ADMIN_PASSWORD is required}
       - FIRST_ADMIN_NAME=${FIRST_ADMIN_NAME:-Admin}
+      # Self-registration is closed in production unless ALLOW_REGISTRATION=true
+      # or REGISTRATION_INVITE_CODE is set (invite-only).
+      - ENVIRONMENT=production
+      - ALLOW_REGISTRATION=${ALLOW_REGISTRATION:-}
+      - REGISTRATION_INVITE_CODE=${REGISTRATION_INVITE_CODE:-}
       # Exchange Provider Selection
       - EXCHANGE_PROVIDER=${EXCHANGE_PROVIDER:-binance_th}
       # Binance Global API Credentials

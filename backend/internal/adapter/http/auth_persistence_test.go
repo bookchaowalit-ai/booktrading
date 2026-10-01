@@ -154,3 +154,35 @@ func TestAuthStoreOutageFailsClosed(t *testing.T) {
 		t.Fatal("IsAdmin true during outage")
 	}
 }
+
+// Before this test the lockout never engaged: the first failure stored
+// blockedUntil=now, so the next check treated the block as served and reset
+// the counter.
+func TestLoginLockoutAfterRepeatedFailures(t *testing.T) {
+	clearFirstAdminEnv(t)
+	h := NewAuthHandlerWithUsers(nil, newMemoryUserStore())
+	if w := postJSON(t, h.Register, "/api/auth/register",
+		RegisterRequest{Email: "owner@example.test", Password: "Secret123"}); w.Code != http.StatusCreated {
+		t.Fatalf("register: %d %s", w.Code, w.Body)
+	}
+	for i := 0; i < loginMaxAttempts; i++ {
+		w := postJSON(t, h.Login, "/api/auth/login", LoginRequest{Email: "owner@example.test", Password: "wrong"})
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: %d, want 401", i+1, w.Code)
+		}
+	}
+	w := postJSON(t, h.Login, "/api/auth/login", LoginRequest{Email: "owner@example.test", Password: "Secret123"})
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("after %d failures: %d, want 429", loginMaxAttempts, w.Code)
+	}
+
+	// A different IP is not affected.
+	b, _ := json.Marshal(LoginRequest{Email: "owner@example.test", Password: "Secret123"})
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(b))
+	req.RemoteAddr = "192.0.2.99:1234"
+	rec := httptest.NewRecorder()
+	h.Login(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("other IP: %d, want 200", rec.Code)
+	}
+}

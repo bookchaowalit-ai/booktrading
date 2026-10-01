@@ -54,23 +54,78 @@ export async function authenticate(email: string, password: string): Promise<Aut
   }
 }
 
+export interface AuthConfig {
+  /** Whether the sign-up form should be offered at all. */
+  registrationOpen: boolean;
+  /** Whether sign-up needs the operator's invite code. */
+  inviteRequired: boolean;
+}
+
+/** Fail closed: hide sign-up when the backend cannot say it is open. */
+export const CLOSED_AUTH_CONFIG: AuthConfig = { registrationOpen: false, inviteRequired: false };
+
 /**
- * Register a new user via backend API
+ * Read the public registration policy (GET /api/auth/config). The backend
+ * closes sign-up by default in production (ALLOW_REGISTRATION /
+ * REGISTRATION_INVITE_CODE); any error or unexpected payload counts as closed.
  */
-export async function register(email: string, password: string, name: string): Promise<AuthResult> {
+export async function getAuthConfig(): Promise<AuthConfig> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
   try {
+    const response = await fetch(`${API_BASE_URL}/api/auth/config`, { signal: controller.signal });
+    if (!response.ok) return CLOSED_AUTH_CONFIG;
+    const data: unknown = await response.json();
+    if (!data || typeof data !== 'object') return CLOSED_AUTH_CONFIG;
+    const { registrationOpen, inviteRequired } = data as Partial<AuthConfig>;
+    return {
+      registrationOpen: registrationOpen === true,
+      inviteRequired: inviteRequired === true,
+    };
+  } catch {
+    return CLOSED_AUTH_CONFIG;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/** Thai messages for the backend's 403 reasons on /api/auth/register. */
+export const REGISTRATION_ERRORS_TH: Record<string, string> = {
+  registration_closed: 'เซิร์ฟเวอร์นี้ปิดการสมัครสมาชิก — โปรดติดต่อผู้ดูแลระบบเพื่อขอบัญชี',
+  invite_invalid: 'รหัสเชิญไม่ถูกต้อง — โปรดตรวจสอบรหัสเชิญจากผู้ดูแลระบบ',
+};
+
+/**
+ * Register a new user via backend API. inviteCode is sent only when the
+ * server is invite-only.
+ */
+export async function register(
+  email: string,
+  password: string,
+  name: string,
+  inviteCode?: string,
+): Promise<AuthResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  try {
+    const body: Record<string, string> = { email, password, name };
+    if (inviteCode) body.inviteCode = inviteCode;
     const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, name }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
     clearTimeout(timeout);
 
     if (!response.ok) {
       const data = await response.json().catch(() => ({ error: 'Registration failed' }));
+      if (response.status === 403) {
+        return {
+          success: false,
+          error: REGISTRATION_ERRORS_TH[data?.code] ?? REGISTRATION_ERRORS_TH.registration_closed,
+        };
+      }
       return { success: false, error: data.error || 'Registration failed' };
     }
 

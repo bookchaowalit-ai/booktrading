@@ -4,10 +4,10 @@
  */
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Mail, Lock, Eye, EyeOff, AlertCircle, User } from 'lucide-react';
-import { authenticate, register } from '@/services/auth';
+import { X, Mail, Lock, Eye, EyeOff, AlertCircle, User, KeyRound } from 'lucide-react';
+import { authenticate, register, getAuthConfig, CLOSED_AUTH_CONFIG, type AuthConfig } from '@/services/auth';
 
 interface LoginModalProps {
   isOpen: boolean;
@@ -24,6 +24,22 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess }: LoginMod
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
+  // Sign-up stays hidden until the backend says registration is open.
+  const [authConfig, setAuthConfig] = useState<AuthConfig>(CLOSED_AUTH_CONFIG);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    getAuthConfig().then((cfg) => {
+      if (cancelled) return;
+      setAuthConfig(cfg);
+      if (!cfg.registrationOpen) setIsRegister(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,7 +49,12 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess }: LoginMod
 
     try {
       if (isRegister) {
-        const result = await register(email, password, name);
+        const result = await register(
+          email,
+          password,
+          name,
+          authConfig.inviteRequired ? inviteCode.trim() : undefined,
+        );
         if (result.success) {
           setSuccess('Account created successfully! Redirecting...');
           setTimeout(() => {
@@ -177,9 +198,30 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess }: LoginMod
                     </div>
                   </div>
 
+                  {/* Invite code (invite-only servers) */}
+                  {isRegister && authConfig.inviteRequired && (
+                    <div>
+                      <label htmlFor="auth-invite-code" className="block text-sm font-medium text-gray-300 mb-2">
+                        Invite Code (รหัสเชิญ)
+                      </label>
+                      <div className="relative">
+                        <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                        <input
+                          id="auth-invite-code"
+                          type="text"
+                          autoComplete="off"
+                          value={inviteCode}
+                          onChange={(e) => setInviteCode(e.target.value)}
+                          className="w-full bg-slate-800 border border-slate-600 text-white pl-10 pr-4 py-3 rounded-lg focus:outline-none focus:border-purple-500 transition"
+                          required
+                        />
+                      </div>
+                    </div>
+                  )}
+
                   {/* Error Message */}
                   {error && (
-                    <div className="flex items-center gap-2 text-red-400 text-sm bg-red-900/20 p-3 rounded-lg">
+                    <div role="alert" className="flex items-center gap-2 text-red-400 text-sm bg-red-900/20 p-3 rounded-lg">
                       <AlertCircle className="w-4 h-4" />
                       {error}
                     </div>
@@ -222,6 +264,10 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess }: LoginMod
                         Sign in
                       </button>
                     </>
+                  ) : !authConfig.registrationOpen ? (
+                    <span data-testid="registration-closed">
+                      ปิดรับสมัครสมาชิก — โปรดติดต่อผู้ดูแลระบบเพื่อขอบัญชี
+                    </span>
                   ) : (
                     <>
                       Don&apos;t have an account?{' '}

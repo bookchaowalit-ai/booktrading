@@ -12,7 +12,8 @@ type AccessLevel int
 const (
 	// AccessPublic needs no credentials.
 	AccessPublic AccessLevel = iota
-	// AccessUser needs any valid session (self-registration is open).
+	// AccessUser needs any valid session (any account, including
+	// self-registered traders when ALLOW_REGISTRATION permits sign-up).
 	AccessUser
 	// AccessAdmin needs a session whose user has the admin role.
 	AccessAdmin
@@ -75,7 +76,8 @@ var routeAccess = map[string]routeRule{
 	// Bootstrap and health.
 	"/api/health":        publicRule,
 	"/api/auth/login":    publicRule,
-	"/api/auth/register": publicRule,
+	"/api/auth/register": publicRule, // gated by ALLOW_REGISTRATION (registration.go)
+	"/api/auth/config":   publicRule, // {registrationOpen, inviteRequired} only
 	"/api/auth/logout":   userRule,
 	"/api/auth/me":       userRule,
 
