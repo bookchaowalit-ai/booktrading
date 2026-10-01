@@ -371,7 +371,8 @@ func main() {
 	tradingService := service.NewTradingService()
 	tradingHandler := httpadapter.NewTradingHandler(tradingService, botService)
 	newsHandler := httpadapter.NewNewsHandler()
-	authHandler := httpadapter.NewAuthHandler(redisAdapter)
+	// Accounts persist in the users table (migration 008); sessions stay in Redis.
+	authHandler := httpadapter.NewAuthHandlerWithUsers(redisAdapter, database.NewUserRepository(db.Pool))
 	dcaHandler := httpadapter.NewDCABotHandler(dcaService, authHandler)
 	notificationHandler := httpadapter.NewNotificationHandler(db.Pool)
 	performanceHandler := httpadapter.NewPerformanceHandler(tradeHistoryService)

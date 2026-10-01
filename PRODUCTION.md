@@ -65,7 +65,9 @@ REDIS_PASSWORD=your-secure-redis-password
 # Security (32+ characters)
 ENCRYPTION_KEY=your-32-character-encryption-key-here-make-it-random!
 
-# Admin Account
+# Admin Account (stored in the users table; created on first start, its
+# password follows FIRST_ADMIN_PASSWORD on every start; an existing
+# self-registered non-admin account with this email is never promoted)
 FIRST_ADMIN_EMAIL=admin@your-domain.com
 FIRST_ADMIN_PASSWORD=secure-admin-password
 FIRST_ADMIN_NAME=Admin

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -14,18 +15,11 @@ import (
 	"sync"
 	"time"
 
+	"trading-bot-system/backend/internal/adapter/database"
 	"trading-bot-system/backend/internal/logger"
 
 	"golang.org/x/crypto/bcrypt"
 )
-
-// envOrDefault returns the value of an environment variable or a default value if not set
-func envOrDefault(key, defaultValue string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return defaultValue
-}
 
 // sessionStore is a small interface so AuthHandler can use Redis or fall back to in-memory.
 type sessionStore interface {
@@ -76,19 +70,79 @@ func (m *memorySessionStore) DeleteSession(_ context.Context, token string) {
 
 const sessionTTL = 7 * 24 * time.Hour // 7 days
 
-// authUser stores hashed password
-type authUser struct {
-	ID           string
-	Email        string
-	Name         string
-	Role         string
-	PasswordHash string
+// authUser is an account with its bcrypt password hash.
+type authUser = database.User
+
+// UserStore persists accounts. *database.UserRepository implements it on the
+// users table (migration 008); memoryUserStore is the fallback when no
+// database is wired (tests).
+type UserStore interface {
+	// GetUserByEmail and GetUserByID return database.ErrUserNotFound when absent.
+	GetUserByEmail(ctx context.Context, email string) (*authUser, error)
+	GetUserByID(ctx context.Context, id string) (*authUser, error)
+	// CreateUser returns database.ErrEmailTaken for a duplicate email or ID.
+	CreateUser(ctx context.Context, u authUser) error
+	UpdatePasswordHash(ctx context.Context, id, hash string) error
+}
+
+// memoryUserStore keeps accounts in process memory (lost on restart).
+type memoryUserStore struct {
+	mu    sync.RWMutex
+	users []authUser
+}
+
+func newMemoryUserStore(users ...authUser) *memoryUserStore {
+	return &memoryUserStore{users: append([]authUser(nil), users...)}
+}
+
+func (m *memoryUserStore) find(match func(*authUser) bool) (*authUser, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for i := range m.users {
+		if match(&m.users[i]) {
+			u := m.users[i]
+			return &u, nil
+		}
+	}
+	return nil, database.ErrUserNotFound
+}
+
+func (m *memoryUserStore) GetUserByEmail(_ context.Context, email string) (*authUser, error) {
+	return m.find(func(u *authUser) bool { return u.Email == email })
+}
+
+func (m *memoryUserStore) GetUserByID(_ context.Context, id string) (*authUser, error) {
+	return m.find(func(u *authUser) bool { return u.ID == id })
+}
+
+func (m *memoryUserStore) CreateUser(_ context.Context, u authUser) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.users {
+		if m.users[i].Email == u.Email || m.users[i].ID == u.ID {
+			return database.ErrEmailTaken
+		}
+	}
+	m.users = append(m.users, u)
+	return nil
+}
+
+func (m *memoryUserStore) UpdatePasswordHash(_ context.Context, id, hash string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.users {
+		if m.users[i].ID == id {
+			m.users[i].PasswordHash = hash
+			return nil
+		}
+	}
+	return database.ErrUserNotFound
 }
 
 // AuthHandler handles authentication
 type AuthHandler struct {
 	mu            sync.RWMutex
-	users         []authUser
+	users         UserStore
 	sessions      sessionStore
 	loginAttempts map[string]*loginAttempt // IP -> attempt tracking
 	loginMu       sync.Mutex               // separate lock for login attempts
@@ -100,37 +154,112 @@ type loginAttempt struct {
 	blockedUntil time.Time
 }
 
-// NewAuthHandler creates an AuthHandler. Pass a Redis-backed sessionStore (or nil for in-memory fallback).
+// NewAuthHandler creates an AuthHandler with in-memory accounts. Pass a
+// Redis-backed sessionStore (or nil for in-memory fallback).
 func NewAuthHandler(store sessionStore) *AuthHandler {
+	return NewAuthHandlerWithUsers(store, nil)
+}
+
+// NewAuthHandlerWithUsers creates an AuthHandler whose accounts live in
+// users (nil: in memory), then applies the FIRST_ADMIN_* bootstrap.
+func NewAuthHandlerWithUsers(store sessionStore, users UserStore) *AuthHandler {
 	if store == nil {
 		store = &memorySessionStore{tokens: make(map[string]string)}
 	}
+	if users == nil {
+		users = newMemoryUserStore()
+	}
 	h := &AuthHandler{
 		sessions:      store,
-		users:         make([]authUser, 0),
+		users:         users,
 		loginAttempts: make(map[string]*loginAttempt),
 	}
 
-	// Create a default admin user if FIRST_ADMIN_EMAIL is set
-	adminEmail := os.Getenv("FIRST_ADMIN_EMAIL")
-	adminPassword := os.Getenv("FIRST_ADMIN_PASSWORD")
-	if adminEmail != "" && adminPassword != "" {
-		hash, err := bcrypt.GenerateFromPassword([]byte(adminPassword), bcrypt.DefaultCost)
-		if err != nil {
-			logger.Error("Failed to hash admin password", "error", err)
-		} else {
-			h.users = append(h.users, authUser{
-				ID:           "1",
-				Email:        adminEmail,
-				Name:         envOrDefault("FIRST_ADMIN_NAME", "Admin"),
-				Role:         RoleAdmin,
-				PasswordHash: string(hash),
-			})
-			logger.Info("Default admin user created from environment variables")
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := bootstrapFirstAdmin(ctx, users, os.Getenv); err != nil {
+		logger.Error("FIRST_ADMIN bootstrap failed", "error", err)
+	}
+	return h
+}
+
+// firstAdminID is the ID the bootstrap admin has always had, so data it owns
+// keeps its owner when accounts move from memory to the database.
+const firstAdminID = "1"
+
+// errFirstAdminEmailTaken means FIRST_ADMIN_EMAIL belongs to a self-registered
+// (non-admin) account. Registration does not verify email ownership, so that
+// account is never promoted.
+var errFirstAdminEmailTaken = errors.New("FIRST_ADMIN_EMAIL is registered to a non-admin account; refusing to promote it (use another email or fix the row by hand)")
+
+// bootstrapFirstAdmin makes FIRST_ADMIN_EMAIL / FIRST_ADMIN_PASSWORD a working
+// admin login, as the in-memory bootstrap did on every start:
+//   - no account with that email: create it as admin (ID "1" when free);
+//   - an admin account: keep it, resetting the password when the env value
+//     changed;
+//   - a non-admin account: leave it alone and report an error.
+func bootstrapFirstAdmin(ctx context.Context, users UserStore, getenv func(string) string) error {
+	email := normalizeEmail(getenv("FIRST_ADMIN_EMAIL"))
+	password := getenv("FIRST_ADMIN_PASSWORD")
+	if email == "" || password == "" {
+		return nil
 	}
 
-	return h
+	existing, err := users.GetUserByEmail(ctx, email)
+	switch {
+	case err == nil && existing.Role != RoleAdmin:
+		return errFirstAdminEmailTaken
+	case err == nil:
+		if bcrypt.CompareHashAndPassword([]byte(existing.PasswordHash), []byte(password)) == nil {
+			return nil
+		}
+		hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if err != nil {
+			return fmt.Errorf("hash admin password: %w", err)
+		}
+		if err := users.UpdatePasswordHash(ctx, existing.ID, string(hash)); err != nil {
+			return err
+		}
+		logger.Info("Admin password updated from FIRST_ADMIN_PASSWORD")
+		return nil
+	case !errors.Is(err, database.ErrUserNotFound):
+		return err
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash admin password: %w", err)
+	}
+	admin := authUser{
+		ID:           firstAdminID,
+		Email:        email,
+		Name:         envOrDefaultFn(getenv, "FIRST_ADMIN_NAME", "Admin"),
+		Role:         RoleAdmin,
+		PasswordHash: string(hash),
+	}
+	err = users.CreateUser(ctx, admin)
+	if errors.Is(err, database.ErrEmailTaken) {
+		// ID "1" is held by an earlier admin email; the email itself was free.
+		admin.ID = generateID()
+		err = users.CreateUser(ctx, admin)
+	}
+	if err != nil {
+		return err
+	}
+	logger.Info("Default admin user created from environment variables")
+	return nil
+}
+
+func envOrDefaultFn(getenv func(string) string, key, def string) string {
+	if v := getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+// normalizeEmail makes email lookups case- and whitespace-insensitive.
+func normalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
 }
 
 // LoginRequest is the login payload
@@ -189,16 +318,12 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.mu.RLock()
-	var found *authUser
-	for i := range h.users {
-		if h.users[i].Email == req.Email {
-			found = &h.users[i]
-			break
-		}
+	found, err := h.users.GetUserByEmail(r.Context(), normalizeEmail(req.Email))
+	if err != nil && !errors.Is(err, database.ErrUserNotFound) {
+		logger.Error("Login user lookup failed", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
 	}
-	h.mu.RUnlock()
-
 	if found == nil || bcrypt.CompareHashAndPassword([]byte(found.PasswordHash), []byte(req.Password)) != nil {
 		// Record failed attempt for rate limiting
 		h.recordFailedLogin(clientIP)
@@ -262,15 +387,12 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.mu.RLock()
-	var found *authUser
-	for i := range h.users {
-		if h.users[i].ID == userID {
-			found = &h.users[i]
-			break
-		}
+	found, err := h.users.GetUserByID(r.Context(), userID)
+	if err != nil && !errors.Is(err, database.ErrUserNotFound) {
+		logger.Error("Session user lookup failed", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
 	}
-	h.mu.RUnlock()
 
 	if found == nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -311,19 +433,22 @@ func (h *AuthHandler) ValidateToken(token string) (string, bool) {
 
 // IsAdmin reports whether userID belongs to a user with the admin role.
 // Only the FIRST_ADMIN_EMAIL bootstrap account is admin; self-registration
-// always creates the non-admin "trader" role.
+// always creates the non-admin "trader" role. A lookup failure counts as
+// not admin.
 func (h *AuthHandler) IsAdmin(userID string) bool {
 	if userID == "" {
 		return false
 	}
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	for i := range h.users {
-		if h.users[i].ID == userID {
-			return h.users[i].Role == RoleAdmin
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	u, err := h.users.GetUserByID(ctx, userID)
+	if err != nil {
+		if !errors.Is(err, database.ErrUserNotFound) {
+			logger.Error("Admin check user lookup failed", "error", err)
 		}
+		return false
 	}
-	return false
+	return u.Role == RoleAdmin
 }
 
 // extractBearerToken gets the token from Authorization header only (NOT query params for security)
@@ -395,34 +520,30 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.mu.RLock()
-	for _, u := range h.users {
-		if u.Email == req.Email {
-			h.mu.RUnlock()
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusConflict)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Email already registered"})
-			return
-		}
-	}
-	h.mu.RUnlock()
-
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	h.mu.Lock()
 	newUser := authUser{
 		ID:           generateID(),
-		Email:        req.Email,
+		Email:        normalizeEmail(req.Email),
 		Name:         req.Name,
 		Role:         "trader",
 		PasswordHash: string(hash),
 	}
-	h.users = append(h.users, newUser)
-	h.mu.Unlock()
+	if err := h.users.CreateUser(r.Context(), newUser); err != nil {
+		if errors.Is(err, database.ErrEmailTaken) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Email already registered"})
+			return
+		}
+		logger.Error("Failed to create user", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 
 	token, err := generateToken()
 	if err != nil {

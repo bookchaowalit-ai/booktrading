@@ -58,10 +58,10 @@ func newTestStrategyProxy(t *testing.T, upstream string, timeout time.Duration) 
 	sessions := &memorySessionStore{}
 	_ = sessions.SetSession(context.Background(), testUserSession, "fixture-user", time.Hour)
 	_ = sessions.SetSession(context.Background(), testTraderSess, "fixture-trader", time.Hour)
-	auth := &AuthHandler{sessions: sessions, users: []authUser{
-		{ID: "fixture-user", Email: "admin@example.test", Role: RoleAdmin},
-		{ID: "fixture-trader", Email: "trader@example.test", Role: "trader"},
-	}}
+	auth := &AuthHandler{sessions: sessions, users: newMemoryUserStore(
+		authUser{ID: "fixture-user", Email: "admin@example.test", Role: RoleAdmin},
+		authUser{ID: "fixture-trader", Email: "trader@example.test", Role: "trader"},
+	)}
 	p, err := NewStrategyProxy(StrategyProxyConfig{
 		UpstreamURL:  upstream,
 		ServiceToken: testServiceToken,
@@ -365,10 +365,10 @@ func TestStrategyProxyWithoutRoleCheckDeniesWrites(t *testing.T) {
 }
 
 func TestAuthHandlerIsAdmin(t *testing.T) {
-	h := &AuthHandler{users: []authUser{
-		{ID: "a", Role: RoleAdmin},
-		{ID: "b", Role: "trader"},
-	}}
+	h := &AuthHandler{users: newMemoryUserStore(
+		authUser{ID: "a", Role: RoleAdmin},
+		authUser{ID: "b", Role: "trader"},
+	)}
 	if !h.IsAdmin("a") || h.IsAdmin("b") || h.IsAdmin("") || h.IsAdmin("missing") {
 		t.Fatal("IsAdmin classification wrong")
 	}
