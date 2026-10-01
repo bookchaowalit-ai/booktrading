@@ -178,3 +178,40 @@ async def test_production_without_token_fails_closed(monkeypatch, calls):
     response = await _call(app, "DELETE", "/api/airdrop-tracker/tasks/t1", None)
     assert response.status_code == 401
     assert calls == []
+
+
+class _FakeScanner:
+    def __init__(self, calls):
+        self.calls = calls
+
+    async def scan_all(self, min_confidence=0.3, markets=None):
+        self.calls.append(("scan", min_confidence, markets))
+        return SimpleNamespace(opportunities=[], model_dump=lambda: {"opportunities": []})
+
+
+@pytest.fixture
+def fake_scanner(monkeypatch, calls):
+    import app.market_intel as market_intel
+
+    monkeypatch.setattr(market_intel, "get_scanner", lambda **kw: _FakeScanner(calls))
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_market_intel_scan_is_a_protected_post(monkeypatch, fake_scanner):
+    """A scan calls every source and writes signals: never an anonymous GET."""
+    app = _api(monkeypatch)
+
+    response = await _call(app, "GET", "/api/market-intel/scan", None)
+    assert response.status_code == 405
+    response = await _call(app, "POST", "/api/market-intel/scan", None)
+    assert response.status_code == 401
+    assert fake_scanner == []
+
+    response = await _call(app, "POST", "/api/market-intel/scan?min_confidence=0.5&markets=crypto", None, AUTH)
+    assert response.status_code == 200, response.text
+    assert response.json() == {"opportunities": []}
+    assert len(fake_scanner) == 1
+    _, min_conf, markets = fake_scanner[0]
+    assert min_conf == 0.5
+    assert [m.value for m in markets] == ["crypto"]

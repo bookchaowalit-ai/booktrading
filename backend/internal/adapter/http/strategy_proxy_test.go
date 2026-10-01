@@ -285,6 +285,7 @@ var privilegedStrategyRoutes = []struct{ method, path string }{
 	{http.MethodPatch, "/strategy-api/api/airdrop-tracker/tasks/t1/subtasks/0"},
 	{http.MethodDelete, "/strategy-api/api/airdrop-tracker/tasks/t1"},
 	{http.MethodPost, "/strategy-api/api/signal-tracker/evaluate"},
+	{http.MethodPost, "/strategy-api/api/market-intel/scan?min_confidence=0.3"},
 }
 
 func TestStrategyProxyPrivilegedRoutesRequireAdmin(t *testing.T) {

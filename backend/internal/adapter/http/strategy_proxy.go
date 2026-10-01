@@ -71,6 +71,7 @@ var strategyAllowedSections = map[string]bool{
 //	POST   /api/backtest | backtest/run | sweep | compare | walk-forward
 //	POST/PATCH/DELETE /api/airdrop-tracker/tasks...   (tracker writes)
 //	POST   /api/signal-tracker/evaluate               (outbound price fetch + writes)
+//	POST   /api/market-intel/scan                     (outbound scans + signal writes)
 //
 // The /api/v1/world import route is outside the allow-list entirely. The rule
 // is fail-closed: a new write route added upstream is admin-only until it is

@@ -92,7 +92,7 @@ EXPECTED = {
     ("GET", "/api/polymarket/tags"): PUBLIC,
     ("GET", "/api/polymarket/orderbook/{token_id}"): PUBLIC,
     ("GET", "/api/polymarket/price-history/{token_id}"): PUBLIC,
-    ("GET", "/api/market-intel/scan"): PUBLIC,
+    ("POST", "/api/market-intel/scan"): SERVICE,
     ("GET", "/api/market-intel/quotes"): PUBLIC,
     ("GET", "/api/market-intel/overview"): PUBLIC,
     ("GET", "/api/market-intel/sources"): PUBLIC,

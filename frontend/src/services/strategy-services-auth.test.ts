@@ -81,6 +81,12 @@ describe('strategy services send the session bearer token', () => {
       'POST',
       '/api/signal-tracker/evaluate',
     ],
+    [
+      'market-intel scan',
+      () => marketIntelService.scan(0.3),
+      'POST',
+      '/api/market-intel/scan?min_confidence=0.3',
+    ],
     ['kill switch', () => monitoringService.killBot(), 'POST', '/api/real-grid/kill'],
     ['enable bot', () => monitoringService.enableBot(), 'POST', '/api/real-grid/enable'],
   ];

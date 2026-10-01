@@ -19,7 +19,12 @@ export const marketIntelService = {
     const params = new URLSearchParams({ min_confidence: minConfidence.toString() });
     if (markets?.length) params.set('markets', markets.join(','));
 
-    const res = await fetch(`${STRATEGY_URL}/api/market-intel/scan?${params}`, { headers: authHeaders() });
+    // POST: a scan calls every enabled source and writes signals (admin-only
+    // through the /strategy-api proxy).
+    const res = await fetch(`${STRATEGY_URL}/api/market-intel/scan?${params}`, {
+      method: 'POST',
+      headers: authHeaders(),
+    });
     if (!res.ok) throw new Error('Scan failed');
     return res.json();
   },

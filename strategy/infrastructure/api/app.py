@@ -2384,9 +2384,15 @@ def register_routes(app: FastAPI):
             enabled_sources=sources,
         )
 
-    @app.get("/api/market-intel/scan")
-    async def market_intel_scan(min_confidence: float = 0.3, markets: str = None):
-        """Cross-market opportunity scan across all enabled sources."""
+    @app.post("/api/market-intel/scan")
+    @auth_required
+    async def market_intel_scan(request: Request, min_confidence: float = 0.3, markets: str = None):
+        """Cross-market opportunity scan across all enabled sources.
+
+        POST + service token: a scan makes outbound calls to every enabled
+        source and writes signals to the tracker, so it is not a read. The
+        backend /strategy-api proxy therefore only lets admins trigger it.
+        """
         scanner = _get_market_scanner()
         market_filter = None
         if markets:
