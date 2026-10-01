@@ -7,8 +7,8 @@ RUN apk add --no-cache libc6-compat
 
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm ci
 
 # Rebuild the source code only when needed
 FROM base AS builder
@@ -22,12 +22,10 @@ ARG NEXT_PUBLIC_API_URL=
 ARG NEXT_PUBLIC_STRATEGY_URL=
 ARG NEXT_PUBLIC_WS_URL=ws://localhost:8081/ws
 ARG BACKEND_URL=http://backend:8080
-ARG STRATEGY_URL=http://strategy:8000
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_STRATEGY_URL=$NEXT_PUBLIC_STRATEGY_URL
 ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
 ENV BACKEND_URL=$BACKEND_URL
-ENV STRATEGY_URL=$STRATEGY_URL
 
 ENV NEXT_TELEMETRY_DISABLED 1
 

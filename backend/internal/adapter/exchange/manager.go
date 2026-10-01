@@ -319,6 +319,140 @@ func (m *ExchangeManager) PlaceOrder(ctx context.Context, symbol string, side st
 	}
 }
 
+// PlaceOrderWithClientID places an order tagged with clientOrderID and
+// returns its exchange-neutral state. An error wrapping ErrOrderStateUnknown
+// (see IsOrderStateUnknown) means the order may exist: look it up with
+// LookupOrderByClientID before placing anything else.
+func (m *ExchangeManager) PlaceOrderWithClientID(ctx context.Context, symbol, side string, quantity, price float64, clientOrderID string) (*OrderReport, error) {
+	if !ValidClientOrderID(clientOrderID) {
+		return nil, fmt.Errorf("invalid client order ID %q", clientOrderID)
+	}
+	m.mu.RLock()
+	provider := m.currentProvider
+	executor := m.binanceExecutor
+	thAdapter := m.binanceTHAdapter
+	bk := m.bitkubClient
+	m.mu.RUnlock()
+
+	switch provider {
+	case config.ExchangeBinance:
+		if executor == nil {
+			return nil, fmt.Errorf("Binance order executor not initialized — configure API keys first")
+		}
+		orderType := model.OrderTypeMarket
+		if price > 0 {
+			orderType = model.OrderTypeLimit
+		}
+		placed, err := executor.PlaceOrder(ctx, &model.Order{
+			ID:       clientOrderID,
+			Symbol:   model.TradeSymbol(symbol),
+			Side:     model.OrderSide(side),
+			Type:     orderType,
+			Quantity: quantity,
+			Price:    price,
+		})
+		if err != nil {
+			return nil, err
+		}
+		status := "NEW"
+		switch placed.Status {
+		case model.OrderStatusFilled:
+			status = "FILLED"
+		case model.OrderStatusRejected:
+			status = "REJECTED"
+		}
+		return &OrderReport{ClientOrderID: clientOrderID, Status: status, ExecutedQty: placed.Quantity}, nil
+	case config.ExchangeBinanceTH:
+		if thAdapter == nil {
+			return nil, fmt.Errorf("Binance TH adapter not initialized")
+		}
+		orderType, timeInForce := "MARKET", ""
+		if price > 0 {
+			orderType, timeInForce = "LIMIT", "GTC"
+		}
+		placed, err := thAdapter.PlaceOrderWithClientID(ctx, symbol, side, orderType, quantity, price, timeInForce, clientOrderID)
+		if err != nil {
+			return nil, err
+		}
+		return reportFromOrder(placed), nil
+	case config.ExchangeBitkub:
+		if bk == nil {
+			return nil, fmt.Errorf("Bitkub client not initialized")
+		}
+		return placeBitkubWithClientID(ctx, bk, symbol, side, quantity, price, clientOrderID)
+	default:
+		return nil, fmt.Errorf("%w: %s", ErrReconcileUnsupported, provider)
+	}
+}
+
+// LookupOrderByClientID returns the current state of an order placed with
+// PlaceOrderWithClientID, or ErrOrderNotFound when the exchange never
+// accepted it.
+func (m *ExchangeManager) LookupOrderByClientID(ctx context.Context, symbol, clientOrderID string) (*OrderReport, error) {
+	return m.LookupOrderByClientIDSince(ctx, symbol, clientOrderID, time.Time{})
+}
+
+// LookupOrderByClientIDSince is LookupOrderByClientID for an order submitted
+// at or after since. Binance ignores since. Bitkub cannot query by client
+// order ID, so it scans open orders and the fills made since then (see
+// bitkub.FindOrderByClientID); a zero since makes absence unprovable there.
+func (m *ExchangeManager) LookupOrderByClientIDSince(ctx context.Context, symbol, clientOrderID string, since time.Time) (*OrderReport, error) {
+	m.mu.RLock()
+	provider := m.currentProvider
+	executor := m.binanceExecutor
+	thAdapter := m.binanceTHAdapter
+	bk := m.bitkubClient
+	m.mu.RUnlock()
+
+	if provider == config.ExchangeBitkub && bk != nil {
+		return lookupBitkubByClientID(ctx, bk, symbol, clientOrderID, since)
+	}
+
+	var (
+		order *Order
+		err   error
+	)
+	switch {
+	case provider == config.ExchangeBinance && executor != nil:
+		order, err = executor.GetOrderByClientID(ctx, symbol, clientOrderID)
+	case provider == config.ExchangeBinanceTH && thAdapter != nil:
+		order, err = thAdapter.GetOrderByClientID(ctx, symbol, clientOrderID)
+	default:
+		return nil, fmt.Errorf("%w: %s", ErrReconcileUnsupported, provider)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return reportFromOrder(order), nil
+}
+
+// CancelOrderByClientID cancels an open order placed with
+// PlaceOrderWithClientID. ErrOrderNotFound means it is not open any more;
+// look it up to learn its final state. since is the submission time, used
+// by Bitkub to find the order (see LookupOrderByClientIDSince).
+func (m *ExchangeManager) CancelOrderByClientID(ctx context.Context, symbol, clientOrderID string, since time.Time) error {
+	m.mu.RLock()
+	provider := m.currentProvider
+	executor := m.binanceExecutor
+	thAdapter := m.binanceTHAdapter
+	bk := m.bitkubClient
+	m.mu.RUnlock()
+
+	switch {
+	case provider == config.ExchangeBinance && executor != nil:
+		return executor.CancelOrderByClientID(ctx, symbol, clientOrderID)
+	case provider == config.ExchangeBinanceTH && thAdapter != nil:
+		return thAdapter.CancelOrderByClientID(ctx, symbol, clientOrderID)
+	case provider == config.ExchangeBitkub && bk != nil:
+		if since.IsZero() {
+			return fmt.Errorf("Bitkub cancel of %s needs the submission time", clientOrderID)
+		}
+		return cancelBitkubByClientID(ctx, bk, symbol, clientOrderID, since)
+	default:
+		return fmt.Errorf("%w: %s", ErrReconcileUnsupported, provider)
+	}
+}
+
 // GetTicker returns ticker info for a symbol from the current exchange
 func (m *ExchangeManager) GetTicker(ctx context.Context, symbol string) (*TickerInfo, error) {
 	m.mu.RLock()

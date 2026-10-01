@@ -6,36 +6,36 @@ import "time"
 type AlertType string
 
 const (
-	AlertTypeTrade      AlertType = "TRADE"
-	AlertTypeBotStart  AlertType = "BOT_START"
-	AlertTypeBotStop    AlertType = "BOT_STOP"
-	AlertTypeError      AlertType = "ERROR"
-	AlertTypeRisk       AlertType = "RISK"
-	AlertTypePrice      AlertType = "PRICE"
+	AlertTypeTrade    AlertType = "TRADE"
+	AlertTypeBotStart AlertType = "BOT_START"
+	AlertTypeBotStop  AlertType = "BOT_STOP"
+	AlertTypeError    AlertType = "ERROR"
+	AlertTypeRisk     AlertType = "RISK"
+	AlertTypePrice    AlertType = "PRICE"
 )
 
 // AlertChannel represents the delivery channel for alerts
 type AlertChannel string
 
 const (
-	ChannelDiscord   AlertChannel = "DISCORD"
-	ChannelTelegram  AlertChannel = "TELEGRAM"
-	ChannelEmail     AlertChannel = "EMAIL"
-	ChannelWebhook   AlertChannel = "WEBHOOK"
+	ChannelDiscord  AlertChannel = "DISCORD"
+	ChannelTelegram AlertChannel = "TELEGRAM"
+	ChannelEmail    AlertChannel = "EMAIL"
+	ChannelWebhook  AlertChannel = "WEBHOOK"
 )
 
 // Alert represents a notification to be sent to external channels
 type Alert struct {
-	ID        string       `json:"id"`
-	Type      AlertType    `json:"type"`
-	Channel   AlertChannel `json:"channel"`
-	Title     string       `json:"title"`
-	Message   string       `json:"message"`
+	ID        string         `json:"id"`
+	Type      AlertType      `json:"type"`
+	Channel   AlertChannel   `json:"channel"`
+	Title     string         `json:"title"`
+	Message   string         `json:"message"`
 	Data      map[string]any `json:"data,omitempty"`
-	CreatedAt time.Time    `json:"created_at"`
-	Sent      bool         `json:"sent"`
-	SentAt    *time.Time   `json:"sent_at,omitempty"`
-	Error     string       `json:"error,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+	Sent      bool           `json:"sent"`
+	SentAt    *time.Time     `json:"sent_at,omitempty"`
+	Error     string         `json:"error,omitempty"`
 }
 
 // AlertConfig holds configuration for alert delivery
@@ -60,9 +60,9 @@ type AlertConfig struct {
 	CustomWebhookURL string `json:"custom_webhook_url,omitempty"`
 
 	// Which alert types to enable
-	NotifyOnTrade     bool `json:"notify_on_trade"`
-	NotifyOnBotStart  bool `json:"notify_on_bot_start"`
-	NotifyOnError     bool `json:"notify_on_error"`
-	NotifyOnRisk      bool `json:"notify_on_risk"`
-	NotifyOnPrice     bool `json:"notify_on_price"`
+	NotifyOnTrade    bool `json:"notify_on_trade"`
+	NotifyOnBotStart bool `json:"notify_on_bot_start"`
+	NotifyOnError    bool `json:"notify_on_error"`
+	NotifyOnRisk     bool `json:"notify_on_risk"`
+	NotifyOnPrice    bool `json:"notify_on_price"`
 }

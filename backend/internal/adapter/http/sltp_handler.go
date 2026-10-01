@@ -9,15 +9,15 @@ import (
 
 // SLTPConfig represents stop-loss / take-profit configuration for a symbol
 type SLTPConfig struct {
-	UserID               string  `json:"userId"`
-	Symbol               string  `json:"symbol"`
-	StopLossPercent      float64 `json:"stopLossPercent"`
-	TakeProfitPercent    float64 `json:"takeProfitPercent"`
-	StopLossPrice        float64 `json:"stopLossPrice"`
-	TakeProfitPrice      float64 `json:"takeProfitPrice"`
-	TrailingStop         bool    `json:"trailingStop"`
-	TrailingStopPercent  float64 `json:"trailingStopPercent"`
-	Enabled              bool    `json:"enabled"`
+	UserID              string  `json:"userId"`
+	Symbol              string  `json:"symbol"`
+	StopLossPercent     float64 `json:"stopLossPercent"`
+	TakeProfitPercent   float64 `json:"takeProfitPercent"`
+	StopLossPrice       float64 `json:"stopLossPrice"`
+	TakeProfitPrice     float64 `json:"takeProfitPrice"`
+	TrailingStop        bool    `json:"trailingStop"`
+	TrailingStopPercent float64 `json:"trailingStopPercent"`
+	Enabled             bool    `json:"enabled"`
 }
 
 // SLTPHandler manages stop-loss / take-profit configurations (in-memory with DB
@@ -115,10 +115,10 @@ func (h *SLTPHandler) DeleteSLTP(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
 }
 
-// getUserIDFromContext extracts userID from request — reads it from a header
-// set by the auth middleware (future: use context value).
+// getUserIDFromContext returns the session user the router authenticated.
+// It never trusts a client-supplied header (X-User-ID was spoofable).
 func getUserIDFromContext(r *http.Request) string {
-	if uid := r.Header.Get("X-User-ID"); uid != "" {
+	if uid := sessionUserID(r); uid != "" {
 		return uid
 	}
 	return "default"

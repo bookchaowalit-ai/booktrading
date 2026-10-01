@@ -76,7 +76,7 @@ func (s *FinancialCalculatorService) CalculateLoan(input *model.LoanCalculatorIn
 
 	principal := input.Principal - input.DownPayment
 	rate := input.AnnualRate / 100 / 12 // Monthly rate
-	nMonths := input.Years * 12          // Total months
+	nMonths := input.Years * 12         // Total months
 
 	if principal <= 0 {
 		return &model.LoanCalculatorResult{
@@ -106,13 +106,13 @@ func (s *FinancialCalculatorService) CalculateLoan(input *model.LoanCalculatorIn
 	for month := 1; month <= nMonths; month++ {
 		interestPayment := balance * rate
 		principalPayment := monthlyPayment - interestPayment
-		
+
 		// Adjust for final payment
 		if balance < monthlyPayment {
 			principalPayment = balance
 			interestPayment = balance * rate
 		}
-		
+
 		balance -= principalPayment
 		if balance < 0 {
 			balance = 0
@@ -157,8 +157,8 @@ func (s *FinancialCalculatorService) CalculateTimeToGoal(targetAmount, currentAm
 	// With compound interest: FV = PMT * ((1+r)^n - 1) / r
 	// n = log(1 + FV * r / PMT) / log(1 + r)
 	fvNeeded := remaining
-	n := math.Log(1 + fvNeeded * rate / monthlyContribution) / math.Log(1 + rate)
-	
+	n := math.Log(1+fvNeeded*rate/monthlyContribution) / math.Log(1+rate)
+
 	return int(math.Ceil(n))
 }
 
@@ -208,22 +208,22 @@ func (s *FinancialCalculatorService) CalculateInflationAdjustedReturn(nominalRet
 	// Real return = ((1 + nominal) / (1 + inflation)) - 1
 	nominal := nominalReturn / 100
 	inflation := inflationRate / 100
-	
-	return ((1 + nominal) / (1 + inflation) - 1) * 100
+
+	return ((1+nominal)/(1+inflation) - 1) * 100
 }
 
 // CalculatePresentValue calculates present value of future amount
 func (s *FinancialCalculatorService) CalculatePresentValue(futureValue, annualRate, years float64) float64 {
 	// PV = FV / (1 + r)^n
 	rate := annualRate / 100
-	return futureValue / math.Pow(1 + rate, years)
+	return futureValue / math.Pow(1+rate, years)
 }
 
 // CalculateFutureValue calculates future value of present amount
 func (s *FinancialCalculatorService) CalculateFutureValue(presentValue, annualRate, years float64) float64 {
 	// FV = PV * (1 + r)^n
 	rate := annualRate / 100
-	return presentValue * math.Pow(1 + rate, years)
+	return presentValue * math.Pow(1+rate, years)
 }
 
 // CalculateAnnuityPayment calculates payment from an annuity
@@ -231,12 +231,12 @@ func (s *FinancialCalculatorService) CalculateAnnuityPayment(principal, annualRa
 	// PMT = P * r / (1 - (1 + r)^-n)
 	rate := annualRate / 100 / 12
 	n := years * 12
-	
+
 	if rate <= 0 {
 		return principal / n
 	}
-	
-	return principal * rate / (1 - math.Pow(1 + rate, -n))
+
+	return principal * rate / (1 - math.Pow(1+rate, -n))
 }
 
 // CalculateBreakevenPoint calculates breakeven point for an investment
@@ -276,29 +276,29 @@ func (s *FinancialCalculatorService) CalculateAffordableMortgage(grossMonthlyInc
 // CalculateCreditCardPayoff calculates time and cost to payoff credit card
 func (s *FinancialCalculatorService) CalculateCreditCardPayoff(balance, annualRate, monthlyPayment float64) (months int, totalInterest float64) {
 	rate := annualRate / 100 / 12
-	
+
 	remaining := balance
 	months = 0
 	totalInterest = 0
-	
+
 	for remaining > 0 {
 		interest := remaining * rate
 		principalPayment := monthlyPayment - interest
-		
+
 		if principalPayment <= 0 {
 			// Payment too low - never pays off
 			return -1, -1
 		}
-		
+
 		remaining -= principalPayment
 		totalInterest += interest
 		months++
-		
+
 		if months > 600 { // 50 years cap
 			break
 		}
 	}
-	
+
 	return months, totalInterest
 }
 
@@ -306,29 +306,29 @@ func (s *FinancialCalculatorService) CalculateCreditCardPayoff(balance, annualRa
 func (s *FinancialCalculatorService) CalculateTaxBracket(income float64, brackets []TaxBracket) (tax float64, effectiveRate float64) {
 	tax = 0
 	remainingIncome := income
-	
+
 	for _, bracket := range brackets {
 		if remainingIncome <= 0 {
 			break
 		}
-		
+
 		taxableInBracket := math.Min(remainingIncome, bracket.Max-bracket.Min)
 		tax += taxableInBracket * (bracket.Rate / 100)
 		remainingIncome -= taxableInBracket
 	}
-	
+
 	if income > 0 {
 		effectiveRate = (tax / income) * 100
 	}
-	
+
 	return tax, effectiveRate
 }
 
 // TaxBracket represents a tax bracket
 type TaxBracket struct {
-	Min   float64 // Lower bound
-	Max   float64 // Upper bound (0 for highest bracket)
-	Rate  float64 // Tax rate percentage
+	Min  float64 // Lower bound
+	Max  float64 // Upper bound (0 for highest bracket)
+	Rate float64 // Tax rate percentage
 }
 
 // AssetAllocationResult represents optimal asset allocation
@@ -351,7 +351,7 @@ func (s *FinancialCalculatorService) CalculateRuleOf110(age int, riskTolerance s
 	if stockPercent > 100 {
 		stockPercent = 100
 	}
-	
+
 	// Adjust based on risk tolerance
 	switch riskTolerance {
 	case "low":
@@ -359,9 +359,9 @@ func (s *FinancialCalculatorService) CalculateRuleOf110(age int, riskTolerance s
 	case "high":
 		stockPercent += 10
 	}
-	
+
 	bondPercent := 100 - stockPercent
-	
+
 	return &AssetAllocationResult{
 		Stocks: float64(stockPercent),
 		Bonds:  float64(bondPercent),

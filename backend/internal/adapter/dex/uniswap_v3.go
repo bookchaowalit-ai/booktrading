@@ -188,19 +188,19 @@ func (p *UniswapV3Provider) GetLiquidityPools(ctx context.Context, userAddress s
 		}
 
 		var posDataStruct struct {
-			Nonce                        uint64
-			Operator                     common.Address
-			TokenId                      *big.Int
-			Token0                       common.Address
-			Token1                       common.Address
-			Fee                          uint32
-			TickLower                    int32
-			TickUpper                    int32
-			Liquidity                    uint64
-			FeeGrowthInside0LastX128     *big.Int
-			FeeGrowthInside1LastX128     *big.Int
-			TokensOwed0                  uint64
-			TokensOwed1                  uint64
+			Nonce                    uint64
+			Operator                 common.Address
+			TokenId                  *big.Int
+			Token0                   common.Address
+			Token1                   common.Address
+			Fee                      uint32
+			TickLower                int32
+			TickUpper                int32
+			Liquidity                uint64
+			FeeGrowthInside0LastX128 *big.Int
+			FeeGrowthInside1LastX128 *big.Int
+			TokensOwed0              uint64
+			TokensOwed1              uint64
 		}
 		positionABI.UnpackIntoInterface(&posDataStruct, "positions", posResult)
 

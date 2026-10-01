@@ -8,11 +8,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"trading-bot-system/backend/internal/logger"
 	"net/http"
 	"strconv"
 	"sync"
 	"time"
+	"trading-bot-system/backend/internal/logger"
 
 	"github.com/gorilla/websocket"
 	"trading-bot-system/backend/internal/domain/model"
@@ -395,18 +395,18 @@ func (b *BinanceOrderExecutor) generateSignature(queryString string) string {
 
 // BinanceOrderResponse represents the response from Binance order API
 type BinanceOrderResponse struct {
-	Symbol            string  `json:"symbol"`
-	OrderID           int64   `json:"orderId"`
-	ClientOrderID     string  `json:"clientOrderId"`
-	Price             string  `json:"price"`
-	OrigQty           string  `json:"origQty"`
-	ExecutedQty       string  `json:"executedQty"`
-	Status            string  `json:"status"`
-	TimeInForce       string  `json:"timeInForce"`
-	Type              string  `json:"type"`
-	Side              string  `json:"side"`
-	TransactTime      int64   `json:"transactTime"`
-	CumQuoteQty       string  `json:"cummulativeQuoteQty"`
+	Symbol        string `json:"symbol"`
+	OrderID       int64  `json:"orderId"`
+	ClientOrderID string `json:"clientOrderId"`
+	Price         string `json:"price"`
+	OrigQty       string `json:"origQty"`
+	ExecutedQty   string `json:"executedQty"`
+	Status        string `json:"status"`
+	TimeInForce   string `json:"timeInForce"`
+	Type          string `json:"type"`
+	Side          string `json:"side"`
+	TransactTime  int64  `json:"transactTime"`
+	CumQuoteQty   string `json:"cummulativeQuoteQty"`
 }
 
 // PlaceOrder places a REAL order on Binance via REST API
@@ -444,17 +444,17 @@ func (b *BinanceOrderExecutor) PlaceOrder(ctx context.Context, order *model.Orde
 		)
 	}
 
+	// Tag the order with its ID so a submission that times out can be
+	// looked up (GetOrderByClientID) instead of being blindly re-sent.
+	if ValidClientOrderID(order.ID) {
+		params += "&newClientOrderId=" + order.ID
+	}
+
 	// Generate signature
 	signature := b.generateSignature(params)
 
-	// Determine order path: Binance TH uses /api/v1, Global uses /api/v3
-	orderPath := b.orderPath
-	if orderPath == "" {
-		orderPath = "/api/v3/order"
-	}
-
 	// Create request
-	reqURL := fmt.Sprintf("%s%s?%s&signature=%s", b.baseURL, orderPath, params, signature)
+	reqURL := fmt.Sprintf("%s%s?%s&signature=%s", b.baseURL, b.orderEndpoint(), params, signature)
 	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -462,36 +462,25 @@ func (b *BinanceOrderExecutor) PlaceOrder(ctx context.Context, order *model.Orde
 	req.Header.Set("X-MBX-APIKEY", b.apiKey)
 	req.Header.Set("Accept", "application/json")
 
-	// Execute request
-	resp, err := b.httpClient.Do(req)
+	// Execute request. Errors wrap ErrOrderStateUnknown when the order may
+	// have been accepted anyway (timeouts, 5xx, unparsable 200).
+	placed, err := classifyOrderResponse(b.httpClient.Do(req))
 	if err != nil {
-		return nil, fmt.Errorf("Binance API request failed: %w", err)
+		return nil, fmt.Errorf("Binance order: %w", err)
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	// Check HTTP status
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Binance API returned HTTP %d: %s", resp.StatusCode, string(body))
-	}
-
-	// Check for API error
-	var errResp struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-	}
-	if err := json.Unmarshal(body, &errResp); err == nil && errResp.Code != 0 {
-		return nil, fmt.Errorf("Binance API error (code %d): %s", errResp.Code, errResp.Msg)
-	}
-
-	// Parse successful response
-	var binanceResp BinanceOrderResponse
-	if err := json.Unmarshal(body, &binanceResp); err != nil {
-		return nil, fmt.Errorf("failed to parse Binance order response: %w, body: %s", err, string(body))
+	binanceResp := BinanceOrderResponse{
+		Symbol:        placed.Symbol,
+		OrderID:       placed.OrderID,
+		ClientOrderID: placed.ClientOrderID,
+		Price:         placed.Price,
+		OrigQty:       placed.OrigQty,
+		ExecutedQty:   placed.ExecutedQty,
+		Status:        placed.Status,
+		TimeInForce:   placed.TimeInForce,
+		Type:          placed.Type,
+		Side:          placed.Side,
+		TransactTime:  placed.TransactTime,
+		CumQuoteQty:   placed.CumQuote,
 	}
 
 	// Map Binance status to our model status
@@ -532,6 +521,40 @@ func (b *BinanceOrderExecutor) PlaceOrder(ctx context.Context, order *model.Orde
 	)
 
 	return result, nil
+}
+
+// orderEndpoint is /api/v1/order for Binance TH and /api/v3/order for Global.
+func (b *BinanceOrderExecutor) orderEndpoint() string {
+	if b.orderPath != "" {
+		return b.orderPath
+	}
+	return "/api/v3/order"
+}
+
+// GetOrderByClientID looks an order up by the client order ID it was placed
+// with. It returns ErrOrderNotFound when the exchange has no such order.
+func (b *BinanceOrderExecutor) GetOrderByClientID(ctx context.Context, symbol, clientOrderID string) (*Order, error) {
+	if b.apiKey == "" || b.apiSecret == "" {
+		return nil, fmt.Errorf("Binance API credentials not configured")
+	}
+	if !ValidClientOrderID(clientOrderID) {
+		return nil, fmt.Errorf("invalid client order ID %q", clientOrderID)
+	}
+	req, err := signedGet(ctx, b.baseURL, b.orderEndpoint(), b.apiKey,
+		fmt.Sprintf("symbol=%s&origClientOrderId=%s", symbol, clientOrderID), b.generateSignature)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	return classifyLookupResponse(b.httpClient.Do(req))
+}
+
+// CancelOrderByClientID cancels an open order by the client order ID it was
+// placed with. ErrOrderNotFound means it is not open any more.
+func (b *BinanceOrderExecutor) CancelOrderByClientID(ctx context.Context, symbol, clientOrderID string) error {
+	if b.apiKey == "" || b.apiSecret == "" {
+		return fmt.Errorf("Binance API credentials not configured")
+	}
+	return cancelByClientID(ctx, b.httpClient, b.baseURL, b.orderEndpoint(), b.apiKey, symbol, clientOrderID, b.generateSignature)
 }
 
 // CancelOrder cancels an order on Binance

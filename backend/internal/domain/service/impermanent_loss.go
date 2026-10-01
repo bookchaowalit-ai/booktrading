@@ -7,14 +7,14 @@ import (
 
 // ImpermanentLossResult contains the results of IL calculation
 type ImpermanentLossResult struct {
-	ImpermanentLossPct    float64 `json:"il_percentage"`     // IL as percentage
-	CurrentValueUSD       float64 `json:"current_value_usd"`  // Current LP position value
-	HODLValueUSD          float64 `json:"hold_value_usd"`     // Value if simply held
-	LossUSD               float64 `json:"loss_usd"`           // Absolute loss in USD
-	Token0Ratio           float64 `json:"token0_ratio"`       // Token0 price ratio change
-	FeesEarnedUSD         float64 `json:"fees_earned_usd"`    // Fees earned from LP
-	NetResultUSD          float64 `json:"net_result_usd"`     // Net result (fees - IL)
-	IsProfitable          bool    `json:"is_profitable"`      // Whether fees > IL
+	ImpermanentLossPct float64 `json:"il_percentage"`     // IL as percentage
+	CurrentValueUSD    float64 `json:"current_value_usd"` // Current LP position value
+	HODLValueUSD       float64 `json:"hold_value_usd"`    // Value if simply held
+	LossUSD            float64 `json:"loss_usd"`          // Absolute loss in USD
+	Token0Ratio        float64 `json:"token0_ratio"`      // Token0 price ratio change
+	FeesEarnedUSD      float64 `json:"fees_earned_usd"`   // Fees earned from LP
+	NetResultUSD       float64 `json:"net_result_usd"`    // Net result (fees - IL)
+	IsProfitable       bool    `json:"is_profitable"`     // Whether fees > IL
 }
 
 // ILCalculator calculates impermanent loss for LP positions

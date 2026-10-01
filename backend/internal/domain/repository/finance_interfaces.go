@@ -150,8 +150,8 @@ type FinanceDashboardRepository interface {
 
 // MonthlyIncomeExpense represents monthly income vs expense data
 type MonthlyIncomeExpense struct {
-	Month     time.Time `json:"month"`
-	Income    float64   `json:"income"`
-	Expense   float64   `json:"expense"`
-	Savings   float64   `json:"savings"`
+	Month   time.Time `json:"month"`
+	Income  float64   `json:"income"`
+	Expense float64   `json:"expense"`
+	Savings float64   `json:"savings"`
 }

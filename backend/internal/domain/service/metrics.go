@@ -19,14 +19,14 @@ type MetricsService struct {
 	httpRequestDuration *prometheus.HistogramVec
 
 	// Trading metrics
-	tradesTotal       prometheus.Counter
-	tradesSuccess     prometheus.Counter
-	tradesFailed      prometheus.Counter
-	tradePnL          prometheus.Gauge
-	tradeWinRate      prometheus.Gauge
-	activeBots        prometheus.Gauge
-	paperTradesTotal  prometheus.Counter
-	paperPnL          prometheus.Gauge
+	tradesTotal      prometheus.Counter
+	tradesSuccess    prometheus.Counter
+	tradesFailed     prometheus.Counter
+	tradePnL         prometheus.Gauge
+	tradeWinRate     prometheus.Gauge
+	activeBots       prometheus.Gauge
+	paperTradesTotal prometheus.Counter
+	paperPnL         prometheus.Gauge
 
 	// Bot metrics
 	botStartsTotal prometheus.Counter
@@ -34,16 +34,16 @@ type MetricsService struct {
 	botUptime      *prometheus.GaugeVec
 
 	// System metrics
-	redisConnections    prometheus.Gauge
-	dbQueryDuration     *prometheus.HistogramVec
-	dbQueryTotal        *prometheus.CounterVec
-	exchangeAPICalls    *prometheus.CounterVec
-	exchangeAPIErrors   *prometheus.CounterVec
-	exchangeAPILatency  *prometheus.HistogramVec
-	riskChecks          prometheus.Counter
-	riskCheckBlocks     prometheus.Counter
-	alertsSent          *prometheus.CounterVec
-	alertsFailed        *prometheus.CounterVec
+	redisConnections   prometheus.Gauge
+	dbQueryDuration    *prometheus.HistogramVec
+	dbQueryTotal       *prometheus.CounterVec
+	exchangeAPICalls   *prometheus.CounterVec
+	exchangeAPIErrors  *prometheus.CounterVec
+	exchangeAPILatency *prometheus.HistogramVec
+	riskChecks         prometheus.Counter
+	riskCheckBlocks    prometheus.Counter
+	alertsSent         *prometheus.CounterVec
+	alertsFailed       *prometheus.CounterVec
 
 	// Uptime tracking
 	startTime time.Time

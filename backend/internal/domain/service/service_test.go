@@ -310,11 +310,11 @@ func TestConcurrentAccess(t *testing.T) {
 // TestGridParameters tests that grid parameters are properly validated
 func TestGridParameters(t *testing.T) {
 	tests := []struct {
-		name         string
-		lowerPrice   float64
-		upperPrice   float64
-		gridLevels   int
-		expectError  bool
+		name        string
+		lowerPrice  float64
+		upperPrice  float64
+		gridLevels  int
+		expectError bool
 	}{
 		{"Valid parameters", 2000000, 3000000, 5, false},
 		{"Lower equals upper", 2000000, 2000000, 5, true},

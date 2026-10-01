@@ -205,7 +205,7 @@ func fngSentimentLabel(score int) string {
 
 // fngToFloat converts 0-100 index to -1..+1 sentiment range
 func fngToFloat(score int) float64 {
-	return (float64(score)-50.0) / 50.0
+	return (float64(score) - 50.0) / 50.0
 }
 
 // GetSentiment handles GET /api/sentiment/{symbol}

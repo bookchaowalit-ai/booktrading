@@ -65,16 +65,16 @@ func (db *Database) Stats() map[string]interface{} {
 	}
 	stats := db.pool.Stat()
 	return map[string]interface{}{
-		"acquire_count":            stats.AcquireCount(),
-		"acquired_conns":           stats.AcquiredConns(),
-		"canceled_acquire_count":   stats.CanceledAcquireCount(),
-		"constructing_conns":       stats.ConstructingConns(),
-		"acquire_duration":         stats.AcquireDuration().String(),
-		"empty_acquire_count":      stats.EmptyAcquireCount(),
-		"idle_conns":               stats.IdleConns(),
-		"max_conns":                stats.MaxConns(),
-		"total_conns":              stats.TotalConns(),
-		"new_conns_count":          stats.NewConnsCount(),
+		"acquire_count":          stats.AcquireCount(),
+		"acquired_conns":         stats.AcquiredConns(),
+		"canceled_acquire_count": stats.CanceledAcquireCount(),
+		"constructing_conns":     stats.ConstructingConns(),
+		"acquire_duration":       stats.AcquireDuration().String(),
+		"empty_acquire_count":    stats.EmptyAcquireCount(),
+		"idle_conns":             stats.IdleConns(),
+		"max_conns":              stats.MaxConns(),
+		"total_conns":            stats.TotalConns(),
+		"new_conns_count":        stats.NewConnsCount(),
 	}
 }
 

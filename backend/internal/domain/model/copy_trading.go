@@ -19,17 +19,17 @@ type StrategyProfile struct {
 
 // CopyRelationship represents a user copying a strategy
 type CopyRelationship struct {
-	ID            string         `json:"id"`
-	CopierID      string         `json:"copier_id"`
-	StrategyID    string         `json:"strategy_id"`
-	AllocationPct float64        `json:"allocation_percent"`
-	IsActive      bool           `json:"is_active"`
-	CreatedAt     time.Time      `json:"created_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
+	ID            string    `json:"id"`
+	CopierID      string    `json:"copier_id"`
+	StrategyID    string    `json:"strategy_id"`
+	AllocationPct float64   `json:"allocation_percent"`
+	IsActive      bool      `json:"is_active"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 	// Joined fields for API responses
-	StrategyName   *string        `json:"strategy_name,omitempty"`
-	StrategyType   *string        `json:"strategy_type,omitempty"`
-	StrategyPerf   map[string]any `json:"strategy_performance,omitempty"`
+	StrategyName *string        `json:"strategy_name,omitempty"`
+	StrategyType *string        `json:"strategy_type,omitempty"`
+	StrategyPerf map[string]any `json:"strategy_performance,omitempty"`
 }
 
 // CopyTrade represents an individual copied trade
@@ -50,16 +50,16 @@ type CopyTrade struct {
 
 // LeaderboardEntry represents a strategy in the public leaderboard
 type LeaderboardEntry struct {
-	StrategyID   string   `json:"strategy_id"`
-	Name         string   `json:"name"`
-	StrategyType string   `json:"strategy_type"`
-	TotalCopiers int      `json:"total_copiers"`
-	WinRate      float64  `json:"win_rate"`
-	TotalReturn  float64  `json:"total_return_percent"`
-	ProfitFactor float64  `json:"profit_factor"`
-	MaxDrawdown  float64  `json:"max_drawdown_percent"`
-	SharpeRatio  float64  `json:"sharpe_ratio"`
-	Description  *string  `json:"description,omitempty"`
+	StrategyID   string  `json:"strategy_id"`
+	Name         string  `json:"name"`
+	StrategyType string  `json:"strategy_type"`
+	TotalCopiers int     `json:"total_copiers"`
+	WinRate      float64 `json:"win_rate"`
+	TotalReturn  float64 `json:"total_return_percent"`
+	ProfitFactor float64 `json:"profit_factor"`
+	MaxDrawdown  float64 `json:"max_drawdown_percent"`
+	SharpeRatio  float64 `json:"sharpe_ratio"`
+	Description  *string `json:"description,omitempty"`
 }
 
 // CreateStrategyRequest for creating a new shareable strategy

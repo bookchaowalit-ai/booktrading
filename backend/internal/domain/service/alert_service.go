@@ -197,12 +197,12 @@ func (s *AlertService) sendToTelegram(ctx context.Context, alert *model.Alert) e
 // sendToWebhook sends a POST request to a custom webhook URL
 func (s *AlertService) sendToWebhook(ctx context.Context, alert *model.Alert) error {
 	payload := map[string]any{
-		"type":       string(alert.Type),
-		"title":      alert.Title,
-		"message":    alert.Message,
-		"data":       alert.Data,
-		"timestamp":  alert.CreatedAt.Format(time.RFC3339),
-		"source":     "trading-bot",
+		"type":      string(alert.Type),
+		"title":     alert.Title,
+		"message":   alert.Message,
+		"data":      alert.Data,
+		"timestamp": alert.CreatedAt.Format(time.RFC3339),
+		"source":    "trading-bot",
 	}
 
 	body, err := json.Marshal(payload)

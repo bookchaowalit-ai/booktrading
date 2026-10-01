@@ -28,7 +28,12 @@ func TestSensitiveRoutesRequireSession(t *testing.T) {
 				router.ServeHTTP(res, req)
 				want := http.StatusUnauthorized
 				if token == "fixture-session" {
+					// These paths are not in routeAccess: reads need a
+					// session, writes need an admin (fail closed).
 					want = http.StatusNoContent
+					if method != http.MethodGet {
+						want = http.StatusForbidden
+					}
 				}
 				if res.Code != want {
 					t.Fatalf("%s %s token-present=%t: got %d want %d", method, path, token != "", res.Code, want)
@@ -39,7 +44,7 @@ func TestSensitiveRoutesRequireSession(t *testing.T) {
 }
 
 func TestPublicRoutesAreExact(t *testing.T) {
-	for _, path := range []string{"/api/auth/login", "/api/auth/register", "/api/health"} {
+	for _, path := range []string{"/api/auth/login", "/api/auth/register", "/api/auth/config", "/api/health"} {
 		if !isPublicRoute(path) {
 			t.Fatalf("bootstrap endpoint protected: %s", path)
 		}

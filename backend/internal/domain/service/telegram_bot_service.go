@@ -16,15 +16,15 @@ import (
 
 // TelegramBotService manages the Telegram bot interface
 type TelegramBotService struct {
-	botToken     string
-	botURL       string
-	httpClient   *http.Client
-	pool         *pgxpool.Pool
-	mu           sync.RWMutex
-	offset       int64
-	running      bool
-	ctx          context.Context
-	cancel       context.CancelFunc
+	botToken   string
+	botURL     string
+	httpClient *http.Client
+	pool       *pgxpool.Pool
+	mu         sync.RWMutex
+	offset     int64
+	running    bool
+	ctx        context.Context
+	cancel     context.CancelFunc
 
 	// Callbacks to other services
 	statusCallback   func() map[string]any // returns bot status
@@ -126,7 +126,7 @@ func (s *TelegramBotService) pollUpdates() {
 }
 
 type telegramUpdate struct {
-	ID      int64           `json:"update_id"`
+	ID      int64            `json:"update_id"`
 	Message *telegramMessage `json:"message"`
 }
 

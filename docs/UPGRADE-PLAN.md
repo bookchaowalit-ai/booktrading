@@ -1,0 +1,405 @@
+# Upgrade Plan
+
+Living backlog for incremental hardening passes. Read `README.md` (capital
+protection mode) first; nothing here authorizes real-money trading.
+
+## Current state
+
+**Score: 9.2 / 10** (9.1 after pass 12, 9.0 after pass 11, 8.9 after pass 10, 8.8 after pass 9, 8.7 after pass 8, 8.5 after pass 7, 8 after pass 4, 7.5 after pass 3, 7 after pass 2, 6.5 after pass 1, 5 before). Pass 5 closed the last order-safety P0: Bitkub grid orders reconcile through the v3 API instead of pausing the grid, open grid orders are cancelled after a max age, and signal/auto orders reuse the same reconciliation. Pass 4 moved the frontend to Next 15.5 / React 19 with a tracked lockfile, and made grid orders with an unknown outcome reconcile by client order ID instead of re-submitting. Pass 3 fixed failed signal orders being counted as paper trades, made strategy auth fail closed in production, and enforced gofmt/tidy in CI. Pass 2 closed the Go grid P0s (position cap, per-level idempotency, failed orders no longer counted as paper trades) and moved Next to 14.2.35. The three suites (Go, Next.js,
+strategy Python) are green, and CI now runs the full offline strategy suite.
+Before this pass, the Go race detector flaked in CI, CI ran only 2 of the
+~50 strategy test files, the paper grid sync crashed with a `NameError` it
+then silently swallowed, the grid backtester had look-ahead bias, and anyone
+could reset the kill switch without authentication.
+
+## Backlog
+
+### P0
+- (none open) Validate the Bitkub v3 lookup against a real sandbox read-only
+  call before enabling Bitkub for real money: the client-ID fields in
+  `my-open-orders` / `my-order-history` are read defensively, and a lookup
+  that cannot attribute every recent row keeps the order pending.
+
+### P1
+- Backtester: ATR spacing and grid (re)anchoring still use bar *i*'s own
+  close/high/low. Anchor on the bar open or the previous close, and resolve
+  same-bar buy→sell round trips pessimistically.
+- Money math uses `float` / `float64` everywhere (Go `model`, Python bots).
+  Introduce `Decimal` (Python) or integer minor units at exchange boundaries,
+  starting with order quantity/price rounding.
+- CI pins `GO_VERSION: '1.21'` (EOL). Move to a supported Go and bump the
+  `go` directive in `go.mod` together.
+- The legacy Bitkub client methods (`GetBalances`, `PlaceOrder`,
+  `CancelOrder`, `GetOpenOrders` in `bitkub/client.go`) use non-Bitkub
+  paths/headers (`/api/v3/order`, `X-JFIN-*`) and are effectively dead.
+  Move balances to the signed v3 `wallet` call and delete the rest; the
+  `tradingClient`-only (no manager) path in `liveGridExchange` still treats
+  any accepted order as a fill.
+- Make `gridOrderMaxAge` (15 min) configurable per bot start.
+
+- Admin-only role management endpoint; today the only admin is the
+  `FIRST_ADMIN_EMAIL`/`FIRST_ADMIN_PASSWORD` bootstrap account.
+- Users table has no DB-backed test in CI: `users_db_test.go` runs only with
+  `BOOKTRADING_TEST_DATABASE_URL`. Add a CI step that runs `cmd/migrate up`
+  on the timescale service container and sets that variable.
+- Login answers faster for unknown emails than for wrong passwords (no
+  bcrypt work), which leaks account existence; compare against a dummy hash.
+- Login/invite lockout and the per-account delay are in process memory: it
+  resets on restart and is not shared between replicas. Move it to Redis.
+- The (email, IP) lockout uses the same limit (5) as the per-IP lockout,
+  so today it only adds a tier if the per-IP limit is raised (e.g. for
+  NAT-heavy users). Revisit both together.
+
+### P2
+- If registration is ever opened in production (`ALLOW_REGISTRATION=true`),
+  the `userReadAdmin` reads (operator balances, orders, trades, settings)
+  become visible to every account again: make them admin-only first.
+- `/api/metrics` needs a session, so a Prometheus scraper cannot read it;
+  add a scrape token (service-level) if monitoring/ expects it.
+- The proxy allow-list (`strategyAllowedSections`) must be extended when the
+  dashboard starts calling a new strategy `/api/<section>`; `/api/ai`,
+  `/api/arbitrage` and `/api/v1/world` are intentionally not proxied.
+- Strategy ruff debt: about 1,800 findings, most of them auto-fixable
+  (imports, pyupgrade). Fix them per package and widen the CI ruff scope
+  beyond `E9,F63,F7,F82`.
+- Duplicate re-exports in `app/market_intel/sources/__init__.py` (F811).
+- Frontend residual `npm audit` findings: `postcss` bundled inside `next`
+  (build-time only) and `esbuild` under vitest 1.x (dev server only). Move
+  vitest to 3.x; the postcss one clears when Next ships a newer bundle.
+- `next lint` is deprecated in Next 15.5 and removed in 16. Migrate to the
+  ESLint CLI with a flat `eslint.config.mjs` before any Next 16 move.
+- Go `adapter/exchange`, `adapter/repository` and `adapter/grpcserver` have
+  no tests. Add table tests around order request construction, using fake
+  HTTP servers only.
+
+## Done in this pass (pass 13: client IP trust, account lockout)
+- Follow-up: the per-account hard lockout let anyone lock the admin's email
+  for 15 minutes with 10 wrong passwords. Replaced by the standard pattern:
+  hard lockout per (normalized email, client IP) pair (5 failures) plus the
+  per-IP limit; failures against one email from any IPs only add a
+  progressive delay before password verification (free for 3, then 250 ms
+  doubling, capped at 4 s; no lock held while waiting, aborted when the
+  client leaves). Success clears only that (email, IP) counter. The delay
+  is injectable (`AuthHandler.loginSleep`). Tests: many-IP attack on the
+  admin (all 401, delays as specified, admin then logs in from a fresh IP
+  with the capped delay), same-IP brute force locks only that IP, success
+  clears only its pair, unknown/known email parity (status, body, delay,
+  lockout), cancelled delay.
+- Forwarding headers are trusted only from `TRUSTED_PROXIES` (CIDRs/IPs or
+  `*`; default loopback + private ranges, i.e. the Caddy/Next.js
+  containers). X-Forwarded-For is walked right-to-left (first untrusted hop),
+  X-Real-IP is the fallback. One helper (`client_ip.go`) now feeds the login
+  lockout, the global rate limiter and audit logs. Before, any client could
+  rotate `X-Real-IP` to dodge the lockout, and header-less traffic through a
+  proxy shared one bucket, so 5 bad logins locked everyone (admin included).
+- The Caddyfile sets `header_up X-Real-IP {remote_host}` on every upstream;
+  `TRUSTED_PROXIES` is passed through both compose files and documented in
+  `.env.example`.
+- Per-account lockout (superseded by the follow-up above): 10 failures
+  against one normalized email (from any IPs) blocked that email for 15
+  minutes, on top of the per-IP 5. Unknown
+  emails are tracked the same way and every lockout answers the same generic
+  429 with `Retry-After`, so it does not reveal whether an account exists. A
+  successful login clears the account counter but no longer the IP counter
+  (an attacker could otherwise refill the IP budget with their own account).
+  The attempt map is pruned past 100k keys.
+- `GET /api/market-intel/scan` (outbound scans + signal writes) is now
+  `POST` + `@auth_required`, so the `/strategy-api` proxy makes it admin-only;
+  the frontend service, route matrix, proxy privileged-route list and tests
+  were updated.
+- Tests (all fail on the previous code): `login_lockout_test.go` (spoofed
+  headers, shared proxy, trusted-proxy parsing, per-account lockout with the
+  admin still able to log in, IP budget not refilled by success);
+  `test_market_intel_scan_is_a_protected_post`; the frontend scan call.
+
+## Done in pass 12: registration gate, 403 UX
+- Owner decision resolved: self-registration is **closed by default when
+  `ENVIRONMENT=production`** and open in development. `ALLOW_REGISTRATION`
+  (true/false; unparsable fails closed) overrides; `REGISTRATION_INVITE_CODE`
+  makes sign-up invite-only (sha256 + `subtle.ConstantTimeCompare`), and an
+  explicit `ALLOW_REGISTRATION=false` beats the code. Rejected sign-ups get
+  `403 {error, code: registration_closed|invite_invalid}`; wrong invite
+  codes count toward the per-IP lockout. `backend/internal/adapter/http/registration.go`.
+- `docker-compose.prod.yml` now sets `ENVIRONMENT=production` on the backend
+  (it was only set on strategy) and passes both variables through;
+  `docker-compose.yml` defaults to `development`.
+- New public `GET /api/auth/config` -> `{registrationOpen, inviteRequired}`;
+  added to the route matrix, `isPublicRoute`, the public allow-list and the
+  pinned critical levels.
+- Fixed: the login lockout never engaged (the first failure stored
+  `blockedUntil=now`, so the next check reset the counter).
+- Frontend: `LoginModal` reads `/api/auth/config` (fails closed), hides the
+  sign-up link when closed, shows an invite-code field when invite-only, and
+  maps the register 403 codes to Thai. `services/forbidden.ts` wraps
+  `window.fetch` (installed by `ForbiddenNotice` in the dashboard layout) so
+  any backend 403 outside `/api/auth/*` shows one Thai toast per 3 s;
+  `api.ts` and `financeApi.ts` errors use the Thai message for 403.
+- Tests: `registration_test.go` (env matrix, prod closed, dev open, invite
+  code, invite lockout, `/api/auth/config` through the real router),
+  `TestLoginLockoutAfterRepeatedFailures`; vitest `forbidden.test.ts`,
+  `auth-config.test.ts`, `LoginModal.test.tsx`.
+- Docs: `.env.example`, `API.md` (registration + admin-only 403),
+  `PRODUCTION.md`.
+- Verified: gofmt, go vet, `go test -race ./...`, golangci-lint (70, none
+  new), vitest 69 passed, `tsc --noEmit`, `next lint`, `next build`,
+  `docker compose config` (dev + prod).
+
+## Done in pass 11: route access matrix, loopback ports
+- Go backend: `internal/adapter/http/route_access.go` is the access matrix
+  for every ServeMux pattern (public / user / admin, plus `Service` for the
+  routes the strategy bots call with `AUTH_TOKEN`). The router gate looks up
+  the matched pattern; an unlisted pattern fails closed (reads need a
+  session, writes an admin). Open self-registration could previously place
+  real orders, change exchange keys, start/stop bots, import/reset settings,
+  reset the paper engine, send test alerts and read every user's audit log:
+  those writes (and audit reads) are now admin-only. Per-user routes
+  (finance, DEX wallets, DCA, copy, rebalance, SL/TP) stay user-level.
+- `routes_access_test.go` parses the package and `cmd/main.go` for every
+  `HandleFunc`/`Handle` pattern, fails on unclassified or stale entries,
+  forbids public routes beyond login/register/health, pins the money-moving
+  routes, and drives the real gate over every pattern x 6 methods x 5
+  callers (anonymous, bad token, service, trader, admin).
+- Fixed: strategy -> backend calls (real grid, DCA, trend, paper grid, trade
+  journal, portfolio) sent no credentials and got 401 from the session gate.
+  `strategy/app/backend_auth.py` adds an httpx hook that attaches
+  `Bearer $AUTH_TOKEN` only to `BACKEND_API_BASE`/`PAPER_API_BASE` URLs.
+- Fixed: SL/TP configs were keyed by the client-supplied `X-User-ID` header
+  (any user could read/delete another's); now the session user.
+- Strategy API: `tests/test_route_access_matrix.py` lists all 81 FastAPI
+  method/path pairs as public/service/strict, forbids public writes and checks every
+  protected route answers 401 to anonymous, wrong and non-Bearer tokens.
+  Fixed `PUT /api/real-grid/config/{symbol}`: its JSON body was named
+  `request`, so `@auth_required` got a dict and every call returned 500.
+- Compose: Postgres, Redis, backend HTTP/WS, gRPC and strategy publish on
+  `127.0.0.1` by default in `docker-compose.yml` and `.dev.yml`
+  (`POSTGRES_BIND`, `REDIS_BIND`, `BACKEND_BIND`, `GRPC_BIND`,
+  `STRATEGY_BIND` override); dev strategy now gets `AUTH_TOKEN`.
+- Deploy note: the operator must use the `FIRST_ADMIN_*` account for
+  trading/exchange/settings writes; trader accounts get 403 there.
+- Verified: gofmt, go vet, `go test -race ./...`, golangci-lint (70, none
+  new), strategy pytest 655 passed, ruff, `docker compose config` x3.
+
+## Done in pass 10: persistent users
+- Accounts persist in the `users` table (migration 008, previously unused):
+  `database.UserRepository` (pgx; duplicate email -> `ErrEmailTaken`),
+  wired in `cmd/main.go` via `NewAuthHandlerWithUsers`; sessions stay in
+  Redis. `AuthHandler` talks to a `UserStore` interface with an in-memory
+  fallback for tests. Emails are trimmed and lower-cased. The DEX tables'
+  `REFERENCES users(id)` and `fk_orders_user_id` now have real rows to point
+  at.
+- `FIRST_ADMIN_*` bootstrap keeps its semantics across restarts: created
+  once (ID "1" when free, so data it owns keeps its owner), its password
+  follows `FIRST_ADMIN_PASSWORD`, and a self-registered non-admin account
+  holding that email is never promoted (registration does not verify
+  email). A user-store outage fails closed (login 500, `IsAdmin` false).
+- Tests: restart survival, idempotent bootstrap, env password change,
+  squatted admin email, ID "1" taken, store outage (fake store); repository
+  test against Postgres 16 with migration 008 applied (env-gated).
+- Deploy note: users registered before this pass were in memory only and
+  must register again; migration 008 must be applied or login returns 500.
+- Verified: gofmt, go vet, `go test -race ./...`, golangci-lint (70 issues,
+  same as before; none new), DB test on Postgres 16.
+
+## Done in pass 9: admin-only strategy controls
+- `/strategy-api/*` now enforces roles: every GET/HEAD in the allow-list is a
+  read for any authenticated user; every write method is admin-only and
+  returns 403 before any upstream call (kill/enable/restart, real-grid config
+  PUT, strategy config/reset, risk reset, brain refresh/reset-cb, paper
+  kill-switch resets, backtest run/sweep/compare/walk-forward, airdrop-tracker
+  writes, signal evaluation). Fail-closed: a new upstream write route is
+  admin-only until reclassified; a proxy built without `IsAdmin` denies all
+  writes. The route table lives in the `strategy_proxy.go` doc comment.
+- Role source: the existing `authUser.Role` (`admin` only for the
+  `FIRST_ADMIN_EMAIL` env bootstrap, `trader` for self-registration, so no
+  migration was needed). An email-list bootstrap (`ADMIN_EMAILS`) was not
+  added because registration is open and unverified: it would let anyone
+  who registers such an address first become admin.
+- `docker-compose.yml` publishes the strategy service on `127.0.0.1:8001`
+  only.
+- Frontend: `isAdmin()` in `services/auth.ts`; the monitoring page disables
+  the kill/enable buttons for non-admins.
+- Verified: gofmt, go vet, `go test -race ./...`, golangci-lint (no new
+  findings; 70 pre-existing), vitest 53, tsc, `next build`.
+
+## Done in pass 8: backend strategy proxy, P1 closed
+- P1 "strategy auth vs. browser sessions" done: the Go backend serves
+  `/strategy-api/*` (`backend/internal/adapter/http/strategy_proxy.go`). It
+  validates the session with `AuthHandler.ValidateToken` (the router's auth
+  gate runs first too), drops the caller's `Authorization`/`Cookie`/
+  `X-Forwarded-*`, and forwards to `STRATEGY_URL` with
+  `Authorization: Bearer $AUTH_TOKEN` (server env only). Path allow-list of
+  the `/api/<section>` groups the dashboard uses; dot segments, encoded
+  separators and `//` are rejected; 1 MiB body cap; `STRATEGY_PROXY_TIMEOUT`
+  (25s default, 504 on expiry); only GET/HEAD/POST/PUT/PATCH/DELETE; upstream
+  CORS/Set-Cookie stripped; only `GET /api/health` is public.
+- Frontend rewrite, Caddy and dev compose now send `/strategy-api` to the
+  backend; the frontend no longer knows `STRATEGY_URL`. Backend compose gets
+  `STRATEGY_URL`, `AUTH_TOKEN`, `STRATEGY_PROXY_TIMEOUT`. Reads that sent no
+  session (research, ai-insights, evidence pages, `market-intel.ts`,
+  `trade-journal.ts`, `api.getIndicators`) now send `authHeaders()`, and the
+  last two stopped defaulting to `http://localhost:8001`.
+- Tests: `strategy_proxy_test.go` (unauthenticated -> 401 with no upstream
+  call; upstream sees the service token, never the user token or cookie;
+  traversal/encoded/unlisted paths rejected; body/method/timeout limits;
+  upstream URL validation) and one more vitest. go vet/gofmt/`go test -race`
+  green, golangci-lint clean on the new files, vitest 51, tsc, lint and
+  `next build` green.
+
+## Done in pass 7: frontend strategy auth + World import
+- `frontend/src/services/auth-headers.ts`: the session bearer helper from
+  `api.ts` (localStorage `auth_token`, storage errors treated as signed out)
+  is now shared; `airdrop-tracker.ts`, `backtest.ts`, `signal-tracker.ts`
+  and `monitoring.ts` (incl. kill/enable) send it on every strategy call,
+  like `api.ts` kill/enable. `airdrop-tracker.ts` and `signal-tracker.ts`
+  defaulted to `http://localhost:8001` in the browser (next.config sets
+  `NEXT_PUBLIC_STRATEGY_URL` to ""), so they never reached the proxy; all
+  four now use the same-origin `/strategy-api`. Tests:
+  `strategy-services-auth.test.ts` (13 vitest).
+- `POST /api/v1/world/import` carries `@auth_required` and keeps its
+  fail-closed check (`require_configured_auth`: no dev-mode allow-all for
+  lake writes). `test_world_api.py` asserts the decorator and 401 for
+  missing/wrong/non-Bearer tokens and for an unset `AUTH_TOKEN`, with
+  nothing landed. Strategy suite 541 passed; ruff CI selection clean;
+  frontend lint/tsc/vitest (50)/next build green.
+
+## Done in pass 6: route auth + action pinning
+- `strategy/infrastructure/api/app.py`: `@auth_required` (same as the
+  real-grid kill/enable routes) now guards airdrop-tracker POST/PATCH
+  (task + subtask)/DELETE, backtest run/sweep/compare/walk-forward and
+  `POST /api/signal-tracker/evaluate`. Backtest handlers take
+  `request: Request, body: dict = Body(...)`, so the JSON body contract is
+  unchanged. `strategy/tests/test_mutating_routes_auth.py` (39 tests,
+  backends faked, no network): missing/wrong/non-Bearer token -> 401 and
+  nothing runs; valid token reaches the handler; body still parsed;
+  production without `AUTH_TOKEN` fails closed. Full suite 536 passed.
+- `.github/workflows/ci-cd.yml`: codecov, docker/setup-buildx,
+  docker/build-push and appleboy/ssh-action pinned to commit SHAs with a
+  `# vX.Y.Z` comment (resolved with `git ls-remote`, annotated tags
+  dereferenced).
+
+## Done in pass 5
+- Go Bitkub: new v3 order functions (`bitkub/orders_v3.go`): place-bid /
+  place-ask with `client_id` (bids converted to THB at the order price),
+  `order-info`, `cancel-order`, and `FindOrderByClientID`. Requests are
+  signed as documented (HMAC-SHA256 of timestamp + method + path[?query] +
+  body, `X-BTK-*` headers). Transport errors, 5xx, error 90 and unreadable
+  200s are unknown outcomes. Bitkub has no query by client ID, so the lookup
+  scans open orders and trade history since submission; "not found" is only
+  returned when no row in that window is unattributed (or the history page
+  is full), else the order stays pending. `ExchangeManager` wires Bitkub
+  into `PlaceOrderWithClientID` and the new `LookupOrderByClientIDSince`,
+  so a Bitkub grid order with an unknown outcome is reconciled instead of
+  pausing the grid.
+- Go grid: an accepted order open longer than 15 min is cancelled by client
+  order ID (`CancelOrderByClientID` on Binance, Binance TH and Bitkub),
+  retried at most once a minute. It stays pending until a lookup reports it
+  final, so partial and racing fills are recorded; unconfirmed orders are
+  never cancelled.
+- Go signal/auto: orders carry client order IDs and reuse the grid rules
+  (`signal_orders.go`): unknown or open orders become the symbol's pending
+  order and are looked up on the next signal / SL-TP check, so a timed-out
+  exit is never re-sent blindly. Stale open orders are cancelled, partial
+  fills update the auto position, and exits are capped to the position.
+- Tests: `bitkub/orders_v3_test.go` (signature-checking fake),
+  `bitkub_reconcile_test.go`, `order_reconcile_test.go`,
+  `grid_reconcile_test.go`, `signal_trade_test.go` — httptest fakes only.
+  Verified with `go vet`, `gofmt -l`, `go mod tidy` diff, `go test -race
+  ./...`.
+- Polymarket `_parse_date`: epoch values become tz-aware UTC like ISO `Z`
+  strings (they were naive host-local, so the two forms disagreed by the host
+  offset and could not be compared); `strategy/tests/test_polymarket_dates.py`.
+- Real-grid preflight `_as_float` treats NaN/inf as missing, so a NaN 24h
+  volume or price move no longer skips the liquidity/volatility warnings
+  (`test_preflight_treats_nan_market_data_as_missing`).
+- Go paper engine: a marketable limit order fills at the market price (a
+  SELL limit far below the market booked an invented loss at the limit).
+  Cash and position are re-checked at fill time, so two resting orders can
+  no longer oversell a position or drive the balance negative (the second is
+  cancelled). Realized PnL is read before a full close removes the position,
+  so the trade event no longer reports 0. `paper_engine_fill_test.go`.
+- Go finance: goal progress, budget used and category share go through
+  `boundedPercent`, so a zero target/budget/expense month yields 0 instead of
+  NaN/Inf (which made the dashboard JSON fail to encode). `goalOnTrack` uses
+  fractional months: goals due within 30 days divided by `days/30 == 0`.
+  The dashboard's `OnTrack` uses the same rule. `finance_percent_test.go`.
+- Strategy DCA sells: quantity and limit price are floored to the symbol's
+  step/tick grid (`_floor_to_step`, Decimal-exact). They were sent raw
+  (15% of holdings, or 95% of a short balance), which Binance TH rejects,
+  and the min-notional check now runs after rounding.
+  `tests/test_dca_order_grid.py`.
+
+## Done in pass 4
+- Frontend: Next 14.2.35 -> 15.5.27 (latest 15.x), React 18 -> 19,
+  `@types/react*` 19, `eslint-config-next` 15.5.27, `@testing-library/react`
+  16 (+ `@testing-library/dom`), and `lucide-react` 0.469 (first release with
+  a React 19 peer). The only async request API use (`headers()` in
+  `src/app/page.tsx`) is now awaited; `[lang]` params were already awaited.
+  `npm audit` no longer lists Next advisories.
+- Frontend installs are reproducible: `package-lock.json` is tracked, and CI
+  and the Dockerfile use `npm ci`. CI also runs `next build` now.
+- Verified: `npm run lint`, `tsc --noEmit`, `npm test` (37 passed), `npm run
+  build`.
+- Go grid: orders whose outcome is unknown are reconciled, never re-sent.
+  Every grid order has a client order ID (`newClientOrderId`). A timeout,
+  transport error, 5xx or unparsable 200 wraps `exchange.ErrOrderStateUnknown`
+  and becomes the book's pending order. An accepted order that is not filled
+  yet (NEW/PARTIALLY_FILLED) is pending too, so it is no longer counted as a
+  fill. While an order is pending the grid places nothing and looks it up
+  (`origClientOrderId`) each tick. FILLED records the fill, CANCELED/EXPIRED
+  records any partial fill, and "not found" frees the level only after a 60 s
+  grace. A lookup that fails or is unsupported keeps the order pending.
+  Supported on Binance and Binance TH; Bitkub pauses on an unknown outcome.
+  Tests: `grid_reconcile_test.go` and `exchange/order_reconcile_test.go`
+  (httptest fakes only). Verified with `go vet`, `gofmt -l`,
+  `go test -race ./...`.
+
+## Done in pass 3
+- Go signal/auto: `executeSignalTrade` now delegates to `signalTradeStep`.
+  A failed order is reported as `ORDER_FAILED` activity, is not counted in
+  `tradesCount`/`TotalTrades`, is never relabelled `PAPER_SIGNAL_*`, and
+  never opens an auto-mode position. Tests: `signal_trade_test.go`.
+- Strategy: `require_auth` fails closed when `AUTH_TOKEN` is empty and
+  `ENVIRONMENT=production` (set in `docker-compose.prod.yml`); startup logs
+  an error. Tests: `tests/test_require_auth_production.py`.
+- CI: `go mod tidy` no longer mutates go.mod silently (tidy + `git diff
+  --exit-code`), and a `gofmt -l` gate was added; all 42 unformatted backend
+  files were formatted.
+- Verified: `go vet`, `go test -race ./...`, strategy `pytest -q` (491
+  passed) and the CI ruff gate.
+
+## Done in pass 1
+- Go: fixed a data race and a stale-goroutine bug in `BotServiceImpl`. Each
+  run now gets its own context and config snapshot, so a Stop→Start can no
+  longer leave the old loop trading. `Start` validates grid params: before
+  this, `gridLevels=0` made the grid size +Inf and turned every tick into a
+  BUY. `Start` also no longer reports "running" when persisting status fails.
+  Zero or negative prices never produce orders, and no order is placed after
+  Stop. Auto-mode keeps tracking a position whose exit order failed. Tests
+  are in `bot_safety_test.go`.
+- Strategy: fixed the `newly_fill_buys` NameError that disabled
+  `GridBot._sync_state` fill reconciliation (`tests/test_grid_sync.py`).
+- Strategy: kill-switch and circuit-breaker resets now fail closed (they need
+  a configured token and a matching token). Arb paper reset requires auth.
+  Token comparison uses `hmac.compare_digest`
+  (`tests/test_safety_reset_auth.py`).
+- Strategy: real/dca/trend bots default to safety mode unless
+  `BINANCE_TH_USE_TESTNET=false` is set explicitly
+  (`tests/test_mainnet_default.py`).
+- Backtester: the entry gate uses only closed bars (i-1), and MTF confirmation
+  uses only fully closed higher-TF candles. Buy fees are now charged, net and
+  gross PnL are consistent, and FIFO cost basis is matched by quantity
+  (`tests/test_grid_backtester.py`).
+- CI: the strategy job runs the full offline pytest suite plus a ruff gate
+  for undefined names and syntax errors.
+
+## Done in pass 2
+- Go grid: new per-run `gridBook` (`implementation.go`). A BUY is placed at
+  most once per grid level until a SELL releases it (idempotent, no more
+  order-per-tick), base inventory is capped at `quantity * gridLevels`, the
+  quote exposure is capped by `Investment` when set, SELL needs inventory
+  (no naked sells), and a failed order is reported as `ORDER_FAILED` instead
+  of a counted "PAPER" trade. Tests: `grid_position_test.go`; verified with
+  `go vet` and `go test -race ./...`.
+- Frontend: `next` and `eslint-config-next` 14.1.0 -> 14.2.35 (latest 14.x,
+  no major bump). Verified `npm run lint`, `tsc --noEmit`, `npm test`
+  (37 passed), `npm run build`.

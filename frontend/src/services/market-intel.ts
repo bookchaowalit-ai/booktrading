@@ -2,6 +2,7 @@
  * Market Intelligence Service
  * API client for the multi-market scanner
  */
+import { authHeaders, STRATEGY_URL } from './auth-headers';
 import type {
   ScannerResult,
   MarketQuote,
@@ -9,8 +10,6 @@ import type {
   MarketAlert,
   MarketOverview,
 } from '@/types/market-intel';
-
-const STRATEGY_URL = process.env.NEXT_PUBLIC_STRATEGY_URL || 'http://localhost:8001';
 
 export const marketIntelService = {
   /**
@@ -20,7 +19,12 @@ export const marketIntelService = {
     const params = new URLSearchParams({ min_confidence: minConfidence.toString() });
     if (markets?.length) params.set('markets', markets.join(','));
 
-    const res = await fetch(`${STRATEGY_URL}/api/market-intel/scan?${params}`);
+    // POST: a scan calls every enabled source and writes signals (admin-only
+    // through the /strategy-api proxy).
+    const res = await fetch(`${STRATEGY_URL}/api/market-intel/scan?${params}`, {
+      method: 'POST',
+      headers: authHeaders(),
+    });
     if (!res.ok) throw new Error('Scan failed');
     return res.json();
   },
@@ -32,7 +36,7 @@ export const marketIntelService = {
     const params = new URLSearchParams();
     if (markets?.length) params.set('markets', markets.join(','));
 
-    const res = await fetch(`${STRATEGY_URL}/api/market-intel/quotes?${params}`);
+    const res = await fetch(`${STRATEGY_URL}/api/market-intel/quotes?${params}`, { headers: authHeaders() });
     if (!res.ok) throw new Error('Quotes fetch failed');
     return res.json();
   },
@@ -41,7 +45,7 @@ export const marketIntelService = {
    * Get market overview across all sources
    */
   async getOverview(): Promise<MarketOverview> {
-    const res = await fetch(`${STRATEGY_URL}/api/market-intel/overview`);
+    const res = await fetch(`${STRATEGY_URL}/api/market-intel/overview`, { headers: authHeaders() });
     if (!res.ok) throw new Error('Overview fetch failed');
     return res.json();
   },
@@ -50,7 +54,7 @@ export const marketIntelService = {
    * List available market data sources
    */
   async getSources(): Promise<{ sources: MarketSource[]; total: number }> {
-    const res = await fetch(`${STRATEGY_URL}/api/market-intel/sources`);
+    const res = await fetch(`${STRATEGY_URL}/api/market-intel/sources`, { headers: authHeaders() });
     if (!res.ok) throw new Error('Sources fetch failed');
     return res.json();
   },
@@ -62,7 +66,7 @@ export const marketIntelService = {
     const params = new URLSearchParams({ limit: limit.toString() });
     if (severity) params.set('severity', severity);
 
-    const res = await fetch(`${STRATEGY_URL}/api/market-intel/alerts?${params}`);
+    const res = await fetch(`${STRATEGY_URL}/api/market-intel/alerts?${params}`, { headers: authHeaders() });
     if (!res.ok) throw new Error('Alerts fetch failed');
     return res.json();
   },
@@ -71,7 +75,7 @@ export const marketIntelService = {
    * Get the most recent background scan result
    */
   async getLastScan(): Promise<ScannerResult | { status: string; message: string }> {
-    const res = await fetch(`${STRATEGY_URL}/api/market-intel/last-scan`);
+    const res = await fetch(`${STRATEGY_URL}/api/market-intel/last-scan`, { headers: authHeaders() });
     if (!res.ok) throw new Error('Last scan fetch failed');
     return res.json();
   },
@@ -85,7 +89,7 @@ export const marketIntelService = {
     signal_count: number;
     pairs_tracked: number;
   }> {
-    const res = await fetch(`${STRATEGY_URL}/api/market-intel/portfolio`);
+    const res = await fetch(`${STRATEGY_URL}/api/market-intel/portfolio`, { headers: authHeaders() });
     if (!res.ok) throw new Error('Portfolio fetch failed');
     return res.json();
   },

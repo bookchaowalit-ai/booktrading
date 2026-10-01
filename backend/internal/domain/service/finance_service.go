@@ -395,10 +395,7 @@ func (s *FinanceBudgetService) GetBudgetStatus(ctx context.Context, budget *mode
 		spent, _ = s.transactionRepo.GetTotalByType(ctx, budget.UserID, model.TransactionTypeExpense, startDate, endDate)
 	}
 
-	percentUsed := (spent / budget.Amount) * 100
-	if percentUsed > 100 {
-		percentUsed = 100
-	}
+	percentUsed := boundedPercent(spent, budget.Amount)
 
 	return &model.BudgetStatus{
 		BudgetID:     budget.ID,
@@ -491,20 +488,46 @@ func (s *FinanceGoalService) GetGoals(ctx context.Context, userID string) ([]*mo
 	return s.goalRepo.GetByUserID(ctx, userID)
 }
 
-func (s *FinanceGoalService) GetGoalProgress(ctx context.Context, goal *model.FinanceGoal) (*model.GoalProgress, error) {
-	progress := (goal.CurrentAmount / goal.TargetAmount) * 100
-	if progress > 100 {
-		progress = 100
+// boundedPercent is part/whole as a percentage in [0, 100] (goal progress,
+// budget used, category share). A zero or missing whole has no defined share
+// and reports 0 instead of NaN/Inf, which encoding/json refuses to marshal.
+func boundedPercent(current, target float64) float64 {
+	if !(target > 0) || math.IsNaN(current) || math.IsInf(current, 0) {
+		return 0
 	}
+	progress := current / target * 100
+	if progress < 0 {
+		return 0
+	}
+	if progress > 100 {
+		return 100
+	}
+	return progress
+}
+
+// goalOnTrack reports whether the monthly contribution covers what is still
+// missing before the target date. Months are fractional (days/30): the old
+// integer division made every goal due within 30 days divide by zero, so a
+// goal already reached reported NaN (off track) and any shortfall +Inf.
+func goalOnTrack(target, current, monthly float64, daysRemaining int) bool {
+	missing := target - current
+	if missing <= 0 {
+		return true
+	}
+	if daysRemaining <= 0 {
+		return false
+	}
+	return monthly*float64(daysRemaining)/30 >= missing
+}
+
+func (s *FinanceGoalService) GetGoalProgress(ctx context.Context, goal *model.FinanceGoal) (*model.GoalProgress, error) {
+	progress := boundedPercent(goal.CurrentAmount, goal.TargetAmount)
 
 	daysRemaining := 0
 	onTrack := true
 	if goal.TargetDate != nil {
 		daysRemaining = int((*goal.TargetDate).Sub(time.Now()).Hours() / 24)
-		if daysRemaining > 0 {
-			requiredMonthly := (goal.TargetAmount - goal.CurrentAmount) / float64(daysRemaining/30)
-			onTrack = goal.MonthlyContribution >= requiredMonthly
-		}
+		onTrack = goalOnTrack(goal.TargetAmount, goal.CurrentAmount, goal.MonthlyContribution, daysRemaining)
 	}
 
 	return &model.GoalProgress{
@@ -964,10 +987,7 @@ func (s *DashboardService) GetDashboardSummary(ctx context.Context, userID strin
 	goals, _ := s.goalRepo.GetActive(ctx, userID)
 	goalsProgress := make([]model.GoalProgress, 0, len(goals))
 	for _, goal := range goals {
-		progress := (goal.CurrentAmount / goal.TargetAmount) * 100
-		if progress > 100 {
-			progress = 100
-		}
+		progress := boundedPercent(goal.CurrentAmount, goal.TargetAmount)
 		daysRemaining := 0
 		if goal.TargetDate != nil {
 			daysRemaining = int((*goal.TargetDate).Sub(now).Hours() / 24)
@@ -979,7 +999,7 @@ func (s *DashboardService) GetDashboardSummary(ctx context.Context, userID strin
 			CurrentAmount: goal.CurrentAmount,
 			Progress:      progress,
 			DaysRemaining: daysRemaining,
-			OnTrack:       goal.MonthlyContribution > 0,
+			OnTrack:       goal.TargetDate == nil || goalOnTrack(goal.TargetAmount, goal.CurrentAmount, goal.MonthlyContribution, daysRemaining),
 		})
 	}
 
@@ -997,14 +1017,14 @@ func (s *DashboardService) GetDashboardSummary(ctx context.Context, userID strin
 			spent, _ = s.transactionRepo.GetTotalByType(ctx, userID, model.TransactionTypeExpense, monthStart, monthEnd)
 		}
 
-		percentUsed := (spent / budget.Amount) * 100
+		percentUsed := boundedPercent(spent, budget.Amount)
 		budgetStatus = append(budgetStatus, model.BudgetStatus{
 			BudgetID:     budget.ID,
 			BudgetName:   budget.Name,
 			BudgetAmount: budget.Amount,
 			SpentAmount:  spent,
 			Remaining:    budget.Amount - spent,
-			PercentUsed:  math.Min(percentUsed, 100),
+			PercentUsed:  percentUsed,
 			IsOverBudget: spent > budget.Amount,
 		})
 	}
@@ -1024,12 +1044,12 @@ func (s *DashboardService) GetDashboardSummary(ctx context.Context, userID strin
 		if cat == nil {
 			cat = &model.FinanceCategory{Name: "Uncategorized", Color: "#95A5A6"}
 		}
-		percentage := (amount / totalExpense) * 100
+		percentage := boundedPercent(amount, totalExpense)
 		spendingByCategory = append(spendingByCategory, model.CategorySpending{
 			CategoryID:   catID,
 			CategoryName: cat.Name,
 			Amount:       amount,
-			Percentage:   math.Min(percentage, 100),
+			Percentage:   percentage,
 			Color:        cat.Color,
 		})
 	}

@@ -9,15 +9,16 @@ const nextConfig = {
   },
   async rewrites() {
     const backendUrl = process.env.BACKEND_URL || 'http://backend:8080';
-    const strategyUrl = process.env.STRATEGY_URL || 'http://strategy:8000';
     return [
       {
         source: '/api/:path*',
         destination: `${backendUrl}/api/:path*`,
       },
       {
+        // Strategy calls go through the Go backend, which validates the
+        // session and injects the server-side AUTH_TOKEN (never the browser).
         source: '/strategy-api/:path*',
-        destination: `${strategyUrl}/:path*`,
+        destination: `${backendUrl}/strategy-api/:path*`,
       },
     ];
   },

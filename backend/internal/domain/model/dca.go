@@ -41,17 +41,17 @@ type DCABot struct {
 
 // DCAOrder represents a DCA order (base, safety, or take-profit)
 type DCAOrder struct {
-	ID           string     `json:"id"`
-	BotID        string     `json:"bot_id"`
-	OrderType    string     `json:"order_type"`
-	Side         string     `json:"side"`
-	Quantity     float64    `json:"quantity"`
-	Price        float64    `json:"price"`
-	Total        float64    `json:"total"`
-	Status       string     `json:"status"`
-	OrderNumber  int        `json:"order_number"`
-	ExecutedAt   *time.Time `json:"executed_at,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
+	ID          string     `json:"id"`
+	BotID       string     `json:"bot_id"`
+	OrderType   string     `json:"order_type"`
+	Side        string     `json:"side"`
+	Quantity    float64    `json:"quantity"`
+	Price       float64    `json:"price"`
+	Total       float64    `json:"total"`
+	Status      string     `json:"status"`
+	OrderNumber int        `json:"order_number"`
+	ExecutedAt  *time.Time `json:"executed_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
 }
 
 // DCABotCreateRequest represents the request to create a new DCA bot

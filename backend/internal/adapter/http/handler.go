@@ -2,7 +2,6 @@ package http
 
 import (
 	"encoding/json"
-	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -335,8 +334,9 @@ func (h *HealthHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 
 // Router configures HTTP routes
 type Router struct {
-	mux         *http.ServeMux
-	authHandler *AuthHandler
+	mux          *http.ServeMux
+	authHandler  *AuthHandler
+	serviceToken string // strategy AUTH_TOKEN; accepted on Service routes only
 }
 
 // NewRouter creates a new router
@@ -604,6 +604,13 @@ func (r *Router) RegisterAuthRoutes(handler *AuthHandler) {
 	r.mux.HandleFunc("/api/auth/register", func(w http.ResponseWriter, req *http.Request) {
 		if req.Method == http.MethodPost {
 			handler.Register(w, req)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	r.mux.HandleFunc("/api/auth/config", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodGet {
+			handler.Config(w, req)
 		} else {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -950,7 +957,7 @@ func (r *Router) RegisterFinanceRoutes(handler *FinanceHandler) {
 // Only the exact bootstrap and health endpoints bypass authentication.
 func isPublicRoute(path string) bool {
 	switch path {
-	case "/api/auth/login", "/api/auth/register", "/api/health":
+	case "/api/auth/login", "/api/auth/register", "/api/auth/config", "/api/health", StrategyProxyPrefix + "/api/health":
 		return true
 	default:
 		return false
@@ -1024,21 +1031,10 @@ func (rl *rateLimiter) Allow(key string) bool {
 // requests for 10+ paper symbols + 5 real symbols + balance/ticker queries
 var globalRateLimiter = newRateLimiter(1000, time.Minute, 10000)
 
-// extractClientIP extracts the real client IP from the request.
-// Behind a trusted proxy, use X-Real-IP (set by the proxy, not the client).
-// Never trust X-Forwarded-For from untrusted sources.
+// extractClientIP extracts the real client IP for the global rate limiter.
+// Forwarding headers count only from TRUSTED_PROXIES; see clientIPFromRequest.
 func extractClientIP(r *http.Request) string {
-	// If behind a trusted reverse proxy (Caddy/nginx), X-Real-IP is set by the proxy
-	if ip := r.Header.Get("X-Real-IP"); ip != "" {
-		return ip
-	}
-
-	// Fallback to RemoteAddr (strips port if present)
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
+	return clientIPFromRequest(r)
 }
 
 // ServeHTTP implements http.Handler
@@ -1090,24 +1086,38 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// Enforce authentication on all non-public routes
-	if !isPublicRoute(req.URL.Path) {
+	// Enforce the access matrix (route_access.go) on every route.
+	rule := r.ruleFor(req)
+	level := rule.levelFor(req.Method)
+	if level != AccessPublic {
 		token := extractBearerToken(req)
 		if token == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Unauthorized"})
+			writeAuthError(w, http.StatusUnauthorized, "Unauthorized")
 			return
 		}
-		if _, ok := r.authHandler.ValidateToken(token); !ok {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid or expired token"})
+		if rule.Service && r.isServiceToken(token) {
+			r.mux.ServeHTTP(w, req)
 			return
 		}
+		userID, ok := r.authHandler.ValidateToken(token)
+		if !ok {
+			writeAuthError(w, http.StatusUnauthorized, "Invalid or expired token")
+			return
+		}
+		if level == AccessAdmin && !r.authHandler.IsAdmin(userID) {
+			writeAuthError(w, http.StatusForbidden, "Admin role required")
+			return
+		}
+		req = withUserID(req, userID)
 	}
 
 	r.mux.ServeHTTP(w, req)
+}
+
+func writeAuthError(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
 // getEnv reads an environment variable with a fallback default

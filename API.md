@@ -20,6 +20,54 @@ Authorization: Bearer <your-token>
 
 Get token from `POST /api/auth/login`
 
+### Registration
+```http
+GET /api/auth/config            (public)
+```
+**Response:** `{"registrationOpen": false, "inviteRequired": false}`. The
+login screen uses it to show or hide the sign-up form; it exposes nothing else.
+
+```http
+POST /api/auth/register         (public, gated)
+Content-Type: application/json
+
+{"email": "you@example.com", "password": "Secret123", "name": "You", "inviteCode": "..."}
+```
+**Response:** `201 Created` with `{token, user}` (role `trader`).
+
+The backend reads two variables:
+
+| Setting | Effect |
+|---|---|
+| `ALLOW_REGISTRATION` unset | closed when `ENVIRONMENT=production`, open otherwise |
+| `ALLOW_REGISTRATION=true` | open (unless an invite code is set) |
+| `ALLOW_REGISTRATION=false` | closed, invite code ignored |
+| `REGISTRATION_INVITE_CODE=<code>` | invite-only: `inviteCode` must match (constant-time compare) |
+
+A rejected sign-up answers `403` with `{"error": "...", "code":
+"registration_closed"}` or `{"code": "invite_invalid"}`. Wrong invite codes
+count toward the per-IP login lockout (5 failures, then `429` for 15 min).
+
+### Login lockout
+`POST /api/auth/login` answers `429` with `Retry-After` and a generic
+`{"error": "Too many login attempts. Try again later."}` after 5 failures
+from one client IP (logins and invite codes together) or 5 failures for one
+email from one client IP within 15 minutes; the block lasts 15 minutes and
+covers only that IP / (email, IP) pair. Failures against one email from any
+IPs never block it: after 3 they only delay each further login to that email
+(250 ms, doubling per failure, capped at 4 s, applied before the password is
+checked), so an attacker cannot lock the owner out. A successful login clears
+only its own (email, IP) counter. Unknown emails are counted and delayed the
+same way, so the response does not reveal whether an account exists. The client
+IP comes from `X-Forwarded-For` / `X-Real-IP` only when the TCP peer is in
+`TRUSTED_PROXIES` (default: loopback and private ranges, i.e. Caddy).
+
+### Admin-only routes
+Writes that move money or change server-wide state (orders, exchange keys,
+bots, settings, paper reset, risk config) and audit-log reads need the admin
+role. Other accounts get `403 {"error": "Admin role required"}`. The full
+matrix is `backend/internal/adapter/http/route_access.go`.
+
 ---
 
 ## 🤖 Bot Endpoints
@@ -172,6 +220,17 @@ Authorization: Bearer <token>
 ---
 
 ## 🧠 AI/Strategy Endpoints
+
+Browser calls to `/strategy-api/*` are served by the Go backend, not the
+strategy service directly. The backend requires a valid session
+(`Authorization: Bearer <session token>`; only `GET /strategy-api/api/health`
+is public), drops the caller's `Authorization`/`Cookie`, and forwards to
+`STRATEGY_URL` with `Authorization: Bearer $AUTH_TOKEN`. Only the `/api/<section>`
+groups the dashboard uses are allow-listed (see `strategyAllowedSections` in
+`backend/internal/adapter/http/strategy_proxy.go`); other strategy routes, such
+as the examples below and `/api/v1/world`, are reachable only on the internal
+network with the service token. Bodies are capped at 1 MiB and each call at
+`STRATEGY_PROXY_TIMEOUT` (default 25s).
 
 ### Price Prediction
 ```http

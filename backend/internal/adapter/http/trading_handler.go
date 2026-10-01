@@ -32,12 +32,12 @@ type ConfigureRequest struct {
 
 // StartBotRequest represents bot start request
 type StartBotRequest struct {
-	Symbol         string  `json:"symbol"`
-	Quantity       float64 `json:"quantity"`
-	GridLevels     int     `json:"gridLevels"`
-	LowerPrice     float64 `json:"lowerPrice"`
-	UpperPrice     float64 `json:"upperPrice"`
-	Investment     float64 `json:"investment"`
+	Symbol     string  `json:"symbol"`
+	Quantity   float64 `json:"quantity"`
+	GridLevels int     `json:"gridLevels"`
+	LowerPrice float64 `json:"lowerPrice"`
+	UpperPrice float64 `json:"upperPrice"`
+	Investment float64 `json:"investment"`
 }
 
 // StartBot starts the trading bot (delegates to BotService)
@@ -65,12 +65,12 @@ func (h *TradingHandler) StartBot(w http.ResponseWriter, r *http.Request) {
 
 	// Delegate to BotService
 	params := &input.BotStartParams{
-		Symbol:      req.Symbol,
-		Quantity:    req.Quantity,
-		GridLevels:  req.GridLevels,
-		LowerPrice:  req.LowerPrice,
-		UpperPrice:  req.UpperPrice,
-		Investment:  req.Investment,
+		Symbol:     req.Symbol,
+		Quantity:   req.Quantity,
+		GridLevels: req.GridLevels,
+		LowerPrice: req.LowerPrice,
+		UpperPrice: req.UpperPrice,
+		Investment: req.Investment,
 	}
 
 	err := h.botService.Start(r.Context(), params)

@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import Card from '@/components/ui/Card';
 import { monitoringService } from '@/services/monitoring';
+import { isAdmin } from '@/services/auth';
 import type { BotStatus, HealthStatus, MarketAlert, RiskEvent } from '@/types/monitoring';
 
 const REFRESH_INTERVAL = 30_000; // 30 seconds
@@ -39,6 +40,12 @@ export default function MonitoringPage() {
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<number>(0);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  // Resolved after mount: localStorage is not available during SSR.
+  const [canControl, setCanControl] = useState(false);
+  useEffect(() => {
+    setCanControl(isAdmin());
+  }, []);
+  const adminOnlyTitle = canControl ? undefined : 'Admin role required';
 
   const fetchData = useCallback(async (showLoader = false) => {
     try {
@@ -115,7 +122,8 @@ export default function MonitoringPage() {
           {isHalted ? (
             <button
               onClick={handleEnable}
-              disabled={actionLoading !== null}
+              disabled={!canControl || actionLoading !== null}
+              title={adminOnlyTitle}
               className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
             >
               <Power className="w-4 h-4" />
@@ -124,7 +132,8 @@ export default function MonitoringPage() {
           ) : (
             <button
               onClick={handleKill}
-              disabled={actionLoading !== null}
+              disabled={!canControl || actionLoading !== null}
+              title={adminOnlyTitle}
               className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
             >
               <PowerOff className="w-4 h-4" />

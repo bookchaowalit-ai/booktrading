@@ -2,8 +2,8 @@
  * Signal Performance Tracker Service
  * API client for tracking signal performance over time
  */
+import { authHeaders, STRATEGY_URL } from './auth-headers';
 
-const STRATEGY_URL = process.env.NEXT_PUBLIC_STRATEGY_URL || 'http://localhost:8001';
 
 export interface SignalEvaluation {
   price_at_eval: number;
@@ -70,7 +70,7 @@ export const signalTrackerService = {
     if (params?.market_type) searchParams.set('market_type', params.market_type);
     if (params?.evaluated_only) searchParams.set('evaluated_only', 'true');
 
-    const res = await fetch(`${STRATEGY_URL}/api/signal-tracker/signals?${searchParams}`);
+    const res = await fetch(`${STRATEGY_URL}/api/signal-tracker/signals?${searchParams}`, { headers: authHeaders() });
     if (!res.ok) throw new Error('Failed to fetch signals');
     return res.json();
   },
@@ -79,7 +79,7 @@ export const signalTrackerService = {
    * Get performance statistics
    */
   async getStats(): Promise<SignalPerformanceStats> {
-    const res = await fetch(`${STRATEGY_URL}/api/signal-tracker/stats`);
+    const res = await fetch(`${STRATEGY_URL}/api/signal-tracker/stats`, { headers: authHeaders() });
     if (!res.ok) throw new Error('Failed to fetch signal stats');
     return res.json();
   },
@@ -90,6 +90,7 @@ export const signalTrackerService = {
   async evaluate(): Promise<{ evaluated: number; total_signals: number }> {
     const res = await fetch(`${STRATEGY_URL}/api/signal-tracker/evaluate`, {
       method: 'POST',
+      headers: authHeaders(),
     });
     if (!res.ok) throw new Error('Failed to evaluate signals');
     return res.json();

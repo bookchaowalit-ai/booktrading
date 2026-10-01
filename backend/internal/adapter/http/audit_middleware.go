@@ -1,9 +1,7 @@
 package http
 
 import (
-	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	"trading-bot-system/backend/internal/domain/service"
@@ -87,9 +85,9 @@ func (m *AuditMiddleware) Middleware(next http.Handler) http.Handler {
 			r.URL.Path,
 			"",
 			map[string]any{
-				"method":     r.Method,
-				"path":       r.URL.Path,
-				"query":      r.URL.RawQuery,
+				"method":      r.Method,
+				"path":        r.URL.Path,
+				"query":       r.URL.RawQuery,
 				"duration_ms": time.Since(start).Milliseconds(),
 			},
 			ip,
@@ -107,27 +105,8 @@ func (m *AuditMiddleware) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// extractIP extracts the client IP from the request, checking proxy headers first
+// extractIP extracts the client IP for audit logs. Forwarding headers count
+// only from TRUSTED_PROXIES, so a direct client cannot forge its logged IP.
 func (m *AuditMiddleware) extractIP(r *http.Request) string {
-	// Check X-Forwarded-For header
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// X-Forwarded-For can contain multiple IPs; take the first one
-		parts := strings.Split(xff, ",")
-		ip := strings.TrimSpace(parts[0])
-		if ip != "" {
-			return ip
-		}
-	}
-
-	// Check X-Real-IP header
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-
-	// Fall back to RemoteAddr
-	ip, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return ip
+	return clientIPFromRequest(r)
 }

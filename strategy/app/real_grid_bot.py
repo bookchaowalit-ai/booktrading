@@ -25,6 +25,8 @@ from typing import Dict, List, Optional, Set
 
 import httpx
 
+from app.backend_auth import backend_event_hooks
+
 from app.risk_manager import get_risk_manager
 from app.trade_journal import get_trade_journal, JournalEntry
 from app.webhook_notifier import get_webhook_notifier
@@ -37,8 +39,9 @@ BINANCE_PUBLIC_REST = os.getenv("BINANCE_PRICE_API", "https://api.binance.th")
 BACKEND_API_BASE = os.getenv("BACKEND_API_BASE", "http://backend:8080")
 
 # Mainnet safety: explicit confirmation required for real money trading
-# Set BINANCE_TH_USE_TESTNET=true to disable real trading (safety mode)
-BINANCE_TH_MAINNET = os.getenv("BINANCE_TH_USE_TESTNET", "false").lower() != "true"
+# BINANCE_TH_USE_TESTNET=true (or unset) keeps real trading disabled (safety mode)
+# Real-money orders require an explicit BINANCE_TH_USE_TESTNET=false; unset means safety mode.
+BINANCE_TH_MAINNET = os.getenv("BINANCE_TH_USE_TESTNET", "true").strip().lower() == "false"
 
 
 @dataclass
@@ -431,7 +434,7 @@ class RealGridBot:
     async def start(self):
         """Start the real grid bot."""
         self._running = True
-        self._http = httpx.AsyncClient(timeout=15.0)
+        self._http = httpx.AsyncClient(timeout=15.0, event_hooks=backend_event_hooks())
 
         # Initialize risk manager and trade journal
         self._risk = get_risk_manager()

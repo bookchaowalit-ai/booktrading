@@ -8,12 +8,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"trading-bot-system/backend/internal/logger"
 	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
 	"time"
+	"trading-bot-system/backend/internal/logger"
 )
 
 // Client represents a Bitkub API client
@@ -27,33 +27,33 @@ type Client struct {
 
 // Balance represents a user's balance
 type Balance struct {
-	Currency string  `json:"currency"`
-	Amount   float64 `json:"amount"`
+	Currency  string  `json:"currency"`
+	Amount    float64 `json:"amount"`
 	Available float64 `json:"available"`
 }
 
 // Order represents a trading order
 type Order struct {
-	OrderID    int64   `json:"orderId"`
-	Symbol     string  `json:"symbol"`
-	Side       string  `json:"side"`
-	Type       string  `json:"type"`
-	Price      float64 `json:"price"`
-	Quantity   float64 `json:"quantity"`
-	Filled     float64 `json:"filled"`
-	Remaining  float64 `json:"remaining"`
-	Status     string  `json:"status"`
-	CreatedAt  int64   `json:"createdAt"`
+	OrderID   int64   `json:"orderId"`
+	Symbol    string  `json:"symbol"`
+	Side      string  `json:"side"`
+	Type      string  `json:"type"`
+	Price     float64 `json:"price"`
+	Quantity  float64 `json:"quantity"`
+	Filled    float64 `json:"filled"`
+	Remaining float64 `json:"remaining"`
+	Status    string  `json:"status"`
+	CreatedAt int64   `json:"createdAt"`
 }
 
 // Ticker represents market ticker data
 type Ticker struct {
-	Symbol       string  `json:"symbol"`
-	LastPrice    float64 `json:"last"`
-	High24h      float64 `json:"high"`
-	Low24h       float64 `json:"low"`
-	Volume24h    float64 `json:"volume"`
-	Change24h    float64 `json:"change"`
+	Symbol        string  `json:"symbol"`
+	LastPrice     float64 `json:"last"`
+	High24h       float64 `json:"high"`
+	Low24h        float64 `json:"low"`
+	Volume24h     float64 `json:"volume"`
+	Change24h     float64 `json:"change"`
 	ChangePercent float64 `json:"changePercent"`
 }
 
@@ -83,7 +83,7 @@ func (c *Client) generateSignature(payload string) string {
 // signRequest signs and adds authentication headers
 func (c *Client) signRequest(method, path string, params url.Values) (string, error) {
 	timestamp := strconv.FormatInt(time.Now().UnixMilli(), 10)
-	
+
 	// Sort parameters
 	keys := make([]string, 0, len(params))
 	for k := range params {
@@ -225,12 +225,12 @@ func (c *Client) GetTicker(symbol string) (*Ticker, error) {
 	}
 
 	var result map[string]struct {
-		Last       string `json:"last"`
-		High24h    string `json:"high24"`
-		Low24h     string `json:"low24"`
-		Volume24h  string `json:"vol24"`
-		Change24h  string `json:"change24"`
-		ChangePct  string `json:"changepct24"`
+		Last      string `json:"last"`
+		High24h   string `json:"high24"`
+		Low24h    string `json:"low24"`
+		Volume24h string `json:"vol24"`
+		Change24h string `json:"change24"`
+		ChangePct string `json:"changepct24"`
 	}
 
 	if err := json.Unmarshal(body, &result); err != nil {
@@ -250,12 +250,12 @@ func (c *Client) GetTicker(symbol string) (*Ticker, error) {
 	changePct, _ := strconv.ParseFloat(tickerData.ChangePct, 64)
 
 	return &Ticker{
-		Symbol:       symbol,
-		LastPrice:    last,
-		High24h:      high,
-		Low24h:       low,
-		Volume24h:    volume,
-		Change24h:    change,
+		Symbol:        symbol,
+		LastPrice:     last,
+		High24h:       high,
+		Low24h:        low,
+		Volume24h:     volume,
+		Change24h:     change,
 		ChangePercent: changePct,
 	}, nil
 }
@@ -267,7 +267,7 @@ func (c *Client) PlaceOrder(symbol, side, orderType string, quantity, price floa
 
 	params := url.Values{}
 	params.Add("sym", symbol)
-	params.Add("sd", side)  // sd = side (BUY/SELL)
+	params.Add("sd", side)      // sd = side (BUY/SELL)
 	params.Add("ty", orderType) // ty = type (LIMIT/MARKET)
 	params.Add("amt", fmt.Sprintf("%f", quantity))
 	params.Add("ts", timestamp)

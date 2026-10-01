@@ -10,16 +10,16 @@ import (
 
 // UserPreferences represents user settings stored in database
 type UserPreferences struct {
-	ID                          int       `json:"id"`
-	UserID                      string    `json:"user_id"`
-	Language                    string    `json:"language"`
-	Theme                       string    `json:"theme"`
-	NotificationsTradeExecutions bool     `json:"notifications_trade_executions"`
-	NotificationsPriceAlerts    bool     `json:"notifications_price_alerts"`
-	NotificationsBotStatus      bool     `json:"notifications_bot_status"`
-	NotificationsErrors         bool     `json:"notifications_errors"`
-	CreatedAt                   time.Time `json:"created_at"`
-	UpdatedAt                   time.Time `json:"updated_at"`
+	ID                           int       `json:"id"`
+	UserID                       string    `json:"user_id"`
+	Language                     string    `json:"language"`
+	Theme                        string    `json:"theme"`
+	NotificationsTradeExecutions bool      `json:"notifications_trade_executions"`
+	NotificationsPriceAlerts     bool      `json:"notifications_price_alerts"`
+	NotificationsBotStatus       bool      `json:"notifications_bot_status"`
+	NotificationsErrors          bool      `json:"notifications_errors"`
+	CreatedAt                    time.Time `json:"created_at"`
+	UpdatedAt                    time.Time `json:"updated_at"`
 }
 
 // UserPreferencesRepository handles user preferences storage
@@ -45,7 +45,7 @@ func (r *UserPreferencesRepository) GetPreferences(ctx context.Context, userID s
 		WHERE user_id = $1
 		LIMIT 1
 	`
-	
+
 	var prefs UserPreferences
 	err := r.pool.QueryRow(ctx, query, userID).Scan(
 		&prefs.ID,
@@ -59,11 +59,11 @@ func (r *UserPreferencesRepository) GetPreferences(ctx context.Context, userID s
 		&prefs.CreatedAt,
 		&prefs.UpdatedAt,
 	)
-	
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to get preferences: %w", err)
 	}
-	
+
 	return &prefs, nil
 }
 
@@ -86,7 +86,7 @@ func (r *UserPreferencesRepository) UpdatePreferences(ctx context.Context, prefs
 			notifications_errors = $7,
 			updated_at = NOW()
 	`
-	
+
 	_, err := r.pool.Exec(ctx, query,
 		prefs.UserID,
 		prefs.Language,
@@ -96,11 +96,11 @@ func (r *UserPreferencesRepository) UpdatePreferences(ctx context.Context, prefs
 		prefs.NotificationsBotStatus,
 		prefs.NotificationsErrors,
 	)
-	
+
 	if err != nil {
 		return fmt.Errorf("failed to update preferences: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -118,11 +118,11 @@ func (r *UserPreferencesRepository) ResetPreferences(ctx context.Context, userID
 			updated_at = NOW()
 		WHERE user_id = $1
 	`
-	
+
 	_, err := r.pool.Exec(ctx, query, userID)
 	if err != nil {
 		return fmt.Errorf("failed to reset preferences: %w", err)
 	}
-	
+
 	return nil
 }

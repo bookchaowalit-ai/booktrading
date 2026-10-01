@@ -142,7 +142,7 @@ func (r *APIKeyRepository) GetAPIKey(ctx context.Context, provider string) (*Exc
 		FROM exchange_api_keys
 		WHERE provider = $1
 	`
-	
+
 	var key ExchangeAPIKey
 	err := r.pool.QueryRow(ctx, query, provider).Scan(
 		&key.Provider,
@@ -174,13 +174,13 @@ func (r *APIKeyRepository) GetAllAPIKeys(ctx context.Context) ([]ExchangeAPIKey,
 		FROM exchange_api_keys
 		ORDER BY provider
 	`
-	
+
 	rows, err := r.pool.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get API keys: %w", err)
 	}
 	defer rows.Close()
-	
+
 	var keys []ExchangeAPIKey
 	for rows.Next() {
 		var key ExchangeAPIKey
@@ -204,7 +204,7 @@ func (r *APIKeyRepository) GetAllAPIKeys(ctx context.Context) ([]ExchangeAPIKey,
 		}
 		keys = append(keys, key)
 	}
-	
+
 	return keys, nil
 }
 

@@ -19,6 +19,7 @@ import ThemeToggle from '@/components/ThemeToggle';
 import { Dropdown } from '@/components/ui';
 import NotificationCenter from '@/components/NotificationCenter';
 import FillNotificationToast from '@/components/FillNotificationToast';
+import ForbiddenNotice from '@/components/ForbiddenNotice';
 import MobileBottomNav from '@/components/MobileBottomNav';
 import KeyboardShortcutsHelp from '@/components/KeyboardShortcutsHelp';
 import { api } from '@/services/api';
@@ -261,6 +262,9 @@ export default function DashboardLayout({
 
           {/* Real Grid Fill Notifications */}
           <FillNotificationToast />
+
+          {/* Thai notice when an admin-only route answers 403 */}
+          <ForbiddenNotice />
         </div>
       </ToastProvider>
     </ThemeProvider>

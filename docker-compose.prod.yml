@@ -93,10 +93,22 @@ services:
       # Security
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY is required (32+ chars)}
       - FRONTEND_URL=${FRONTEND_URL:-https://your-domain.com}
+      # Strategy proxy (/strategy-api/*): backend validates the user session and
+      # forwards with AUTH_TOKEN; the browser never sees the service token.
+      - STRATEGY_URL=http://strategy:8000
+      - AUTH_TOKEN=${AUTH_TOKEN:-}
+      - STRATEGY_PROXY_TIMEOUT=${STRATEGY_PROXY_TIMEOUT:-25s}
       # Admin account (created on first startup)
       - FIRST_ADMIN_EMAIL=${FIRST_ADMIN_EMAIL:-admin@your-domain.com}
       - FIRST_ADMIN_PASSWORD=${FIRST_ADMIN_PASSWORD:?FIRST_ADMIN_PASSWORD is required}
       - FIRST_ADMIN_NAME=${FIRST_ADMIN_NAME:-Admin}
+      # Self-registration is closed in production unless ALLOW_REGISTRATION=true
+      # or REGISTRATION_INVITE_CODE is set (invite-only).
+      - ENVIRONMENT=production
+      - ALLOW_REGISTRATION=${ALLOW_REGISTRATION:-}
+      - REGISTRATION_INVITE_CODE=${REGISTRATION_INVITE_CODE:-}
+      # Proxies allowed to set X-Forwarded-For / X-Real-IP (empty = private ranges).
+      - TRUSTED_PROXIES=${TRUSTED_PROXIES:-}
       # Exchange Provider Selection
       - EXCHANGE_PROVIDER=${EXCHANGE_PROVIDER:-binance_th}
       # Binance Global API Credentials
@@ -148,6 +160,7 @@ services:
       - GRPC_PORT=9000
       - API_HOST=0.0.0.0
       - API_PORT=8000
+      - ENVIRONMENT=production
       - AUTH_TOKEN=${AUTH_TOKEN:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - ALLOWED_ORIGINS=${FRONTEND_URL:-https://your-domain.com}
@@ -190,13 +203,11 @@ services:
         - NEXT_PUBLIC_STRATEGY_URL=
         - NEXT_PUBLIC_WS_URL=wss://your-domain.com/ws
         - BACKEND_URL=http://backend:8080
-        - STRATEGY_URL=http://strategy:8000
     container_name: bookfinance-frontend
     ports:
       - "127.0.0.1:3000:3000"
     environment:
       - BACKEND_URL=http://backend:8080
-      - STRATEGY_URL=http://strategy:8000
       - NEXT_PUBLIC_WS_URL=wss://your-domain.com/ws
       - NODE_ENV=production
     depends_on:

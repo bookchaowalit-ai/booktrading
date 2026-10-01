@@ -27,6 +27,8 @@ import {
   AssetAllocationResult,
 } from '@/types/finance';
 
+import { errorMessageFromResponse } from './forbidden';
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
 function authHeaders(extra?: Record<string, string>): Record<string, string> {
@@ -38,8 +40,7 @@ function authHeaders(extra?: Record<string, string>): Record<string, string> {
 
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Request failed' }));
-    throw new Error(error.error || `HTTP ${response.status}`);
+    throw new Error(await errorMessageFromResponse(response, `HTTP ${response.status}`));
   }
   return response.json();
 }

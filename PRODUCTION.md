@@ -65,10 +65,21 @@ REDIS_PASSWORD=your-secure-redis-password
 # Security (32+ characters)
 ENCRYPTION_KEY=your-32-character-encryption-key-here-make-it-random!
 
-# Admin Account
+# Admin Account (stored in the users table; created on first start, its
+# password follows FIRST_ADMIN_PASSWORD on every start; an existing
+# self-registered non-admin account with this email is never promoted)
 FIRST_ADMIN_EMAIL=admin@your-domain.com
 FIRST_ADMIN_PASSWORD=secure-admin-password
 FIRST_ADMIN_NAME=Admin
+
+# Self-registration: closed by default in production (docker-compose.prod.yml
+# sets ENVIRONMENT=production for the backend). Leave both empty for a
+# single-operator server; a self-registered account can read the operator's
+# exchange balances, orders, trades and settings. To invite someone, set a
+# long random REGISTRATION_INVITE_CODE and share it out of band; remove it
+# again afterwards. ALLOW_REGISTRATION=true opens sign-up to anyone.
+ALLOW_REGISTRATION=
+REGISTRATION_INVITE_CODE=
 
 # Frontend URL (your domain)
 FRONTEND_URL=https://your-domain.com
@@ -89,7 +100,7 @@ BITKUB_USE_TESTNET=false
 # Real Trading Configuration
 REAL_SYMBOLS=BTCTHB               # Symbol for real trading (Binance TH)
 DISABLE_PAPER_BOT=true            # Disable paper bot to reduce log noise
-AUTH_TOKEN=                       # Leave empty for dev, set for production auth
+AUTH_TOKEN=                       # Service token: strategy checks it, backend /strategy-api proxy sends it. Never in the browser.
 ```
 
 ---

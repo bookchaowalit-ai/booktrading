@@ -100,7 +100,7 @@ class TestTooManyPositionsWait:
         """8 active == MAX_POSITIONS → not blocked by this rule."""
         resolved = [_resolved_position('news', 'win') for _ in range(12)]
         state = _base_state(active_count=8, resolved_positions=resolved)
-        decision, _, _ = compute_decision(state)
+        decision, reason, _ = compute_decision(state)
         # Should pass this branch (may hit signal review or dry-run)
         assert decision != 'WAIT' or 'resolved' in reason
 

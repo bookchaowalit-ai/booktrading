@@ -3,6 +3,11 @@
  * Robust API client with retry logic, error handling, and type safety
  */
 
+// Session auth headers are shared with the strategy services
+// (monitoring, backtest, airdrop/signal trackers).
+import { authHeaders } from './auth-headers';
+import { errorMessageFromResponse } from './forbidden';
+
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 export interface ApiError extends Error {
@@ -25,25 +30,6 @@ const STRATEGY_API_URL = process.env.NEXT_PUBLIC_STRATEGY_URL || '/strategy-api'
 const DEFAULT_TIMEOUT = 15000; // 15 seconds
 const DEFAULT_RETRIES = 2;
 const DEFAULT_RETRY_DELAY = 1000; // 1 second
-
-// ── Auth Helpers ───────────────────────────────────────────────────────────────
-
-function getAuthToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem('auth_token');
-}
-
-function authHeaders(extra?: Record<string, string>): Record<string, string> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  const token = getAuthToken();
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-  if (extra) {
-    Object.assign(headers, extra);
-  }
-  return headers;
-}
 
 // ── Core Fetch with Retry & Timeout ───────────────────────────────────────────
 
@@ -155,8 +141,7 @@ export const api = {
       headers: authHeaders(),
     });
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to start bot' }));
-      throw new Error(error.error || 'Failed to start bot');
+      throw new Error(await errorMessageFromResponse(response, 'Failed to start bot'));
     }
   },
 
@@ -166,8 +151,7 @@ export const api = {
       headers: authHeaders(),
     });
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to stop bot' }));
-      throw new Error(error.error || 'Failed to stop bot');
+      throw new Error(await errorMessageFromResponse(response, 'Failed to stop bot'));
     }
   },
 
@@ -226,8 +210,7 @@ export const api = {
       headers: authHeaders(),
     });
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to cancel order' }));
-      throw new Error(error.error || 'Failed to cancel order');
+      throw new Error(await errorMessageFromResponse(response, 'Failed to cancel order'));
     }
   },
 
@@ -262,7 +245,7 @@ export const api = {
 
   async getIndicators() {
     try {
-      const response = await apiFetch(`${STRATEGY_API_URL}/api/indicators`);
+      const response = await apiFetch(`${STRATEGY_API_URL}/api/indicators`, { headers: authHeaders() });
       if (!response.ok) return {};
       return response.json();
     } catch {
@@ -305,8 +288,7 @@ export const api = {
       headers: authHeaders(),
     });
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to refresh balances' }));
-      throw new Error(error.error || 'Failed to refresh balances');
+      throw new Error(await errorMessageFromResponse(response, 'Failed to refresh balances'));
     }
     return response.json();
   },
@@ -319,8 +301,7 @@ export const api = {
       headers: authHeaders(),
     });
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to export configuration' }));
-      throw new Error(error.error || 'Failed to export configuration');
+      throw new Error(await errorMessageFromResponse(response, 'Failed to export configuration'));
     }
     return response.json();
   },
@@ -332,8 +313,7 @@ export const api = {
       body: JSON.stringify(config),
     });
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to import configuration' }));
-      throw new Error(error.error || 'Failed to import configuration');
+      throw new Error(await errorMessageFromResponse(response, 'Failed to import configuration'));
     }
   },
 
@@ -486,8 +466,7 @@ export const api = {
       headers: authHeaders(),
     });
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to kill grid bot' }));
-      throw new Error(error.error || 'Failed to kill grid bot');
+      throw new Error(await errorMessageFromResponse(response, 'Failed to kill grid bot'));
     }
   },
 
@@ -497,8 +476,7 @@ export const api = {
       headers: authHeaders(),
     });
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to enable grid bot' }));
-      throw new Error(error.error || 'Failed to enable grid bot');
+      throw new Error(await errorMessageFromResponse(response, 'Failed to enable grid bot'));
     }
   },
 
@@ -521,8 +499,7 @@ export const api = {
       body: JSON.stringify(config),
     });
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to update config' }));
-      throw new Error(error.error || 'Failed to update config');
+      throw new Error(await errorMessageFromResponse(response, 'Failed to update config'));
     }
   },
 
@@ -544,8 +521,7 @@ export const api = {
       headers: authHeaders(),
     });
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to restart bot' }));
-      throw new Error(error.error || 'Failed to restart bot');
+      throw new Error(await errorMessageFromResponse(response, 'Failed to restart bot'));
     }
   },
 
@@ -768,8 +744,7 @@ export const api = {
       body: JSON.stringify({ symbol, orderId }),
     });
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to cancel order' }));
-      throw new Error(error.error || 'Failed to cancel order');
+      throw new Error(await errorMessageFromResponse(response, 'Failed to cancel order'));
     }
   },
 
@@ -793,8 +768,7 @@ export const api = {
       headers: authHeaders(),
     });
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to reset risk' }));
-      throw new Error(error.error || 'Failed to reset risk');
+      throw new Error(await errorMessageFromResponse(response, 'Failed to reset risk'));
     }
   },
 

@@ -14,39 +14,39 @@ import (
 
 // BinanceKline represents a single candlestick from Binance
 type BinanceKline struct {
-	OpenTime   int64   `json:"open_time"`
-	Open       float64 `json:"open"`
-	High       float64 `json:"high"`
-	Low        float64 `json:"low"`
-	Close      float64 `json:"close"`
-	Volume     float64 `json:"volume"`
-	CloseTime  int64   `json:"close_time"`
+	OpenTime    int64   `json:"open_time"`
+	Open        float64 `json:"open"`
+	High        float64 `json:"high"`
+	Low         float64 `json:"low"`
+	Close       float64 `json:"close"`
+	Volume      float64 `json:"volume"`
+	CloseTime   int64   `json:"close_time"`
 	QuoteVolume float64 `json:"quote_volume"`
-	Trades     int     `json:"trades"`
+	Trades      int     `json:"trades"`
 }
 
 // BacktestResult holds the results of a backtest simulation
 type BacktestResult struct {
-	InitialCapital  float64   `json:"initial_capital"`
-	FinalCapital    float64   `json:"final_capital"`
-	TotalReturn     float64   `json:"total_return"`
-	TotalReturnPct  float64   `json:"total_return_percent"`
-	TotalTrades     int       `json:"total_trades"`
-	WinTrades       int       `json:"win_trades"`
-	LossTrades      int       `json:"loss_trades"`
-	WinRate         float64   `json:"win_rate"`
-	ProfitFactor    float64   `json:"profit_factor"`
-	MaxDrawdown     float64   `json:"max_drawdown"`
-	MaxDrawdownPct  float64   `json:"max_drawdown_percent"`
-	SharpeRatio     float64   `json:"sharpe_ratio"`
-	SortinoRatio    float64   `json:"sortino_ratio"`
-	AvgWin          float64   `json:"avg_win"`
-	AvgLoss         float64   `json:"avg_loss"`
-	BestTrade       float64   `json:"best_trade"`
-	WorstTrade      float64   `json:"worst_trade"`
-	AvgTradeDuration string   `json:"avg_trade_duration"`
-	Trades          []TradeResult `json:"trades"`
-	EquityCurve     []EquityPoint `json:"equity_curve"`
+	InitialCapital   float64       `json:"initial_capital"`
+	FinalCapital     float64       `json:"final_capital"`
+	TotalReturn      float64       `json:"total_return"`
+	TotalReturnPct   float64       `json:"total_return_percent"`
+	TotalTrades      int           `json:"total_trades"`
+	WinTrades        int           `json:"win_trades"`
+	LossTrades       int           `json:"loss_trades"`
+	WinRate          float64       `json:"win_rate"`
+	ProfitFactor     float64       `json:"profit_factor"`
+	MaxDrawdown      float64       `json:"max_drawdown"`
+	MaxDrawdownPct   float64       `json:"max_drawdown_percent"`
+	SharpeRatio      float64       `json:"sharpe_ratio"`
+	SortinoRatio     float64       `json:"sortino_ratio"`
+	AvgWin           float64       `json:"avg_win"`
+	AvgLoss          float64       `json:"avg_loss"`
+	BestTrade        float64       `json:"best_trade"`
+	WorstTrade       float64       `json:"worst_trade"`
+	AvgTradeDuration string        `json:"avg_trade_duration"`
+	Trades           []TradeResult `json:"trades"`
+	EquityCurve      []EquityPoint `json:"equity_curve"`
 }
 
 // TradeResult represents a single completed trade in backtest
@@ -65,25 +65,25 @@ type TradeResult struct {
 
 // EquityPoint represents a point on the equity curve
 type EquityPoint struct {
-	Time   time.Time `json:"time"`
-	Value  float64   `json:"value"`
+	Time  time.Time `json:"time"`
+	Value float64   `json:"value"`
 }
 
 // BacktestConfig holds parameters for running a backtest
 type BacktestConfig struct {
-	Symbol          string    `json:"symbol"`
-	StartDate       time.Time `json:"start_date"`
-	EndDate         time.Time `json:"end_date"`
-	InitialCapital  float64   `json:"initial_capital"`
-	Commission      float64   `json:"commission"`      // e.g. 0.001 = 0.1%
-	Slippage        float64   `json:"slippage"`        // e.g. 0.0005 = 0.05%
-	RiskConfig      *model.RiskConfig `json:"risk_config,omitempty"`
-	Strategy        string    `json:"strategy"`        // "rsi", "ema_cross", "macd"
-	RSIPeriod       int       `json:"rsi_period"`
-	RSIOversold     float64   `json:"rsi_oversold"`
-	RSIOverbought   float64   `json:"rsi_overbought"`
-	EMAFastPeriod   int       `json:"ema_fast_period"`
-	EMASlowPeriod   int       `json:"ema_slow_period"`
+	Symbol         string            `json:"symbol"`
+	StartDate      time.Time         `json:"start_date"`
+	EndDate        time.Time         `json:"end_date"`
+	InitialCapital float64           `json:"initial_capital"`
+	Commission     float64           `json:"commission"` // e.g. 0.001 = 0.1%
+	Slippage       float64           `json:"slippage"`   // e.g. 0.0005 = 0.05%
+	RiskConfig     *model.RiskConfig `json:"risk_config,omitempty"`
+	Strategy       string            `json:"strategy"` // "rsi", "ema_cross", "macd"
+	RSIPeriod      int               `json:"rsi_period"`
+	RSIOversold    float64           `json:"rsi_oversold"`
+	RSIOverbought  float64           `json:"rsi_overbought"`
+	EMAFastPeriod  int               `json:"ema_fast_period"`
+	EMASlowPeriod  int               `json:"ema_slow_period"`
 }
 
 // BacktestService runs backtests using real historical data
@@ -144,15 +144,15 @@ func (s *BacktestService) FetchHistoricalKlines(ctx context.Context, symbol stri
 		}
 
 		kline := BinanceKline{
-			OpenTime:   toInt64(k[0]),
-			Open:       toFloat64(k[1]),
-			High:       toFloat64(k[2]),
-			Low:        toFloat64(k[3]),
-			Close:      toFloat64(k[4]),
-			Volume:     toFloat64(k[5]),
-			CloseTime:  toInt64(k[6]),
+			OpenTime:    toInt64(k[0]),
+			Open:        toFloat64(k[1]),
+			High:        toFloat64(k[2]),
+			Low:         toFloat64(k[3]),
+			Close:       toFloat64(k[4]),
+			Volume:      toFloat64(k[5]),
+			CloseTime:   toInt64(k[6]),
 			QuoteVolume: toFloat64(k[7]),
-			Trades:     int(toInt64(k[8])),
+			Trades:      int(toInt64(k[8])),
 		}
 		klines = append(klines, kline)
 	}
@@ -198,7 +198,7 @@ func (s *BacktestService) RunBacktest(ctx context.Context, config BacktestConfig
 
 	// Backtest engine state
 	capital := config.InitialCapital
-	position := 0.0        // Quantity held
+	position := 0.0 // Quantity held
 	entryPrice := 0.0
 	entryTime := time.Time{}
 	peakCapital := capital
@@ -292,7 +292,7 @@ func (s *BacktestService) RunBacktest(ctx context.Context, config BacktestConfig
 	if position > 0 && len(klines) > 0 {
 		lastPrice := klines[len(klines)-1].Close
 		exitPrice := lastPrice * (1 - config.Slippage)
-		netPnL := (exitPrice - entryPrice)*position - (entryPrice*position+exitPrice*position)*config.Commission
+		netPnL := (exitPrice-entryPrice)*position - (entryPrice*position+exitPrice*position)*config.Commission
 		capital += position*exitPrice - (entryPrice*position+exitPrice*position)*config.Commission
 
 		tradeResults = append(tradeResults, netPnL)

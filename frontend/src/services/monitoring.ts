@@ -3,15 +3,15 @@
  * Aggregates data from multiple backend endpoints
  */
 import type { HealthStatus, BotStatus, MarketAlert } from '@/types/monitoring';
+import { authHeaders, STRATEGY_URL } from './auth-headers';
 
-const STRATEGY_URL = process.env.NEXT_PUBLIC_STRATEGY_URL || '/strategy-api';
 
 export const monitoringService = {
   /**
    * Get system health (redis, services)
    */
   async getHealth(): Promise<HealthStatus> {
-    const res = await fetch(`${STRATEGY_URL}/api/health`);
+    const res = await fetch(`${STRATEGY_URL}/api/health`, { headers: authHeaders() });
     if (!res.ok) return { status: 'down', redis_connected: false };
     return res.json();
   },
@@ -20,7 +20,7 @@ export const monitoringService = {
    * Get real grid bot status (includes risk + journal stats)
    */
   async getBotStatus(): Promise<BotStatus> {
-    const res = await fetch(`${STRATEGY_URL}/api/real-grid/status`);
+    const res = await fetch(`${STRATEGY_URL}/api/real-grid/status`, { headers: authHeaders() });
     if (!res.ok) throw new Error('Bot status fetch failed');
     return res.json();
   },
@@ -29,7 +29,7 @@ export const monitoringService = {
    * Get market alerts (high severity)
    */
   async getAlerts(limit: number = 20): Promise<MarketAlert[]> {
-    const res = await fetch(`${STRATEGY_URL}/api/market-intel/alerts?limit=${limit}`);
+    const res = await fetch(`${STRATEGY_URL}/api/market-intel/alerts?limit=${limit}`, { headers: authHeaders() });
     if (!res.ok) return [];
     const data = await res.json();
     return data.alerts || [];
@@ -41,7 +41,7 @@ export const monitoringService = {
   async killBot(): Promise<void> {
     const res = await fetch(`${STRATEGY_URL}/api/real-grid/kill`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
     });
     if (!res.ok) throw new Error('Kill switch failed');
   },
@@ -52,7 +52,7 @@ export const monitoringService = {
   async enableBot(): Promise<void> {
     const res = await fetch(`${STRATEGY_URL}/api/real-grid/enable`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
     });
     if (!res.ok) throw new Error('Enable failed');
   },
@@ -62,7 +62,7 @@ export const monitoringService = {
    */
   async getNotifications(limit: number = 20): Promise<any[]> {
     try {
-      const res = await fetch(`${STRATEGY_URL}/api/real-grid/notifications?limit=${limit}`);
+      const res = await fetch(`${STRATEGY_URL}/api/real-grid/notifications?limit=${limit}`, { headers: authHeaders() });
       if (!res.ok) return [];
       return res.json();
     } catch {

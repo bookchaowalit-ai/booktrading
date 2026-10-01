@@ -15,6 +15,7 @@ import {
   Activity, BarChart3,
 } from 'lucide-react';
 import { api } from '@/services/api';
+import { authHeaders } from '@/services/auth-headers';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -205,7 +206,7 @@ export default function EvidencePage() {
     // Fetch journal entries for activity feed
     try {
       const STRATEGY_URL = process.env.NEXT_PUBLIC_STRATEGY_URL || '/strategy-api';
-      const jRes = await fetch(`${STRATEGY_URL}/api/journal/entries?limit=20`);
+      const jRes = await fetch(`${STRATEGY_URL}/api/journal/entries?limit=20`, { headers: authHeaders() });
       if (jRes.ok) {
         const jData = await jRes.json();
         setJournalEntries(jData.db_entries || []);
@@ -223,7 +224,7 @@ export default function EvidencePage() {
     // Fetch signal performance stats
     try {
       const STRATEGY_URL = process.env.NEXT_PUBLIC_STRATEGY_URL || '/strategy-api';
-      const sigRes = await fetch(`${STRATEGY_URL}/api/signal-tracker/stats`);
+      const sigRes = await fetch(`${STRATEGY_URL}/api/signal-tracker/stats`, { headers: authHeaders() });
       if (sigRes.ok) {
         const sigData = await sigRes.json();
         setSignalStats(sigData);

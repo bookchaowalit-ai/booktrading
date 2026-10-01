@@ -19,15 +19,33 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
+from decimal import ROUND_FLOOR, Decimal
 from typing import Dict, List, Optional
 
 import httpx
+
+from app.backend_auth import backend_event_hooks
 
 logger = logging.getLogger("dca_bot")
 
 BINANCE_PUBLIC_REST = os.getenv("BINANCE_PRICE_API", "https://api.binance.th")
 BACKEND_API_BASE = os.getenv("BACKEND_API_BASE", "http://backend:8080")
-BINANCE_TH_MAINNET = os.getenv("BINANCE_TH_USE_TESTNET", "false").lower() != "true"
+# Real-money orders require an explicit BINANCE_TH_USE_TESTNET=false; unset means safety mode.
+BINANCE_TH_MAINNET = os.getenv("BINANCE_TH_USE_TESTNET", "true").strip().lower() == "false"
+
+
+def _floor_to_step(value: float, step: float) -> float:
+    """Largest multiple of ``step`` that is <= ``value`` (exact, no float drift).
+
+    Used for sell quantities and prices: rounding a quantity up could exceed
+    the free balance, and the exchange rejects any value off the step/tick
+    grid (LOT_SIZE / PRICE_FILTER).
+    """
+    if step <= 0:
+        return value
+    d_step = Decimal(str(step))
+    steps = (Decimal(str(value)) / d_step).to_integral_value(rounding=ROUND_FLOOR)
+    return float(steps * d_step)
 
 
 @dataclass
@@ -96,7 +114,7 @@ class DCABot:
     async def start(self):
         """Start the DCA bot."""
         self._running = True
-        self._http = httpx.AsyncClient(timeout=30)
+        self._http = httpx.AsyncClient(timeout=30, event_hooks=backend_event_hooks())
 
         # Load existing states from Redis
         await self._load_states()
@@ -273,9 +291,16 @@ class DCABot:
         asset_free = balances.get(base_asset, 0)
         if asset_free < qty:
             qty = asset_free * 0.95  # sell 95% of what we have (safety margin)
-            if qty * price < cfg.min_notional_thb:
-                logger.warning("[DCA %s] Insufficient %s: have %.6f", cfg.symbol, base_asset, asset_free)
-                return
+
+        # Sell quantity and limit price must sit on the exchange's step/tick
+        # grid; they used to be sent raw (e.g. 15% of holdings = 0.0012345678),
+        # which Binance TH rejects. Both are floored: never more than held.
+        qty = _floor_to_step(qty, cfg.step_size)
+        price = _floor_to_step(price, cfg.tick_size)
+        if qty <= 0 or qty * price < cfg.min_notional_thb:
+            logger.warning("[DCA %s] Sell of %.8f %s below minimum after rounding (have %.8f)",
+                           cfg.symbol, qty, base_asset, asset_free)
+            return
 
         if not BINANCE_TH_MAINNET:
             proceeds = qty * price

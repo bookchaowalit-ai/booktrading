@@ -150,19 +150,40 @@ func (e *PaperEngine) PlaceOrder(ctx context.Context, symbol string, side model.
 	return order, nil
 }
 
-// fillOrder simulates order execution
+// fillOrder simulates order execution. A marketable limit order (a BUY limit
+// at or above the market, a SELL limit at or below it) executes at the market
+// price, as it would on an exchange; resting limit orders are filled by
+// UpdatePrice, which passes their limit price as marketPrice.
+//
+// Cash and inventory are re-checked at fill time because pending limit
+// orders reserve neither: another fill may have spent the balance or sold
+// the position since the order was placed. An order that can no longer be
+// covered is cancelled instead of driving the balance or position negative.
 func (e *PaperEngine) fillOrder(order *model.PaperOrder, marketPrice float64) {
-	// Fill at market price (or limit price if it would have filled)
 	execPrice := marketPrice
 	if order.LimitPrice > 0 {
-		if order.Side == model.SideBuy && order.LimitPrice >= marketPrice {
-			execPrice = order.LimitPrice
-		} else if order.Side == model.SideSell && order.LimitPrice <= marketPrice {
-			execPrice = order.LimitPrice
-		} else if order.LimitPrice > 0 {
+		wouldFill := (order.Side == model.SideBuy && order.LimitPrice >= marketPrice) ||
+			(order.Side == model.SideSell && order.LimitPrice <= marketPrice)
+		if !wouldFill {
 			// Limit order wouldn't fill at current price
 			order.Status = model.PaperOrderStatusPending
 			return
+		}
+	}
+
+	if reason := e.fillShortfall(order, execPrice); reason != "" {
+		order.Status = model.PaperOrderStatusCancelled
+		logger.Warn("Paper order cancelled at fill", "id", order.ID,
+			"symbol", order.Symbol, "side", order.Side, "reason", reason)
+		return
+	}
+
+	// Realized PnL must be read before applySell, which removes a fully
+	// closed position.
+	pnl := 0.0
+	if order.Side == model.SideSell {
+		if pos := e.getPosition(order.Symbol); pos != nil {
+			pnl = (execPrice - pos.AvgEntryPrice) * order.Quantity
 		}
 	}
 
@@ -190,13 +211,6 @@ func (e *PaperEngine) fillOrder(order *model.PaperOrder, marketPrice float64) {
 
 	// Publish event to event bus (triggers alerts)
 	if e.eventBus != nil {
-		pnl := 0.0
-		if order.Side == model.SideSell {
-			pos := e.getPosition(order.Symbol)
-			if pos != nil {
-				pnl = (execPrice - pos.AvgEntryPrice) * order.Quantity
-			}
-		}
 		e.eventBus.Publish(context.Background(), Event{
 			Type: EventPaperTrade,
 			Data: map[string]any{
@@ -215,9 +229,28 @@ func (e *PaperEngine) fillOrder(order *model.PaperOrder, marketPrice float64) {
 	e.persistTrade(order)
 }
 
+// fillShortfall reports why the order can no longer be filled at execPrice
+// ("" when it can): a BUY needs cash for cost plus fee, a SELL needs the
+// position.
+func (e *PaperEngine) fillShortfall(order *model.PaperOrder, execPrice float64) string {
+	switch order.Side {
+	case model.SideBuy:
+		cost := order.Quantity * execPrice * (1 + e.feeRate)
+		if cost > e.portfolio.CurrentBalance+positionEpsilon {
+			return fmt.Sprintf("insufficient balance: need %.2f, have %.2f", cost, e.portfolio.CurrentBalance)
+		}
+	case model.SideSell:
+		pos := e.getPosition(order.Symbol)
+		if pos == nil || pos.Quantity+positionEpsilon < order.Quantity {
+			return "insufficient position"
+		}
+	}
+	return ""
+}
+
 // applyBuy adds to or creates a position
 func (e *PaperEngine) applyBuy(order *model.PaperOrder) {
-	totalCost := order.Quantity * order.Price + order.Fee
+	totalCost := order.Quantity*order.Price + order.Fee
 	e.portfolio.CurrentBalance -= totalCost
 
 	// Update per-symbol PnL volume tracking
@@ -359,6 +392,9 @@ func (e *PaperEngine) UpdatePrice(symbol string, price float64) {
 		// BUY fills when market price drops to or below limit price
 		if order.Side == model.SideBuy && price <= order.LimitPrice {
 			e.fillOrder(order, order.LimitPrice) // Fill at limit price (realistic)
+			if order.Status != model.PaperOrderStatusFilled {
+				continue
+			}
 			logger.Info("Paper PENDING order filled (price dropped to limit)",
 				"symbol", symbol, "side", "BUY",
 				"limitPrice", order.LimitPrice, "marketPrice", price,
@@ -367,6 +403,9 @@ func (e *PaperEngine) UpdatePrice(symbol string, price float64) {
 		// SELL fills when market price rises to or above limit price
 		if order.Side == model.SideSell && price >= order.LimitPrice {
 			e.fillOrder(order, order.LimitPrice) // Fill at limit price (realistic)
+			if order.Status != model.PaperOrderStatusFilled {
+				continue
+			}
 			logger.Info("Paper PENDING order filled (price rose to limit)",
 				"symbol", symbol, "side", "SELL",
 				"limitPrice", order.LimitPrice, "marketPrice", price,

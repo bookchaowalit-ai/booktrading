@@ -331,13 +331,13 @@ func (s *DexService) GetTransactionHistory(ctx context.Context, userID string, l
 			return nil, fmt.Errorf("failed to scan transaction: %w", err)
 		}
 		results = append(results, map[string]interface{}{
-			"tx_hash":         txHash,
-			"dex_provider":    dexProvider,
-			"token_in":        map[string]string{"address": tokenInAddr, "amount": tokenInAmount},
-			"token_out":       map[string]string{"address": tokenOutAddr, "amount": fmt.Sprintf("%v", tokenOutAmount)},
-			"status":          status,
-			"created_at":      createdAt,
-			"confirmed_at":    confirmedAt,
+			"tx_hash":      txHash,
+			"dex_provider": dexProvider,
+			"token_in":     map[string]string{"address": tokenInAddr, "amount": tokenInAmount},
+			"token_out":    map[string]string{"address": tokenOutAddr, "amount": fmt.Sprintf("%v", tokenOutAmount)},
+			"status":       status,
+			"created_at":   createdAt,
+			"confirmed_at": confirmedAt,
 		})
 	}
 	return results, nil

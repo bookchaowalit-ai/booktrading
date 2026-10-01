@@ -368,7 +368,7 @@ func (h *DexHandler) CheckAllowance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"allowance":   allowance.String(),
+		"allowance":  allowance.String(),
 		"sufficient": allowance.Cmp(big.NewInt(0)) > 0,
 	})
 }

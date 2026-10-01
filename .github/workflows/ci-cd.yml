@@ -60,8 +60,21 @@ jobs:
         run: |
           cd backend
           go mod download
-          go mod tidy
           go mod verify
+
+      - name: Check go.mod/go.sum are tidy
+        run: |
+          cd backend
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: Check gofmt
+        run: |
+          cd backend
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed on:"; echo "$unformatted"; exit 1
+          fi
 
       - name: Run vet
         run: |
@@ -86,7 +99,7 @@ jobs:
           ENCRYPTION_KEY: test-encryption-key-32-chars-long!
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@ab904c41d6ece82784817410c45d8b8c02684457 # v3.1.6
         with:
           file: backend/coverage.out
           flags: backend
@@ -103,11 +116,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
         run: |
           cd frontend
-          npm install
+          npm ci
 
       - name: Run linter
         run: |
@@ -123,6 +138,13 @@ jobs:
         run: |
           cd frontend
           npm test
+
+      - name: Build
+        run: |
+          cd frontend
+          npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
 
   # ── Strategy Tests ─────────────────────────────────────────────────────────────
   strategy-test:
@@ -142,12 +164,14 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r strategy/requirements.txt
 
-      - name: Run strategy tests
-        run: >-
-          python -m pytest
-          strategy/tests/test_futures_safety.py
-          strategy/tests/test_futures_backtest.py
-          -q
+      - name: Run strategy tests (full offline suite)
+        working-directory: strategy
+        # pyproject.toml deselects `integration` tests, which need live services.
+        run: python -m pytest -q
+
+      - name: Check strategy for undefined names and syntax errors
+        working-directory: strategy
+        run: python -m ruff check . --select E9,F63,F7,F82
 
       - name: Check strategy formatting and lint
         run: >-
@@ -171,10 +195,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Build Backend Image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
           context: ./backend
           push: false
@@ -183,7 +207,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build Frontend Image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
           context: ./frontend
           push: false
@@ -192,7 +216,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build Strategy Image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
           context: ./strategy
           push: false
@@ -211,7 +235,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d17f967dacf36262 # v1.0.3
         with:
           host: ${{ secrets.PRODUCTION_HOST }}
           username: ${{ secrets.PRODUCTION_USER }}

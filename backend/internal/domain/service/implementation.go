@@ -3,7 +3,8 @@ package service
 import (
 	"context"
 	"fmt"
-	"strings"
+	"math"
+	"strconv"
 	"sync"
 	"time"
 
@@ -384,6 +385,77 @@ func (s *BotServiceImpl) SetExchangeManager(em *exchange.ExchangeManager) {
 	s.exchangeManager = em
 }
 
+// gridParams is an immutable snapshot of the grid configuration handed to the
+// grid loop, so the loop never reads fields that Stop/Start mutate.
+type gridParams struct {
+	symbol     string
+	quantity   float64
+	gridLevels int
+	lowerPrice float64
+	upperPrice float64
+	// investment caps the quote notional of grid inventory (0 = no cap).
+	investment float64
+	// maxPosition caps base inventory (0 = quantity * gridLevels).
+	maxPosition float64
+}
+
+// resolveBotMode maps optional start parameters to the operating mode.
+func resolveBotMode(params *input.BotStartParams) model.BotMode {
+	if params != nil && params.BotMode != "" {
+		switch params.BotMode {
+		case "GRID":
+			return model.BotModeGrid
+		case "AUTO":
+			return model.BotModeAuto
+		default:
+			return model.BotModeSignal
+		}
+	}
+	if params != nil && params.Symbol != "" {
+		return model.BotModeGrid
+	}
+	return model.BotModeSignal
+}
+
+// validateGridParams rejects grid configurations that would make the grid
+// loop place orders on every tick (for example gridLevels=0 divides the range
+// by zero and turns every price into a BUY signal).
+func validateGridParams(params *input.BotStartParams) error {
+	if params == nil {
+		return fmt.Errorf("grid mode requires parameters")
+	}
+	if params.Symbol == "" {
+		return fmt.Errorf("grid mode requires a symbol")
+	}
+	if params.Quantity <= 0 {
+		return fmt.Errorf("grid quantity must be greater than 0")
+	}
+	if params.GridLevels < 1 {
+		return fmt.Errorf("gridLevels must be at least 1")
+	}
+	if params.LowerPrice <= 0 || params.UpperPrice <= 0 {
+		return fmt.Errorf("grid prices must be greater than 0")
+	}
+	if params.LowerPrice >= params.UpperPrice {
+		return fmt.Errorf("lowerPrice (%.2f) must be less than upperPrice (%.2f)", params.LowerPrice, params.UpperPrice)
+	}
+	return nil
+}
+
+// withSignalDefaults fills unset signal thresholds with conservative defaults.
+func withSignalDefaults(cfg input.SignalConfig) input.SignalConfig {
+	if cfg.MinStrength <= 0 {
+		cfg.MinStrength = 0.5
+	}
+	if cfg.StopLossPct <= 0 {
+		cfg.StopLossPct = 0.05 // 5%
+	}
+	if cfg.TakeProfitPct <= 0 {
+		cfg.TakeProfitPct = 0.10 // 10%
+	}
+	return cfg
+}
+
 // Start starts the trading bot with optional grid trading parameters
 func (s *BotServiceImpl) Start(ctx context.Context, params *input.BotStartParams) error {
 	s.runningMu.Lock()
@@ -393,57 +465,51 @@ func (s *BotServiceImpl) Start(ctx context.Context, params *input.BotStartParams
 		return fmt.Errorf("bot is already running")
 	}
 
-	s.ctx, s.cancel = context.WithCancel(context.Background())
-	s.isRunning = true
-	s.startedAt = time.Now()
-	s.positions = make(map[string]*positionInfo)
+	mode := resolveBotMode(params)
+	if mode == model.BotModeGrid {
+		if err := validateGridParams(params); err != nil {
+			return fmt.Errorf("invalid grid parameters: %w", err)
+		}
+	}
 
 	if err := s.botStatusRepo.SetActive(ctx, true); err != nil {
 		return fmt.Errorf("failed to update bot status: %w", err)
 	}
 
-	// Determine bot mode based on parameters
-	if params != nil && params.BotMode != "" {
-		switch params.BotMode {
-		case "GRID":
-			s.botMode = model.BotModeGrid
-		case "SIGNAL":
-			s.botMode = model.BotModeSignal
-		case "AUTO":
-			s.botMode = model.BotModeAuto
-		default:
-			s.botMode = model.BotModeSignal
-		}
-		if params.BotMode == "SIGNAL" || params.BotMode == "AUTO" {
-			s.signalConfig = params.SignalConfig
-		}
-	} else if params != nil && params.Symbol != "" {
-		s.botMode = model.BotModeGrid
-	} else {
-		s.botMode = model.BotModeSignal
+	runCtx, cancel := context.WithCancel(context.Background())
+	s.ctx, s.cancel = runCtx, cancel
+	s.isRunning = true
+	s.startedAt = time.Now()
+	s.positions = make(map[string]*positionInfo)
+	s.botMode = mode
+	if params != nil && (params.BotMode == "SIGNAL" || params.BotMode == "AUTO") {
+		s.signalConfig = params.SignalConfig
 	}
 
 	// Broadcast status update
+	startedAt := s.startedAt
 	s.broadcaster.BroadcastBotStatus(&model.BotStatus{
 		IsActive:  true,
-		StartedAt: &s.startedAt,
+		StartedAt: &startedAt,
 		BotMode:   s.botMode,
 	})
 
-	// Start appropriate mode
+	// Start appropriate mode. Each loop receives its own context and config
+	// snapshot so a later Stop/Start cannot leak state into a stale goroutine.
 	switch s.botMode {
 	case model.BotModeGrid:
-		s.startGridMode(params)
+		s.startGridMode(runCtx, params)
 	case model.BotModeSignal:
-		s.startSignalMode()
+		s.startSignalMode(runCtx)
 	case model.BotModeAuto:
-		s.startAutoMode()
+		s.startAutoMode(runCtx)
 	}
 
 	return nil
 }
 
-func (s *BotServiceImpl) startGridMode(params *input.BotStartParams) {
+// startGridMode must be called with runningMu held.
+func (s *BotServiceImpl) startGridMode(ctx context.Context, params *input.BotStartParams) {
 	s.symbol = params.Symbol
 	s.quantity = params.Quantity
 	s.gridLevels = params.GridLevels
@@ -452,6 +518,15 @@ func (s *BotServiceImpl) startGridMode(params *input.BotStartParams) {
 	s.investment = params.Investment
 	s.tradesCount = 0
 	s.totalProfit = 0
+
+	grid := gridParams{
+		symbol:     params.Symbol,
+		quantity:   params.Quantity,
+		gridLevels: params.GridLevels,
+		lowerPrice: params.LowerPrice,
+		upperPrice: params.UpperPrice,
+		investment: params.Investment,
+	}
 
 	// Test API connection first
 	if s.tradingClient != nil {
@@ -469,11 +544,12 @@ func (s *BotServiceImpl) startGridMode(params *input.BotStartParams) {
 		Level:     "success",
 	})
 
-	logger.Info("Grid trading bot started", "symbol", s.symbol, "grid_levels", s.gridLevels)
-	go s.gridTradingLoop()
+	logger.Info("Grid trading bot started", "symbol", grid.symbol, "grid_levels", grid.gridLevels)
+	go s.gridTradingLoop(ctx, grid)
 }
 
-func (s *BotServiceImpl) startSignalMode() {
+// startSignalMode must be called with runningMu held.
+func (s *BotServiceImpl) startSignalMode(ctx context.Context) {
 	s.broadcaster.BroadcastBotActivity(&model.BotActivity{
 		Timestamp: time.Now(),
 		Activity:  "STARTED",
@@ -482,10 +558,11 @@ func (s *BotServiceImpl) startSignalMode() {
 	})
 
 	logger.Info("Trading bot started (signal mode)")
-	go s.listenForOrderSignals()
+	go s.listenForOrderSignals(ctx, withSignalDefaults(s.signalConfig))
 }
 
-func (s *BotServiceImpl) startAutoMode() {
+// startAutoMode must be called with runningMu held.
+func (s *BotServiceImpl) startAutoMode(ctx context.Context) {
 	symbol := s.signalConfig.Symbol
 	if symbol == "" {
 		symbol = "BTCUSDT"
@@ -496,13 +573,13 @@ func (s *BotServiceImpl) startAutoMode() {
 		Timestamp: time.Now(),
 		Activity:  "STARTED",
 		Symbol:    symbol,
-		Message:   fmt.Sprintf("Auto-adjust bot started (risk: %s, SL: %.1f%%, TP: %.1f%%)",
+		Message: fmt.Sprintf("Auto-adjust bot started (risk: %s, SL: %.1f%%, TP: %.1f%%)",
 			s.signalConfig.RiskLevel, s.signalConfig.StopLossPct*100, s.signalConfig.TakeProfitPct*100),
 		Level: "success",
 	})
 
 	logger.Info("Auto-adjust bot started", "symbol", symbol, "risk", s.signalConfig.RiskLevel)
-	go s.autoTradingLoop()
+	go s.autoTradingLoop(ctx, withSignalDefaults(s.signalConfig))
 }
 
 // Stop stops the trading bot
@@ -555,7 +632,8 @@ func (s *BotServiceImpl) GetStatus(ctx context.Context) (*model.BotStatus, error
 	status.TotalProfit = s.botStatus.TotalProfit
 	status.BotMode = s.botMode
 	if s.isRunning {
-		status.StartedAt = &s.startedAt
+		startedAt := s.startedAt
+		status.StartedAt = &startedAt
 	}
 	s.runningMu.RUnlock()
 
@@ -569,30 +647,19 @@ func (s *BotServiceImpl) IsRunning(ctx context.Context) bool {
 	return s.isRunning
 }
 
-func (s *BotServiceImpl) listenForOrderSignals() {
+func (s *BotServiceImpl) listenForOrderSignals(ctx context.Context, cfg input.SignalConfig) {
 	logger.Info("Listening for order signals from strategy service")
 
-	// Apply defaults
-	cfg := s.signalConfig
-	if cfg.MinStrength <= 0 {
-		cfg.MinStrength = 0.5
-	}
-	if cfg.StopLossPct <= 0 {
-		cfg.StopLossPct = 0.05 // 5%
-	}
-	if cfg.TakeProfitPct <= 0 {
-		cfg.TakeProfitPct = 0.10 // 10%
-	}
-
-	signalChan, err := s.orderSignalSub.SubscribeOrderSignals(s.ctx)
+	signalChan, err := s.orderSignalSub.SubscribeOrderSignals(ctx)
 	if err != nil {
 		logger.Error("Failed to subscribe to order signals", "error", err)
 		return
 	}
+	orders := newSignalOrderBook()
 
 	for {
 		select {
-		case <-s.ctx.Done():
+		case <-ctx.Done():
 			logger.Info("Signal listener stopped (context cancelled)")
 			return
 		case signal, ok := <-signalChan:
@@ -621,38 +688,27 @@ func (s *BotServiceImpl) listenForOrderSignals() {
 			})
 
 			// Execute the trade
-			s.executeSignalTrade(string(signal.Symbol), string(signal.Side), cfg)
+			s.executeSignalTrade(ctx, orders, string(signal.Symbol), string(signal.Side), cfg)
 		}
 	}
 }
 
 // autoTradingLoop combines signal-based entry with auto-adjust stop-loss/take-profit
-func (s *BotServiceImpl) autoTradingLoop() {
-	signalChan, err := s.orderSignalSub.SubscribeOrderSignals(s.ctx)
+func (s *BotServiceImpl) autoTradingLoop(ctx context.Context, cfg input.SignalConfig) {
+	signalChan, err := s.orderSignalSub.SubscribeOrderSignals(ctx)
 	if err != nil {
 		logger.Error("Failed to subscribe to order signals for auto mode", "error", err)
 		return
 	}
+	orders := newSignalOrderBook()
 
 	// Price check ticker for stop-loss/take-profit monitoring
 	priceTicker := time.NewTicker(10 * time.Second)
 	defer priceTicker.Stop()
 
-	// Apply defaults
-	cfg := s.signalConfig
-	if cfg.MinStrength <= 0 {
-		cfg.MinStrength = 0.5
-	}
-	if cfg.StopLossPct <= 0 {
-		cfg.StopLossPct = 0.05
-	}
-	if cfg.TakeProfitPct <= 0 {
-		cfg.TakeProfitPct = 0.10
-	}
-
 	for {
 		select {
-		case <-s.ctx.Done():
+		case <-ctx.Done():
 			logger.Info("Auto bot stopped (context cancelled)")
 			return
 		case signal, ok := <-signalChan:
@@ -662,19 +718,26 @@ func (s *BotServiceImpl) autoTradingLoop() {
 			if signal.Strength < cfg.MinStrength {
 				continue
 			}
-			s.handleAutoSignal(signal, cfg)
+			s.handleAutoSignal(ctx, orders, signal, cfg)
 		case <-priceTicker.C:
-			s.checkStopLossTakeProfit(cfg)
+			s.checkStopLossTakeProfit(ctx, orders, cfg)
 		}
 	}
 }
 
-func (s *BotServiceImpl) handleAutoSignal(signal *output.OrderSignal, cfg input.SignalConfig) {
+func (s *BotServiceImpl) hasPosition(symbol string) bool {
+	s.runningMu.RLock()
+	defer s.runningMu.RUnlock()
+	_, exists := s.positions[symbol]
+	return exists
+}
+
+func (s *BotServiceImpl) handleAutoSignal(ctx context.Context, orders *signalOrderBook, signal *output.OrderSignal, cfg input.SignalConfig) {
 	symbol := string(signal.Symbol)
 
 	// BUY signal — open position
 	if signal.Side == model.SideBuy {
-		if _, exists := s.positions[symbol]; exists {
+		if s.hasPosition(symbol) {
 			s.broadcaster.BroadcastBotActivity(&model.BotActivity{
 				Timestamp: time.Now(),
 				Activity:  "WAITING",
@@ -685,18 +748,19 @@ func (s *BotServiceImpl) handleAutoSignal(signal *output.OrderSignal, cfg input.
 			return
 		}
 
-		s.executeSignalTrade(symbol, string(signal.Side), cfg)
+		s.executeSignalTrade(ctx, orders, symbol, string(signal.Side), cfg)
 		return
 	}
 
 	// SELL signal — close position if open
 	if signal.Side == model.SideSell {
-		_, exists := s.positions[symbol]
-		if !exists {
+		if !s.hasPosition(symbol) {
 			return // no position to close
 		}
 
-		s.executeSignalTrade(symbol, string(signal.Side), cfg)
+		if !s.executeSignalTrade(ctx, orders, symbol, string(signal.Side), cfg) {
+			return // keep tracking the position; the exit did not go through
+		}
 
 		s.runningMu.Lock()
 		delete(s.positions, symbol)
@@ -712,34 +776,29 @@ func (s *BotServiceImpl) handleAutoSignal(signal *output.OrderSignal, cfg input.
 	}
 }
 
-func (s *BotServiceImpl) checkStopLossTakeProfit(cfg input.SignalConfig) {
+func (s *BotServiceImpl) checkStopLossTakeProfit(ctx context.Context, orders *signalOrderBook, cfg input.SignalConfig) {
 	s.runningMu.RLock()
 	positions := make(map[string]positionInfo)
 	for k, v := range s.positions {
 		positions[k] = *v
 	}
 	isRunning := s.isRunning
-	hasManager := s.exchangeManager != nil
+	manager := s.exchangeManager
 	s.runningMu.RUnlock()
 
-	if !isRunning || len(positions) == 0 {
+	if !isRunning || len(positions) == 0 || manager == nil {
 		return
 	}
 
 	for symbol, pos := range positions {
-		var currentPrice float64
-		var err error
-
-		if hasManager {
-			var ticker *exchange.TickerInfo
-			ticker, err = s.exchangeManager.GetTicker(s.ctx, symbol)
-			if err == nil {
-				currentPrice = ticker.LastPrice
-			}
+		if pos.entryPrice <= 0 {
+			continue // cannot compute PnL against a zero/negative entry
 		}
-		if err != nil {
+		ticker, err := manager.GetTicker(ctx, symbol)
+		if err != nil || ticker == nil || ticker.LastPrice <= 0 {
 			continue
 		}
+		currentPrice := ticker.LastPrice
 
 		pnlPct := (currentPrice - pos.entryPrice) / pos.entryPrice
 
@@ -752,11 +811,11 @@ func (s *BotServiceImpl) checkStopLossTakeProfit(cfg input.SignalConfig) {
 				Message:   fmt.Sprintf("Stop-loss triggered: %.2f%% loss (threshold %.1f%%)", pnlPct*100, cfg.StopLossPct*100),
 				Level:     "error",
 			})
-			s.executeSignalTrade(symbol, "SELL", cfg)
-
-			s.runningMu.Lock()
-			delete(s.positions, symbol)
-			s.runningMu.Unlock()
+			if s.executeSignalTrade(ctx, orders, symbol, "SELL", cfg) {
+				s.runningMu.Lock()
+				delete(s.positions, symbol)
+				s.runningMu.Unlock()
+			}
 			continue
 		}
 
@@ -769,271 +828,254 @@ func (s *BotServiceImpl) checkStopLossTakeProfit(cfg input.SignalConfig) {
 				Message:   fmt.Sprintf("Take-profit triggered: %.2f%% gain (threshold %.1f%%)", pnlPct*100, cfg.TakeProfitPct*100),
 				Level:     "success",
 			})
-			s.executeSignalTrade(symbol, "SELL", cfg)
-
-			s.runningMu.Lock()
-			delete(s.positions, symbol)
-			s.runningMu.Unlock()
+			if s.executeSignalTrade(ctx, orders, symbol, "SELL", cfg) {
+				s.runningMu.Lock()
+				delete(s.positions, symbol)
+				s.runningMu.Unlock()
+			}
 		}
 	}
 }
 
-func (s *BotServiceImpl) executeSignalTrade(symbol string, side string, cfg input.SignalConfig) {
+// fetchPrice returns the last traded price from whichever exchange client is
+// configured. A non-positive price is treated as an error so no order is ever
+// sized or placed against a zero quote.
+func fetchPrice(ctx context.Context, manager *exchange.ExchangeManager, client *bitkub.Client, symbol string) (float64, error) {
+	var price float64
+	switch {
+	case manager != nil:
+		ticker, err := manager.GetTicker(ctx, symbol)
+		if err != nil {
+			return 0, err
+		}
+		if ticker != nil {
+			price = ticker.LastPrice
+		}
+	case client != nil:
+		ticker, err := client.GetTicker(symbol)
+		if err != nil {
+			return 0, err
+		}
+		if ticker != nil {
+			price = ticker.LastPrice
+		}
+	default:
+		return 0, fmt.Errorf("no exchange client configured")
+	}
+	if price <= 0 {
+		return 0, fmt.Errorf("invalid price %.8f for %s", price, symbol)
+	}
+	return price, nil
+}
+
+// executeSignalTrade places one signal-driven order and reports whether an
+// order of this side filled (see signalTradeStep).
+func (s *BotServiceImpl) executeSignalTrade(ctx context.Context, orders *signalOrderBook, symbol string, side string, cfg input.SignalConfig) bool {
 	// Determine quantity from risk config
 	quantity := cfg.Quantity
 	if quantity <= 0 {
 		quantity = 0.001 // default minimum
 	}
 
-	hasManager := s.exchangeManager != nil
-	hasClient := s.tradingClient != nil
+	s.runningMu.RLock()
+	manager := s.exchangeManager
+	client := s.tradingClient
+	s.runningMu.RUnlock()
 
-	if !hasManager && !hasClient {
+	if manager == nil && client == nil {
 		logger.Warn("No exchange client for signal trade")
-		return
+		return false
 	}
 
-	// Get current price
-	var currentPrice float64
-	var err error
-
-	if hasManager {
-		var ticker *exchange.TickerInfo
-		ticker, err = s.exchangeManager.GetTicker(s.ctx, symbol)
-		if err == nil {
-			currentPrice = ticker.LastPrice
-		}
-	} else if hasClient {
-		var ticker *bitkub.Ticker
-		ticker, err = s.tradingClient.GetTicker(symbol)
-		if err == nil {
-			currentPrice = ticker.LastPrice
-		}
-	}
-
+	currentPrice, err := fetchPrice(ctx, manager, client, symbol)
 	if err != nil {
 		logger.Info("Error getting ticker for signal trade", "error", err)
-		return
+		return false
 	}
 
-	// Execute order
-	var orderErr error
-	if hasManager {
-		_, orderErr = s.exchangeManager.PlaceOrder(s.ctx, symbol, side, quantity, currentPrice)
-	} else if hasClient {
-		_, orderErr = s.tradingClient.PlaceOrder(symbol, side, "MARKET", quantity, currentPrice)
+	// Never place an order after the bot was stopped while we were waiting
+	// on the ticker.
+	if ctx.Err() != nil {
+		return false
 	}
 
-	tradeType := fmt.Sprintf("SIGNAL_%s", side)
-	if orderErr != nil {
-		logger.Info("Signal trade order failed", "error", orderErr)
-		tradeType = "PAPER_" + tradeType
-	}
-
-	s.broadcaster.BroadcastTradeNotification(&model.TradeNotification{
-		ID:        fmt.Sprintf("signal_trade_%d", time.Now().UnixMilli()),
-		Symbol:    model.TradeSymbol(symbol),
-		Side:      model.OrderSide(side),
-		Quantity:  quantity,
-		Price:     currentPrice,
-		Total:     quantity * currentPrice,
-		Type:      tradeType,
-		Timestamp: time.Now(),
-		Message:   fmt.Sprintf("[%s] %s %.4f @ %.2f", strings.ToUpper(tradeType), side, quantity, currentPrice),
-	})
-
-	// Track position in auto mode
-	if s.botMode == model.BotModeAuto && side == "BUY" && orderErr == nil {
-		s.runningMu.Lock()
-		s.positions[symbol] = &positionInfo{
-			entryPrice: currentPrice,
-			quantity:   quantity,
-			entryTime:  time.Now(),
-		}
-		s.runningMu.Unlock()
-	}
-
-	// Update stats
-	s.runningMu.Lock()
-	s.tradesCount++
-	if s.botMode == model.BotModeSignal || s.botMode == model.BotModeAuto {
-		s.botStatus.TotalTrades = s.tradesCount
-	}
-	s.runningMu.Unlock()
+	ex := &liveGridExchange{symbol: symbol, manager: manager, client: client}
+	return s.signalTradeStep(ctx, orders, symbol, side, quantity, currentPrice, ex)
 }
 
-// gridTradingLoop is the main grid trading loop
-func (s *BotServiceImpl) gridTradingLoop() {
+// gridTradingLoop is the main grid trading loop. The gridBook is owned by
+// this goroutine only, so it needs no locking.
+func (s *BotServiceImpl) gridTradingLoop(ctx context.Context, grid gridParams) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+	book := newGridBook(grid)
 
 	for {
 		select {
-		case <-s.ctx.Done():
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.runningMu.RLock()
-			running := s.isRunning
-			s.runningMu.RUnlock()
-			if !running {
-				return
-			}
-
 			// Execute grid trading logic
-			s.executeGridTrading()
+			s.executeGridTrading(ctx, grid, book)
 		}
 	}
 }
 
-// executeGridTrading contains the actual grid trading logic
-// executeGridTrading contains the actual grid trading logic
-func (s *BotServiceImpl) executeGridTrading() {
-	s.runningMu.RLock()
-	if !s.isRunning || s.symbol == "" {
-		s.runningMu.RUnlock()
-		return
+// gridAction decides what the grid does at a price: "BUY" in the bottom grid
+// band, "SELL" in the top band, "" (wait) otherwise or for invalid input.
+func gridAction(grid gridParams, currentPrice float64) (string, float64) {
+	if grid.gridLevels < 1 || grid.upperPrice <= grid.lowerPrice || currentPrice <= 0 {
+		return "", 0
 	}
-	hasClient := s.tradingClient != nil
-	hasManager := s.exchangeManager != nil
+	gridSize := (grid.upperPrice - grid.lowerPrice) / float64(grid.gridLevels)
+	switch {
+	case currentPrice <= grid.lowerPrice+gridSize:
+		return "BUY", gridSize
+	case currentPrice >= grid.upperPrice-gridSize:
+		return "SELL", gridSize
+	default:
+		return "", gridSize
+	}
+}
+
+// gridLevel returns the grid band index (0 = bottom) that a price falls in,
+// clamped to [0, gridLevels-1].
+func gridLevel(grid gridParams, price float64) int {
+	if grid.gridLevels < 1 || grid.upperPrice <= grid.lowerPrice {
+		return 0
+	}
+	gridSize := (grid.upperPrice - grid.lowerPrice) / float64(grid.gridLevels)
+	level := int(math.Floor((price - grid.lowerPrice) / gridSize))
+	if level < 0 {
+		return 0
+	}
+	if level >= grid.gridLevels {
+		return grid.gridLevels - 1
+	}
+	return level
+}
+
+// positionEpsilon absorbs float rounding when comparing base quantities.
+const positionEpsilon = 1e-12
+
+// gridBook is the per-run inventory and level state of the grid loop.
+//
+//   - Idempotent levels: a BUY is placed at most once per grid level. The level
+//     stays "held" until a SELL releases it, so a price that sits in the buy
+//     band no longer submits an order on every tick.
+//   - Position cap: base inventory never exceeds maxPosition (default
+//     quantity * gridLevels, i.e. one fill per level).
+//   - Exposure cap: when Investment > 0, the quote notional of the inventory
+//     (position * price) never exceeds it.
+//   - No naked sells: a SELL needs at least one quantity of inventory bought
+//     by this run.
+type gridBook struct {
+	position    float64
+	heldLevels  map[int]bool
+	maxPosition float64
+	maxExposure float64
+	// levelQuantity is the order size of one grid level.
+	levelQuantity float64
+
+	// pending is the order whose outcome is not final yet (accepted but not
+	// filled, or unknown after a timeout). While it is set the grid places
+	// no other order; see reconcileGridOrder.
+	pending *gridPendingOrder
+	runID   string
+	seq     int
+	now     func() time.Time
+}
+
+func newGridBook(grid gridParams) *gridBook {
+	maxPosition := grid.maxPosition
+	if maxPosition <= 0 {
+		maxPosition = grid.quantity * float64(grid.gridLevels)
+	}
+	return &gridBook{
+		heldLevels:    make(map[int]bool),
+		maxPosition:   maxPosition,
+		maxExposure:   grid.investment,
+		levelQuantity: grid.quantity,
+		runID:         strconv.FormatInt(time.Now().UnixNano(), 36),
+		now:           time.Now,
+	}
+}
+
+// check reports whether an order may be placed and, if not, why.
+func (b *gridBook) check(side string, level int, quantity, price float64) (bool, string) {
+	switch side {
+	case "BUY":
+		if b.heldLevels[level] {
+			return false, fmt.Sprintf("level %d already filled", level)
+		}
+		if b.position+quantity > b.maxPosition+positionEpsilon {
+			return false, fmt.Sprintf("position cap %.8f reached", b.maxPosition)
+		}
+		if b.maxExposure > 0 && (b.position+quantity)*price > b.maxExposure+positionEpsilon {
+			return false, fmt.Sprintf("exposure cap %.2f reached", b.maxExposure)
+		}
+		return true, ""
+	case "SELL":
+		if b.position+positionEpsilon < quantity {
+			return false, "no grid inventory to sell"
+		}
+		return true, ""
+	default:
+		return false, "unknown side"
+	}
+}
+
+// record applies a confirmed fill to the book.
+func (b *gridBook) record(side string, level int, quantity float64) {
+	switch side {
+	case "BUY":
+		b.position += quantity
+		b.heldLevels[level] = true
+	case "SELL":
+		b.position -= quantity
+		if b.position < positionEpsilon {
+			b.position = 0
+		}
+		// Release the lowest held level so the grid can buy it again. A partial
+		// SELL fill does not free a level.
+		if quantity+positionEpsilon < b.levelQuantity {
+			return
+		}
+		lowest := -1
+		for l := range b.heldLevels {
+			if lowest == -1 || l < lowest {
+				lowest = l
+			}
+		}
+		if lowest >= 0 {
+			delete(b.heldLevels, lowest)
+		}
+	}
+}
+
+// executeGridTrading fetches the price and runs one grid step.
+func (s *BotServiceImpl) executeGridTrading(ctx context.Context, grid gridParams, book *gridBook) {
+	s.runningMu.RLock()
+	running := s.isRunning
+	client := s.tradingClient
+	manager := s.exchangeManager
 	s.runningMu.RUnlock()
 
-	if !hasClient && !hasManager {
+	if !running || ctx.Err() != nil || grid.symbol == "" {
+		return
+	}
+	if client == nil && manager == nil {
 		logger.Warn("No exchange client configured for grid trading")
 		return
 	}
 
-	symbol := s.symbol
-	gridLevels := s.gridLevels
-	lowerPrice := s.lowerPrice
-	upperPrice := s.upperPrice
-	quantity := s.quantity
-
-	// Get current price
-	var currentPrice float64
-	var err error
-
-	if hasManager {
-		var ticker *exchange.TickerInfo
-		ticker, err = s.exchangeManager.GetTicker(s.ctx, symbol)
-		if err == nil {
-			currentPrice = ticker.LastPrice
-		}
-	} else if hasClient {
-		var ticker *bitkub.Ticker
-		ticker, err = s.tradingClient.GetTicker(symbol)
-		if err == nil {
-			currentPrice = ticker.LastPrice
-		}
-	}
-
+	currentPrice, err := fetchPrice(ctx, manager, client, grid.symbol)
 	if err != nil {
 		logger.Info("Error getting ticker", "error", err)
 		return
 	}
 
-	gridSize := (upperPrice - lowerPrice) / float64(gridLevels)
-
-	// Check if we should buy or sell
-	if currentPrice <= lowerPrice+gridSize {
-		// BUY signal - place REAL order on exchange
-		logger.Info("Grid BUY signal", "symbol", symbol, "price", currentPrice, "qty", quantity)
-
-		var orderErr error
-
-		if hasManager {
-			_, orderErr = s.exchangeManager.PlaceOrder(s.ctx, symbol, "BUY", quantity, currentPrice)
-		} else if hasClient {
-			_, orderErr = s.tradingClient.PlaceOrder(symbol, "BUY", "MARKET", quantity, currentPrice)
-		}
-
-		if orderErr != nil {
-			logger.Info("Real order failed, simulating paper trade", "error", orderErr)
-			// Fall back to paper trading if real order fails
-			s.tradesCount++
-			s.broadcaster.BroadcastTradeNotification(&model.TradeNotification{
-				ID:        fmt.Sprintf("trade_%d", time.Now().UnixMilli()),
-				Symbol:    model.TradeSymbol(symbol),
-				Side:      model.SideBuy,
-				Quantity:  quantity,
-				Price:     currentPrice,
-				Total:     quantity * currentPrice,
-				Type:      "GRID_BUY",
-				Timestamp: time.Now(),
-				Message:   fmt.Sprintf("[PAPER] Grid BUY %.4f @ %.2f", quantity, currentPrice),
-			})
-		} else {
-			s.tradesCount++
-			s.broadcaster.BroadcastTradeNotification(&model.TradeNotification{
-				ID:        fmt.Sprintf("trade_%d", time.Now().UnixMilli()),
-				Symbol:    model.TradeSymbol(symbol),
-				Side:      model.SideBuy,
-				Quantity:  quantity,
-				Price:     currentPrice,
-				Total:     quantity * currentPrice,
-				Type:      "GRID_BUY",
-				Timestamp: time.Now(),
-				Message:   fmt.Sprintf("[REAL] Grid BUY %.4f @ %.2f", quantity, currentPrice),
-			})
-			logger.Info("Grid BUY executed (REAL)", "symbol", symbol, "price", currentPrice)
-		}
-	} else if currentPrice >= upperPrice-gridSize {
-		// SELL signal - place REAL order on exchange
-		logger.Info("Grid SELL signal", "symbol", symbol, "price", currentPrice, "qty", quantity)
-
-		var orderErr error
-
-		if hasManager {
-			_, orderErr = s.exchangeManager.PlaceOrder(s.ctx, symbol, "SELL", quantity, currentPrice)
-		} else if hasClient {
-			_, orderErr = s.tradingClient.PlaceOrder(symbol, "SELL", "MARKET", quantity, currentPrice)
-		}
-
-		if orderErr != nil {
-			logger.Info("Real order failed, simulating paper trade", "error", orderErr)
-			// Fall back to paper trading if real order fails
-			s.tradesCount++
-			s.broadcaster.BroadcastTradeNotification(&model.TradeNotification{
-				ID:        fmt.Sprintf("trade_%d", time.Now().UnixMilli()),
-				Symbol:    model.TradeSymbol(symbol),
-				Side:      model.SideSell,
-				Quantity:  quantity,
-				Price:     currentPrice,
-				Total:     quantity * currentPrice,
-				Type:      "GRID_SELL",
-				Timestamp: time.Now(),
-				Message:   fmt.Sprintf("[PAPER] Grid SELL %.4f @ %.2f", quantity, currentPrice),
-			})
-		} else {
-			s.tradesCount++
-			s.broadcaster.BroadcastTradeNotification(&model.TradeNotification{
-				ID:        fmt.Sprintf("trade_%d", time.Now().UnixMilli()),
-				Symbol:    model.TradeSymbol(symbol),
-				Side:      model.SideSell,
-				Quantity:  quantity,
-				Price:     currentPrice,
-				Total:     quantity * currentPrice,
-				Type:      "GRID_SELL",
-				Timestamp: time.Now(),
-				Message:   fmt.Sprintf("[REAL] Grid SELL %.4f @ %.2f", quantity, currentPrice),
-			})
-			logger.Info("Grid SELL executed (REAL)", "symbol", symbol, "price", currentPrice)
-		}
-	} else {
-		// Waiting - price in middle of grid
-		s.broadcaster.BroadcastBotActivity(&model.BotActivity{
-			Timestamp: time.Now(),
-			Activity:  "WAITING",
-			Symbol:    symbol,
-			Message:   fmt.Sprintf("Price: %.2f | Grid: %.2f | Range: %.2f-%.2f", currentPrice, gridSize, lowerPrice, upperPrice),
-			Level:     "info",
-		})
-	}
-
-	// Update bot status
-	s.runningMu.Lock()
-	s.botStatus.TotalTrades = s.tradesCount
-	s.botStatus.TotalProfit = s.totalProfit
-	s.runningMu.Unlock()
+	s.gridStep(ctx, grid, book, currentPrice, &liveGridExchange{symbol: grid.symbol, manager: manager, client: client})
 }
 
 // PortfolioServiceImpl implements the PortfolioService interface

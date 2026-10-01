@@ -371,7 +371,8 @@ func main() {
 	tradingService := service.NewTradingService()
 	tradingHandler := httpadapter.NewTradingHandler(tradingService, botService)
 	newsHandler := httpadapter.NewNewsHandler()
-	authHandler := httpadapter.NewAuthHandler(redisAdapter)
+	// Accounts persist in the users table (migration 008); sessions stay in Redis.
+	authHandler := httpadapter.NewAuthHandlerWithUsers(redisAdapter, database.NewUserRepository(db.Pool))
 	dcaHandler := httpadapter.NewDCABotHandler(dcaService, authHandler)
 	notificationHandler := httpadapter.NewNotificationHandler(db.Pool)
 	performanceHandler := httpadapter.NewPerformanceHandler(tradeHistoryService)
@@ -398,6 +399,9 @@ func main() {
 
 	// Setup router
 	router := httpadapter.NewRouter(authHandler)
+	// The strategy service calls the Service routes (route_access.go) with the
+	// same shared AUTH_TOKEN the backend uses to call it.
+	router.SetServiceToken(os.Getenv("AUTH_TOKEN"))
 	router.RegisterOrderRoutes(orderHandler)
 	router.RegisterBotRoutes(botHandler)
 	router.RegisterPortfolioRoutes(portfolioHandler)
@@ -444,6 +448,39 @@ func main() {
 	moneyHandler := httpadapter.NewMoneyDashboardHandler(redisAdapter, paperEngine)
 	moneyHandler.RegisterRoutes(router.Mux())
 	logger.Info("Money dashboard endpoint registered at /api/dashboard/money")
+
+	// Strategy service proxy: the browser calls /strategy-api/* with its
+	// session token; the backend validates it and forwards to the strategy
+	// service with the server-side AUTH_TOKEN (never shipped to the browser).
+	strategyUpstream := os.Getenv("STRATEGY_URL")
+	if strategyUpstream == "" {
+		strategyUpstream = "http://strategy:8000"
+	}
+	strategyTimeout := httpadapter.DefaultStrategyProxyTimeout
+	if v := os.Getenv("STRATEGY_PROXY_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			strategyTimeout = d
+		} else {
+			logger.Warn("Invalid STRATEGY_PROXY_TIMEOUT, using default", "default", strategyTimeout.String())
+		}
+	}
+	strategyToken := os.Getenv("AUTH_TOKEN")
+	strategyProxy, err := httpadapter.NewStrategyProxy(httpadapter.StrategyProxyConfig{
+		UpstreamURL:  strategyUpstream,
+		ServiceToken: strategyToken,
+		Validate:     authHandler.ValidateToken,
+		IsAdmin:      authHandler.IsAdmin,
+		Timeout:      strategyTimeout,
+	})
+	if err != nil {
+		logger.Error("Strategy proxy disabled", "error", err)
+	} else {
+		router.Mux().Handle(httpadapter.StrategyProxyPrefix+"/", strategyProxy)
+		if strategyToken == "" {
+			logger.Warn("AUTH_TOKEN is empty: strategy proxy forwards without a service token")
+		}
+		logger.Info("Strategy proxy registered", "prefix", httpadapter.StrategyProxyPrefix, "timeout", strategyTimeout.String())
+	}
 
 	// Wrap with audit middleware
 	auditMiddleware := httpadapter.NewAuditMiddleware(auditService, authHandler)
