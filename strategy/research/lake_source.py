@@ -7,8 +7,8 @@ read the Silver ``crypto_ohlcv`` / ``crypto_funding`` datasets produced by
 of calling an exchange directly. Reading is local-only; no network, no
 credentials.
 
-Requires the Solo Empire ``infra/scripts/data_lake`` runtime (DuckDB + PyArrow).
-Set ``SOLO_EMPIRE_ROOT`` when this checkout is not nested inside Solo Empire.
+Requires the solo-data-lake ``infra/scripts/data_lake`` runtime (DuckDB + PyArrow);
+set ``SOLO_DATA_LAKE_ROOT`` to that checkout.
 The rest of ``trading/`` stays stdlib-only; import this module lazily.
 
 Research tooling only — not investment advice.
@@ -26,24 +26,20 @@ from typing import Any, Sequence
 from futures_backtest import Bar
 
 
-def solo_empire_root() -> Path:
-    """Locate the Solo Empire checkout that owns the shared lake runtime and outputs.
+def data_lake_root() -> Path | None:
+    """Checkout of solo-data-lake (holds ``infra/scripts/data_lake`` and the local lake).
 
-    ``SOLO_EMPIRE_ROOT`` wins. Otherwise walk up from this file, because the
-    booktrading checkout normally lives inside the Solo Empire tree. Without
-    either, fall back to this folder so the stdlib-only tools still run.
+    Set ``SOLO_DATA_LAKE_ROOT`` explicitly; there is no directory walking.
+    Returns None when unset so the stdlib-only tools still run.
     """
-    configured = os.environ.get("SOLO_EMPIRE_ROOT", "").strip()
-    if configured:
-        return Path(configured).expanduser().resolve()
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        if (parent / "infra" / "scripts" / "data_lake" / "silver.py").is_file():
-            return parent
-    return here.parent
+    configured = os.environ.get("SOLO_DATA_LAKE_ROOT", "").strip()
+    return Path(configured).expanduser().resolve() if configured else None
 
 
-ROOT = solo_empire_root()
+LAKE_ROOT = data_lake_root()
+# Reports and the default local lake live under the data lake checkout when set,
+# otherwise under this folder.
+ROOT = LAKE_ROOT or Path(__file__).resolve().parent
 DEFAULT_LAKE_URI = str(ROOT / "data" / "lake-local" / "scraping-captures-v2")
 DEFAULT_VENUE = "binance_futures"
 INTERVAL_MS = {"15m": 900_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000}
@@ -79,7 +75,9 @@ class SeriesQuality:
 
 
 def _read_silver(dataset: str, sql: str, data_lake_uri: str) -> list[dict[str, Any]]:
-    scripts = ROOT / "infra" / "scripts"
+    if LAKE_ROOT is None:
+        raise LakeDataError("data_lake runtime unavailable: set SOLO_DATA_LAKE_ROOT to the solo-data-lake checkout")
+    scripts = LAKE_ROOT / "infra" / "scripts"
     if str(scripts) not in sys.path:
         sys.path.insert(0, str(scripts))
     try:

@@ -171,7 +171,7 @@ jobs:
 
       - name: Run strategy research tests (stdlib, offline)
         working-directory: strategy/research
-        # The lake round-trip test skips without the Solo Empire data_lake runtime.
+        # The lake round-trip test skips without the solo-data-lake runtime (SOLO_DATA_LAKE_ROOT).
         run: |
           python tests/futures_backtest_test.py
           python tests/walk_forward_test.py

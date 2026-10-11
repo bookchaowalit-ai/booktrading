@@ -27,10 +27,10 @@ is ever considered.
 | `tests/` | Stdlib `unittest` suites, no network, no pytest |
 
 Python 3 standard library only — CI needs no pip installs. The lake bridge
-(`lake_source.py`, `signal_report.py`) also needs the Solo Empire
-`infra/scripts/data_lake` runtime; it is found by walking up from this folder
-(the normal nested checkout) or through `SOLO_EMPIRE_ROOT`. Reports default to
-`$SOLO_EMPIRE_ROOT/data/generated/reports/trading`.
+(`lake_source.py`, `signal_report.py`) also needs the solo-data-lake
+`infra/scripts/data_lake` runtime; set `SOLO_DATA_LAKE_ROOT` to that checkout.
+Reports default to `$SOLO_DATA_LAKE_ROOT/data/generated/reports/trading`
+(this folder when unset).
 
 This folder moved here from Solo Empire
 `projects/money/finance/book-finance/trading/` on 2026-10-01. It is research

@@ -131,7 +131,7 @@ class LakeRoundTripTests(unittest.TestCase):
             import pyarrow  # noqa: F401
         except ImportError:
             self.skipTest("duckdb/pyarrow not installed")
-        scripts = lake_source.ROOT / "infra" / "scripts"
+        scripts = (lake_source.LAKE_ROOT or lake_source.ROOT) / "infra" / "scripts"
         if not (scripts / "data_lake" / "silver.py").exists():
             self.skipTest("monorepo data_lake runtime not present")
         sys.path.insert(0, str(scripts))
