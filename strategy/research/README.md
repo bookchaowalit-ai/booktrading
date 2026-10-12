@@ -27,7 +27,7 @@ is ever considered.
 | `tests/` | Stdlib `unittest` suites, no network, no pytest |
 
 Python 3 standard library only — CI needs no pip installs. The lake bridge
-(`lake_source.py`, `signal_report.py`) also needs the solo-data-lake
+(`lake_source.py`, `signal_report.py`) also needs the data-lake
 `infra/scripts/data_lake` runtime; set `SOLO_DATA_LAKE_ROOT` to that checkout.
 Reports default to `$SOLO_DATA_LAKE_ROOT/data/generated/reports/trading`
 (this folder when unset).

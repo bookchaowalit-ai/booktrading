@@ -7,7 +7,7 @@ read the Silver ``crypto_ohlcv`` / ``crypto_funding`` datasets produced by
 of calling an exchange directly. Reading is local-only; no network, no
 credentials.
 
-Requires the solo-data-lake ``infra/scripts/data_lake`` runtime (DuckDB + PyArrow);
+Requires the data-lake ``infra/scripts/data_lake`` runtime (DuckDB + PyArrow);
 set ``SOLO_DATA_LAKE_ROOT`` to that checkout.
 The rest of ``trading/`` stays stdlib-only; import this module lazily.
 
@@ -27,7 +27,7 @@ from futures_backtest import Bar
 
 
 def data_lake_root() -> Path | None:
-    """Checkout of solo-data-lake (holds ``infra/scripts/data_lake`` and the local lake).
+    """Checkout of data-lake (holds ``infra/scripts/data_lake`` and the local lake).
 
     Set ``SOLO_DATA_LAKE_ROOT`` explicitly; there is no directory walking.
     Returns None when unset so the stdlib-only tools still run.
@@ -76,7 +76,7 @@ class SeriesQuality:
 
 def _read_silver(dataset: str, sql: str, data_lake_uri: str) -> list[dict[str, Any]]:
     if LAKE_ROOT is None:
-        raise LakeDataError("data_lake runtime unavailable: set SOLO_DATA_LAKE_ROOT to the solo-data-lake checkout")
+        raise LakeDataError("data_lake runtime unavailable: set SOLO_DATA_LAKE_ROOT to the data-lake checkout")
     scripts = LAKE_ROOT / "infra" / "scripts"
     if str(scripts) not in sys.path:
         sys.path.insert(0, str(scripts))
