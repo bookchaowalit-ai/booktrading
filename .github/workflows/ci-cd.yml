@@ -166,8 +166,17 @@ jobs:
 
       - name: Run strategy tests (full offline suite)
         working-directory: strategy
-        # pyproject.toml deselects `integration` tests, which need live services.
-        run: python -m pytest -q
+        # Exclude only the live API contract file; do not silently filter new markers.
+        env:
+          POLY_DRY_RUN: 'true'
+          BINANCE_TH_USE_TESTNET: 'true'
+          FUTURES_ENABLED: 'false'
+          FUTURES_EXECUTION_MODE: paper
+          AWS_EC2_METADATA_DISABLED: 'true'
+        run: >-
+          python -m pytest tests -q -o addopts=
+          --ignore=tests/test_command_center_contract.py
+          --disable-socket --allow-unix-socket
 
       - name: Run strategy research tests (stdlib, offline)
         working-directory: strategy/research

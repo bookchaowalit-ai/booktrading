@@ -394,7 +394,9 @@ class TestMarketLossCooldown:
         assert self.bot.positions == {}
 
     @pytest.mark.asyncio
-    async def test_expired_loss_cooldown_allows_reentry(self):
+    async def test_expired_loss_cooldown_allows_reentry(self, monkeypatch):
+        # This case exercises in-memory paper bookkeeping, not dry-run logging.
+        monkeypatch.setattr("app.polymarket.paper_bot.DRY_RUN_MODE", False)
         self.bot._market_loss_cooldown["cooldown_market"] = time.time() - self.bot._loss_cooldown_seconds - 1
         opp = _make_opp(market_id="cooldown_market", confidence=0.8)
 
@@ -434,8 +436,9 @@ class TestMaxPositions:
         assert len(self.bot.positions) == 3
 
     @pytest.mark.asyncio
-    async def test_resolved_positions_dont_count(self):
+    async def test_resolved_positions_dont_count(self, monkeypatch):
         """Resolved positions should not count toward max."""
+        monkeypatch.setattr("app.polymarket.paper_bot.DRY_RUN_MODE", False)
         # Add 2 active + 1 resolved
         for i in range(2):
             pos = _make_position()
