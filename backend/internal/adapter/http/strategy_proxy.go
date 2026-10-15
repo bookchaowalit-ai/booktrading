@@ -298,10 +298,11 @@ func stripUpstreamResponseHeaders(resp *http.Response) error {
 
 func proxyErrorHandler(w http.ResponseWriter, r *http.Request, err error) {
 	var maxErr *http.MaxBytesError
+	var netErr net.Error
 	switch {
 	case errors.As(err, &maxErr):
 		writeProxyError(w, http.StatusRequestEntityTooLarge, "Request body too large")
-	case errors.Is(err, context.DeadlineExceeded):
+	case errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()):
 		logger.Warn("strategy proxy timeout", "path", r.URL.Path)
 		writeProxyError(w, http.StatusGatewayTimeout, "Strategy service timed out")
 	case errors.Is(err, context.Canceled):

@@ -2,6 +2,8 @@ package http
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +19,47 @@ const (
 	testUserSession  = "fixture-user-session"
 	testTraderSess   = "fixture-trader-session"
 )
+
+// Older Go transports expose header deadlines as net.Error without unwrapping
+// context.DeadlineExceeded. Keep this deterministic instead of racing timers.
+type proxyNetworkFailure struct{ timeout bool }
+
+func (e proxyNetworkFailure) Error() string   { return "fixture network failure" }
+func (e proxyNetworkFailure) Timeout() bool   { return e.timeout }
+func (e proxyNetworkFailure) Temporary() bool { return false }
+
+func TestProxyErrorHandlerClassifiesTransportFailures(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"context deadline", context.DeadlineExceeded, http.StatusGatewayTimeout},
+		{"wrapped deadline", fmt.Errorf("upstream: %w", context.DeadlineExceeded), http.StatusGatewayTimeout},
+		{"transport header timeout", proxyNetworkFailure{timeout: true}, http.StatusGatewayTimeout},
+		{"wrapped transport timeout", fmt.Errorf("upstream: %w", proxyNetworkFailure{timeout: true}), http.StatusGatewayTimeout},
+		{"non-timeout network failure", proxyNetworkFailure{}, http.StatusBadGateway},
+		{"ordinary failure", errors.New("upstream unavailable"), http.StatusBadGateway},
+		{"timeout text is not a timeout", errors.New("timeout awaiting response headers"), http.StatusBadGateway},
+		{"body limit", &http.MaxBytesError{Limit: 64}, http.StatusRequestEntityTooLarge},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			proxyErrorHandler(w, httptest.NewRequest(http.MethodGet, "/strategy-api/api/health", nil), tc.err)
+			if w.Code != tc.want {
+				t.Fatalf("status %d, want %d", w.Code, tc.want)
+			}
+		})
+	}
+	t.Run("caller cancellation writes no response", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		proxyErrorHandler(w, httptest.NewRequest(http.MethodGet, "/strategy-api/api/health", nil), context.Canceled)
+		if w.Body.Len() != 0 || len(w.Header()) != 0 {
+			t.Fatal("canceled client received a proxy response")
+		}
+	})
+}
 
 type upstreamRecorder struct {
 	calls   atomic.Int32
